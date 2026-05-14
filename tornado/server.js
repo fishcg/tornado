@@ -2436,7 +2436,7 @@ async function generateAchievementInnerVoice(charName, affection, achievementNam
   }
 }
 
-async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, recentContext) {
+async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext) {
   try {
     const appearance = await getCharacterAppearance(userId);
 
@@ -2447,6 +2447,7 @@ async function generateAchievementSelfie(userId, achievementName, achType, achTh
     }[achType] || "自然生活场景";
 
     const personalityHint = personality ? `角色性格：${personality}。` : "";
+    const descriptionHint = description ? `角色背景：${description}。` : "";
 
     const sceneRes = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -2456,7 +2457,7 @@ async function generateAchievementSelfie(userId, achievementName, achType, achTh
         {
           role: "system",
           content: `你是一个图片描述生成助手。根据成就信息和最近对话，为角色生成一段自然生活照或自拍的场景描述，用于生成图片。
-${personalityHint}
+${personalityHint}${descriptionHint}
 要求：
 - 场景要与成就"${achievementName}"（类型：${typeHint}）在情感上匹配，并结合最近对话的氛围
 - 自然真实，像生活照或随手自拍，不要摆拍感
@@ -2520,7 +2521,7 @@ async function checkAndUnlockAchievements(userId, sessionId) {
     // 新解锁
     const [innerVoice, selfieUrl] = await Promise.all([
       generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
-      generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, recentContext)
+      generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext)
     ]);
 
     let insertResult;
