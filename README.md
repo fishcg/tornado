@@ -1,6 +1,12 @@
-# memory-ai
+# Tornado
 
 虚拟伴侣聊天系统，核心亮点是持续演化的长期记忆。
+
+<img width="1165" height="808" alt="image" src="https://github.com/user-attachments/assets/506e10ae-3de2-46a2-b4b6-79403a4b1d3a" />
+
+<img width="1143" height="710" alt="image" src="https://github.com/user-attachments/assets/84f19bee-22af-43c6-ac19-e6fcc5540314" />
+
+
 
 大多数 AI 聊天都有"失忆"问题：每次对话从零开始，处理完就忘。这个项目在聊天之外运行一个独立的记忆服务，持续摄取、整理、压缩并关联信息，让角色真正"记得"你。
 
