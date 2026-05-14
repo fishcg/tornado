@@ -1507,10 +1507,9 @@ async function handleRequest(req, res) {
   const activateCardMatch = pathname.match(/^\/character\/cards\/(\d+)\/activate$/);
   if (method === "PATCH" && activateCardMatch) {
     const id = Number(activateCardMatch[1]);
-    const name = await getCharacterName(userId);
-    const card = await dbGet("SELECT * FROM character_cards WHERE id = ? AND `character` = ? AND (user_id = ? OR user_id IS NULL)", [id, name, userId]);
+    const card = await dbGet("SELECT * FROM character_cards WHERE id = ? AND (user_id = ? OR user_id IS NULL)", [id, userId]);
     if (!card) { send(res, 404, { error: "not found" }); return; }
-    await dbRun("UPDATE character_cards SET is_active = 0 WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
+    await dbRun("UPDATE character_cards SET is_active = 0 WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [card.character, userId]);
     await dbRun("UPDATE character_cards SET is_active = 1 WHERE id = ?", [id]);
     broadcastCardUpdate(card.image_url);
     send(res, 200, { ok: true, card_url: card.image_url });
@@ -1521,13 +1520,11 @@ async function handleRequest(req, res) {
   const deleteCardMatch = pathname.match(/^\/character\/cards\/(\d+)$/);
   if (method === "DELETE" && deleteCardMatch) {
     const id = Number(deleteCardMatch[1]);
-    const name = await getCharacterName(userId);
-    const card = await dbGet("SELECT * FROM character_cards WHERE id = ? AND `character` = ? AND (user_id = ? OR user_id IS NULL)", [id, name, userId]);
+    const card = await dbGet("SELECT * FROM character_cards WHERE id = ? AND (user_id = ? OR user_id IS NULL)", [id, userId]);
     if (!card) { send(res, 404, { error: "not found" }); return; }
     await dbRun("DELETE FROM character_cards WHERE id = ?", [id]);
-    // 如果删的是激活卡，把最新一张设为激活
     if (card.is_active) {
-      const latest = await dbGet("SELECT id FROM character_cards WHERE `character` = ? AND (user_id = ? OR user_id IS NULL) ORDER BY id DESC LIMIT 1", [name, userId]);
+      const latest = await dbGet("SELECT id FROM character_cards WHERE `character` = ? AND (user_id = ? OR user_id IS NULL) ORDER BY id DESC LIMIT 1", [card.character, userId]);
       if (latest) await dbRun("UPDATE character_cards SET is_active = 1 WHERE id = ?", [latest.id]);
     }
     send(res, 200, { ok: true });
