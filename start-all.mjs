@@ -33,13 +33,8 @@ const services = [
   },
 ];
 
-const MYSQL_KEYS = ["MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE"];
-
 for (const { label, args, cwd } of services) {
   const env = { ...process.env };
-  if (label !== "tornado") {
-    for (const key of MYSQL_KEYS) delete env[key];
-  }
 
   const p = spawn("node", args, { cwd, stdio: "pipe", env });
 
