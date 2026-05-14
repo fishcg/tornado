@@ -16,7 +16,7 @@ steps:
     privileged: true
     settings:
       registry: http://172.24.173.77:30500
-      repo: 172.24.173.77:30500/memory-ai
+      repo: 172.24.173.77:30500/tornado
       tags:
         - latest
         - ${CI_COMMIT_SHA:0:7}
@@ -33,6 +33,6 @@ steps:
     environment:
       KUBECONFIG: /woodpecker/kubeconfig
     commands:
-      - kubectl set image deployment/memory-ai memory-ai=172.24.173.77:30500/memory-ai:${CI_COMMIT_SHA:0:7} --namespace=default
+      - kubectl set image deployment/tornado tornado=172.24.173.77:30500/tornado:${CI_COMMIT_SHA:0:7} --namespace=default
     when:
       event: [push, tag]

@@ -20,7 +20,7 @@ const OPENAI_MODEL = process.env.TORNADO_MODEL || process.env.OPENAI_MODEL || "d
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
 const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || "https://api.deepseek.com";
 const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-pro";
-const IMAGE_API_URL = process.env.IMAGE_API_URL || "https://api.missevan.ai/openapi/v1/generate";
+const IMAGE_API_URL = process.env.IMAGE_API_URL || "https://api.test.ai/openapi/v1/generate";
 const IMAGE_API_KEY = process.env.IMAGE_API_KEY || "";
 const SOUL_PATH = path.join(__dirname, "soul.md");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -583,6 +583,23 @@ function sanitizeImagePrompt(prompt) {
     .replace(/NSFW|nude|naked|sexy|erotic/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+// 检查并消耗每日图片配额，返回 true 表示允许生成
+async function consumeDailyImageQuota(userId) {
+  const dailyLimit = Number(await getGlobalSetting("daily_scene_image_limit", "5"));
+  if (dailyLimit <= 0) return true;
+  const today = new Date().toISOString().slice(0, 10);
+  await dbRun("INSERT IGNORE INTO user_settings (user_id, flags) VALUES (?, ?)", [userId, FLAGS_DEFAULT]);
+  const row = await dbGet("SELECT scene_image_date, scene_image_count FROM user_settings WHERE user_id = ?", [userId]);
+  const usedToday = row?.scene_image_date === today ? (row.scene_image_count ?? 0) : 0;
+  if (usedToday >= dailyLimit) return false;
+  if (row?.scene_image_date === today) {
+    await dbRun("UPDATE user_settings SET scene_image_count = scene_image_count + 1 WHERE user_id = ?", [userId]);
+  } else {
+    await dbRun("UPDATE user_settings SET scene_image_date = ?, scene_image_count = 1 WHERE user_id = ?", [today, userId]);
+  }
+  return true;
 }
 
 async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId } = {}) {
@@ -1723,20 +1740,10 @@ async function handleRequest(req, res) {
     if (!await getSession(sessionId, userId)) { send(res, 404, { error: "session not found" }); return; }
 
     // 每日配额检查
-    const dailyLimit = Number(await getGlobalSetting("daily_scene_image_limit", "5"));
-    const today = new Date().toISOString().slice(0, 10);
-    await dbRun("INSERT IGNORE INTO user_settings (user_id, flags) VALUES (?, ?)", [userId, FLAGS_DEFAULT]);
-    const usageRow = await dbGet("SELECT scene_image_date, scene_image_count FROM user_settings WHERE user_id = ?", [userId]);
-    const usedToday = usageRow?.scene_image_date === today ? (usageRow.scene_image_count ?? 0) : 0;
-    if (dailyLimit > 0 && usedToday >= dailyLimit) {
-      send(res, 429, { error: "daily_limit_reached", limit: dailyLimit, used: usedToday });
+    if (!await consumeDailyImageQuota(userId)) {
+      const dailyLimit = Number(await getGlobalSetting("daily_scene_image_limit", "5"));
+      send(res, 429, { error: "daily_limit_reached", limit: dailyLimit });
       return;
-    }
-    // 更新计数
-    if (usageRow?.scene_image_date === today) {
-      await dbRun("UPDATE user_settings SET scene_image_count = scene_image_count + 1 WHERE user_id = ?", [userId]);
-    } else {
-      await dbRun("UPDATE user_settings SET scene_image_date = ?, scene_image_count = 1 WHERE user_id = ?", [today, userId]);
     }
 
     const settings = await getUserSettings(userId);
@@ -1967,13 +1974,19 @@ async function handleRequest(req, res) {
 
     // 通知前端文字完成，附带图片状态
     const donePayload = { done: true, msg_id: Number(msgId), user_msg_id: Number(userMsgId) };
+    let quotaAllowed = false;
     if (imgPrompt) {
-      donePayload.image_pending = true;
-      donePayload.image_silent = imgSilent;
+      quotaAllowed = await consumeDailyImageQuota(userId);
+      if (quotaAllowed) {
+        donePayload.image_pending = true;
+        donePayload.image_silent = imgSilent;
+      } else {
+        console.log(`[自动插图] 用户 ${userId} 今日配额已用完，跳过`);
+      }
     }
     res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
 
-    if (imgPrompt) {
+    if (imgPrompt && quotaAllowed) {
       fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: settings.imageFallbackEnabled, userId });
     }
 
@@ -2286,8 +2299,12 @@ setInterval(async () => {
     const payload = { proactive: true, msg_id: Number(msgId), text: cleanText };
     if (imgPrompt) {
       const previousScene = await getLastImagePrompt(session.id);
-      payload.image_pending = true;
-      fireImageGeneration(Number(msgId), imgPrompt, session.id, { silent: true, previousScene, userId: sessionUserId });
+      if (await consumeDailyImageQuota(sessionUserId)) {
+        payload.image_pending = true;
+        fireImageGeneration(Number(msgId), imgPrompt, session.id, { silent: true, previousScene, userId: sessionUserId });
+      } else {
+        console.log(`[主动插图] 用户 ${sessionUserId} 今日配额已用完，跳过`);
+      }
     }
     pushToSession(session.id, payload);
     const updatedMsgs = await getMessages(session.id);

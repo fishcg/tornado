@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: memory-ai-service
+  name: tornado-service
 spec:
   type: NodePort
   ports:
@@ -14,25 +14,25 @@ spec:
       targetPort: 3011
       nodePort: 30881
   selector:
-    app: memory-ai
+    app: tornado
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: memory-ai
+  name: tornado
 spec:
   selector:
     matchLabels:
-      app: memory-ai
+      app: tornado
   replicas: 1
   template:
     metadata:
       labels:
-        app: memory-ai
+        app: tornado
     spec:
       containers:
-        - name: memory-ai
-          image: 172.24.173.77:30500/memory-ai:0.0.1
+        - name: tornado
+          image: 172.24.173.77:30500/tornado:1.0.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8880
@@ -45,67 +45,78 @@ spec:
             - name: MYSQL_HOST
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: mysql_host
             - name: MYSQL_PORT
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: mysql_port
             - name: MYSQL_USER
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: mysql_user
             - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: mysql_password
             - name: MYSQL_DATABASE
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: mysql_database
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: openai_api_key
             - name: TORNADO_API_URL
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: tornado_api_url
             - name: TORNADO_MODEL
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: tornado_model
             - name: IMAGE_API_URL
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: image_api_url
             - name: IMAGE_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: image_api_key
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tornado-secret
+                  key: deepseek_api_key
+            - name: DEEPSEEK_API_URL
+              value: 'https://api.deepseek.com'
+            - name: OPENAI_TRANSCRIPTION_MODEL
+              value: 'qwen3.6-plus'
+            - name: PROACTIVE_IDLE_MINUTES
+              value: '10'
             - name: MEMORY_API
               value: 'http://localhost:8880'
             - name: PASSWORD_SALT
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: password_salt
             - name: DEFAULT_INVITE_CODE
               valueFrom:
                 secretKeyRef:
-                  name: memory-ai-secret
+                  name: tornado-secret
                   key: default_invite_code
 ---
-# kubectl create secret generic memory-ai-secret \
+# kubectl create secret generic tornado-secret \
 #   --from-literal=mysql_host=127.0.0.1 \
 #   --from-literal=mysql_port=3306 \
 #   --from-literal=mysql_user=root \
@@ -114,7 +125,7 @@ spec:
 #   --from-literal=openai_api_key=YOUR_KEY \
 #   --from-literal=tornado_api_url=https://api.openai.com/v1 \
 #   --from-literal=tornado_model=deepseek-v3.2 \
-#   --from-literal=image_api_url=https://api.missevan.ai/openapi/v1/generate \
+#   --from-literal=image_api_url=https://api.test.ai/openapi/v1/generate \
 #   --from-literal=image_api_key=YOUR_KEY \
 #   --from-literal=password_salt=YOUR_SALT \
 #   --from-literal=default_invite_code=YOUR_CODE
