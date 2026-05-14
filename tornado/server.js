@@ -917,7 +917,7 @@ ${personality}当前心动值：${current}/100，${relationStage}。
       await dbRun("INSERT INTO affection_log (character_id, delta, value, mood, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)", [char.id, clamped, newVal, sessionMood, reason, nowIso()]);
       console.log(`[affection] ${charName} ${clamped > 0 ? "+" : ""}${clamped} → ${newVal} | ${reason}`);
       pushToSession(sessionId, { affection_update: true, affection: newVal, delta: clamped });
-      checkAndUnlockAchievements(userId, sessionId).catch(() => {});
+      checkAndUnlockAchievements(userId, sessionId).catch((e) => console.error("[achievements] 调用失败:", e.message));
     }
   } catch (err) {
     console.error("[affection] 更新失败:", err.message);
@@ -2005,7 +2005,7 @@ async function handleRequest(req, res) {
       updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message));
     }
     updateStreakDays(userId).catch(() => {});
-    checkAndUnlockAchievements(userId, sessionId).catch(() => {});
+    checkAndUnlockAchievements(userId, sessionId).catch((e) => console.error("[achievements] 调用失败:", e.message));
 
     res.end();
     return;
@@ -2518,11 +2518,19 @@ async function checkAndUnlockAchievements(userId, sessionId) {
     const current = currentValues[ach.type];
     if (current === undefined || current < ach.threshold) continue;
 
+    console.log(`[achievements] 尝试解锁：${ach.name}，当前值 ${current}，阈值 ${ach.threshold}`);
+
     // 新解锁
-    const [innerVoice, selfieUrl] = await Promise.all([
-      generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
-      generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext)
-    ]);
+    let innerVoice, selfieUrl;
+    try {
+      [innerVoice, selfieUrl] = await Promise.all([
+        generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
+        generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext)
+      ]);
+    } catch (err) {
+      console.error(`[achievements] 生成内容失败：${ach.name}`, err.message);
+      continue;
+    }
 
     let insertResult;
     try {
@@ -2530,9 +2538,15 @@ async function checkAndUnlockAchievements(userId, sessionId) {
         "INSERT IGNORE INTO user_achievements (user_id, achievement_id, character_id, selfie_url, inner_voice, unlocked_at) VALUES (?, ?, ?, ?, ?, ?)",
         [userId, ach.id, char.id, selfieUrl, innerVoice, nowIso()]
       );
-    } catch { continue; }
+    } catch (err) {
+      console.error(`[achievements] 插入失败：${ach.name}`, err.message);
+      continue;
+    }
 
-    if (!insertResult || insertResult.affectedRows === 0) continue;
+    if (!insertResult || insertResult.affectedRows === 0) {
+      console.log(`[achievements] INSERT IGNORE 被忽略（已存在）：${ach.name}`);
+      continue;
+    }
 
     console.log(`[achievements] 用户 ${userId} 解锁成就：${ach.name}`);
     pushToSession(sessionId, {
