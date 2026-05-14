@@ -2322,16 +2322,20 @@ async function loadCharacter() {
 document.getElementById("rp-card-regen").addEventListener("click", async () => {
   const btn = document.getElementById("rp-card-regen");
   btn.disabled = true;
-  // 显示骨架屏
   const img = document.getElementById("rp-card-img");
   const skeleton = document.getElementById("rp-card-skeleton");
   if (img) img.classList.add("hidden");
   if (skeleton) skeleton.classList.remove("hidden");
+  // 60s 超时兜底，防止 SSE 未到达时按钮永久禁用
+  const fallback = setTimeout(() => { btn.disabled = false; }, 60000);
   try {
     await api("POST", "/character/cards/generate");
-    // 结果通过 SSE card_update 推送，无需等待
+    // 结果通过 SSE card_update 推送；SSE 到达时会清除 disabled
+    // 同时在 SSE handler 里 clearTimeout(fallback) 是做不到的，靠超时兜底即可
   } catch {
+    clearTimeout(fallback);
     btn.disabled = false;
+    if (skeleton) skeleton.classList.remove("hidden");
   }
 });
 
@@ -2387,8 +2391,9 @@ async function openCardLibrary() {
         <button class="cli-del" title="删除">✕</button>
       `;
       item.querySelector("img").addEventListener("click", async () => {
-        await api("PATCH", `/character/cards/${card.id}/activate`);
+        const res = await api("PATCH", `/character/cards/${card.id}/activate`);
         modal.classList.add("hidden");
+        if (res?.card_url) renderCharacterCard(res.card_url);
       });
       item.querySelector(".cli-del").addEventListener("click", async (e) => {
         e.stopPropagation();

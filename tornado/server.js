@@ -722,7 +722,7 @@ async function generateCharacterCard(force = false, userId) {
     if (existing) return existing.image_url;
   }
 
-  const prompt = `${await buildCharacterPromptPrefix(userId)}，全身立绘，竖版人物卡片，精美动漫插画风格，半身照，人物居中，高质量`;
+  const prompt = `${await buildCharacterPromptPrefix(userId)}，半身照，竖版构图，精美动漫插画风格，单人，仅一个人物，人物居中，高质量`;
   let url = null;
   try {
     url = await callImageApi(prompt, { hd: true, aspectRatio: "2:3" });
@@ -919,7 +919,9 @@ ${personality}当前心动值：${current}/100，${relationStage}。
       pushToSession(sessionId, { affection_update: true, affection: newVal, delta: clamped });
       checkAndUnlockAchievements(userId, sessionId).catch(() => {});
     }
-  } catch {}
+  } catch (err) {
+    console.error("[affection] 更新失败:", err.message);
+  }
 }
 
 async function updateTopicSummary(sessionId, recentMsgs, userId) {
@@ -1555,14 +1557,16 @@ async function handleRequest(req, res) {
 
   // GET /achievements — 当前用户已解锁成就列表
   if (method === "GET" && pathname === "/achievements") {
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 200, []); return; }
     const rows = await dbAll(
       `SELECT ua.id, ua.achievement_id, ua.selfie_url, ua.inner_voice, ua.unlocked_at,
               a.name, a.type, a.threshold
        FROM user_achievements ua
        JOIN achievements a ON a.id = ua.achievement_id
-       WHERE ua.user_id = ?
+       WHERE ua.user_id = ? AND ua.character_id = ?
        ORDER BY ua.unlocked_at DESC`,
-      [userId]
+      [userId, char.id]
     );
     send(res, 200, rows);
     return;
@@ -2001,7 +2005,7 @@ async function handleRequest(req, res) {
     // 每 N 轮更新一次心动值
     const affectionInterval = Number(await getGlobalSetting("affection_interval", "3")) || 3;
     if (userMsgCount % affectionInterval === 0 && userMsgCount > 0) {
-      updateAffection(sessionId, updatedMsgs, userId).catch(() => {});
+      updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message));
     }
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId).catch(() => {});
@@ -2472,11 +2476,11 @@ async function checkAndUnlockAchievements(userId, sessionId) {
   const achievements = await dbAll("SELECT * FROM achievements WHERE enabled = 1", []);
   if (!achievements.length) return;
 
-  const unlocked = await dbAll("SELECT achievement_id FROM user_achievements WHERE user_id = ?", [userId]);
-  const unlockedIds = new Set(unlocked.map((r) => r.achievement_id));
-
   const char = await getActiveCharacter(userId);
   if (!char) return;
+
+  const unlocked = await dbAll("SELECT achievement_id FROM user_achievements WHERE user_id = ? AND character_id = ?", [userId, char.id]);
+  const unlockedIds = new Set(unlocked.map((r) => r.achievement_id));
 
   const [[msgRow]] = await getDb().execute(`SELECT COUNT(*) as n FROM messages WHERE user_id = ? AND role = 'user'`, [userId]);
   const msgCount = msgRow.n;
