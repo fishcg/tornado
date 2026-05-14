@@ -224,10 +224,11 @@ export async function initDb() {
   await ensureColumn(pool, "user_settings", "scene_image_count", "INT NOT NULL DEFAULT 0");
   // 迁移：将 user_achievements 的唯一键从 (user_id, achievement_id) 改为包含 character_id
   try {
-    const [idxRows] = await pool.execute(
-      "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_achievements' AND INDEX_NAME='uq_user_achievement' AND INDEX_NAME NOT IN (SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_achievements' AND COLUMN_NAME='character_id' AND INDEX_NAME='uq_user_achievement')"
+    const [cols] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='user_achievements' AND INDEX_NAME='uq_user_achievement'"
     );
-    if (idxRows.length > 0) {
+    const hasCharacterId = cols.some(r => r.COLUMN_NAME === 'character_id');
+    if (!hasCharacterId) {
       await pool.execute("ALTER TABLE user_achievements DROP INDEX uq_user_achievement");
       await pool.execute("ALTER TABLE user_achievements ADD UNIQUE KEY uq_user_achievement (user_id, achievement_id, character_id)");
     }
