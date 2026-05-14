@@ -169,4 +169,9 @@ CI/CD 由 `.woodpecker.yml` 驱动，推送到主分支后自动构建镜像并�
 
 ## License
 
-MIT
+本项目基于 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 协议开源。
+
+- 个人学习、研究、非商业用途：免费使用
+- **商业用途（含 SaaS、付费产品、内部商业系统等）需获得授权并付费**，请联系作者
+
+> 未经授权将本项目用于商业目的，视为侵权。
