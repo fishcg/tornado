@@ -1,4 +1,4 @@
-NAME=memory-ai
+NAME=tornado
 VERSION=$(shell cat package.json | grep version | head -1 | sed 's/.*: "\([^"]*\)".*/\1/')
 REGISTRY_PREFIX=172.24.173.77:30500/
 
