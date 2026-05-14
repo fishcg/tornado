@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tornado — 登录</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="auth-page">
+  <div class="auth-container">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">🌀</div>
+      <span class="auth-logo-title">Tornado</span>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login" onclick="switchTab('login')">登录</button>
+      <button class="auth-tab" id="tab-register" onclick="switchTab('register')">注册</button>
+    </div>
+
+    <form class="auth-form" id="form-login" onsubmit="handleLogin(event)">
+      <div>
+        <label>用户名</label>
+        <input type="text" id="login-username" autocomplete="username" required />
+      </div>
+      <div>
+        <label>密码</label>
+        <input type="password" id="login-password" autocomplete="current-password" required />
+      </div>
+      <div class="auth-error" id="login-error"></div>
+      <button type="submit" class="auth-submit" id="login-btn">登录</button>
+    </form>
+
+    <form class="auth-form" id="form-register" style="display:none" onsubmit="handleRegister(event)">
+      <div>
+        <label>用户名</label>
+        <input type="text" id="reg-username" autocomplete="username" required />
+      </div>
+      <div>
+        <label>密码（至少 6 位）</label>
+        <input type="password" id="reg-password" autocomplete="new-password" required />
+      </div>
+      <div>
+        <label>邀请码</label>
+        <input type="text" id="reg-code" autocomplete="off" required />
+      </div>
+      <div class="auth-error" id="reg-error"></div>
+      <button type="submit" class="auth-submit" id="reg-btn">注册</button>
+    </form>
+  </div>
+
+  <script>
+    function switchTab(tab) {
+      document.getElementById("tab-login").classList.toggle("active", tab === "login");
+      document.getElementById("tab-register").classList.toggle("active", tab === "register");
+      document.getElementById("form-login").style.display = tab === "login" ? "flex" : "none";
+      document.getElementById("form-register").style.display = tab === "register" ? "flex" : "none";
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById("login-btn");
+      const errEl = document.getElementById("login-error");
+      errEl.textContent = "";
+      btn.disabled = true;
+      try {
+        const res = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: document.getElementById("login-username").value.trim(),
+            password: document.getElementById("login-password").value
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || "登录失败"; return; }
+        location.href = "/";
+      } catch {
+        errEl.textContent = "网络错误，请重试";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function handleRegister(e) {
+      e.preventDefault();
+      const btn = document.getElementById("reg-btn");
+      const errEl = document.getElementById("reg-error");
+      errEl.textContent = "";
+      btn.disabled = true;
+      try {
+        const res = await fetch("/auth/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: document.getElementById("reg-username").value.trim(),
+            password: document.getElementById("reg-password").value,
+            invite_code: document.getElementById("reg-code").value.trim()
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) { errEl.textContent = data.error || "注册失败"; return; }
+        location.href = "/";
+      } catch {
+        errEl.textContent = "网络错误，请重试";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>

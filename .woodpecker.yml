@@ -1,0 +1,38 @@
+clone:
+  git:
+    image: 172.24.173.77:30500/woodpecker-git:latest
+    settings:
+      partial: false
+      depth: 1
+      tags: true
+    environment:
+      - https_proxy=http://172.24.173.76:7899
+      - http_proxy=http://172.24.173.76:7899
+      - no_proxy=localhost,127.0.0.1,10.42.0.0/16,10.43.0.0/16,172.24.173.77
+
+steps:
+  build-and-push:
+    image: 172.24.173.77:30500/standard-docker:latest
+    privileged: true
+    settings:
+      registry: http://172.24.173.77:30500
+      repo: 172.24.173.77:30500/memory-ai
+      tags:
+        - latest
+        - ${CI_COMMIT_SHA:0:7}
+      insecure: true
+      build_args:
+        - http_proxy=http://172.24.173.76:7899
+        - https_proxy=http://172.24.173.76:7899
+        - no_proxy=localhost,127.0.0.1,172.24.173.77,10.42.0.0/16,10.43.0.0/16
+    when:
+      event: [push, tag]
+
+  update-k8s-deployment:
+    image: 172.24.173.77:30500/bitnami-kubectl:latest
+    environment:
+      KUBECONFIG: /woodpecker/kubeconfig
+    commands:
+      - kubectl set image deployment/memory-ai memory-ai=172.24.173.77:30500/memory-ai:${CI_COMMIT_SHA:0:7} --namespace=default
+    when:
+      event: [push, tag]

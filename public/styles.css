@@ -1,0 +1,301 @@
+:root {
+  --bg: #f4efe3;
+  --paper: rgba(255, 250, 240, 0.88);
+  --ink: #23180f;
+  --muted: #6a5543;
+  --line: rgba(79, 51, 29, 0.14);
+  --accent: #ba4a28;
+  --accent-soft: #f3c7a2;
+  --shadow: 0 24px 60px rgba(79, 51, 29, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(186, 74, 40, 0.18), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(17, 95, 83, 0.15), transparent 28%),
+    linear-gradient(135deg, #f8f1e4, #e6d4bd);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.page-shell {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+  padding: 24px;
+}
+
+.sidebar,
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.panel {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  padding: 20px;
+  backdrop-filter: blur(10px);
+}
+
+.hero,
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+.grid.grid-full {
+  grid-template-columns: 1fr;
+}
+
+.eyebrow,
+.label,
+small,
+.muted {
+  color: var(--muted);
+}
+
+.eyebrow,
+.label {
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 12px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin-top: 0;
+}
+
+input,
+textarea,
+button {
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  cursor: pointer;
+  background: var(--accent);
+  color: white;
+  border: none;
+}
+
+button.secondary {
+  width: auto;
+  background: #115f53;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stats {
+  display: grid;
+  gap: 12px;
+}
+
+.stat {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--line);
+}
+
+.stat span {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.memory-list {
+  display: grid;
+  gap: 14px;
+}
+
+.memory-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.6);
+  padding: 16px;
+}
+
+.memory-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.memory-delete-btn {
+  width: auto;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #8f2d17;
+  font-size: 13px;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tags span,
+code {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(186, 74, 40, 0.12);
+}
+
+.result {
+  min-height: 90px;
+  white-space: pre-wrap;
+}
+
+.graph-panel {
+  overflow: hidden;
+}
+
+.graph-view {
+  min-height: 520px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+  overflow: auto;
+}
+
+.graph-empty {
+  padding: 24px;
+}
+
+.graph-svg {
+  width: 100%;
+  min-width: 780px;
+  height: 520px;
+  display: block;
+}
+
+.graph-edge {
+  stroke: rgba(35, 24, 15, 0.24);
+  stroke-width: 1.5;
+}
+
+.graph-edge-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.graph-node {
+  fill: rgba(186, 74, 40, 0.9);
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 2;
+}
+
+.graph-node-id,
+.graph-node-label {
+  fill: white;
+  pointer-events: none;
+}
+
+.graph-node-id {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.graph-node-label {
+  font-size: 10px;
+}
+
+.graph-details {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+  min-height: 92px;
+  white-space: normal;
+}
+
+.graph-details h4,
+.graph-details p {
+  margin-bottom: 8px;
+}
+
+.graph-details ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.graph-meta {
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.graph-chip {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(17, 95, 83, 0.12);
+}
+
+.graph-edge-group,
+.graph-node-group {
+  cursor: pointer;
+}
+
+.graph-edge-group.is-active .graph-edge {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+.graph-edge-group.is-active .graph-edge-label {
+  fill: var(--accent);
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .graph-view {
+    min-height: 420px;
+  }
+
+  .graph-svg {
+    height: 420px;
+    min-width: 680px;
+  }
+}
+
+@media (max-width: 960px) {
+  .page-shell,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

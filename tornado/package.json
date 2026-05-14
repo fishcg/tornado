@@ -1,0 +1,16 @@
+{
+  "name": "tornado",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=../.env server.js",
+    "dev": "node --env-file=../.env --watch server.js",
+    "cli": "node --env-file=../.env chat.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "mysql2": "^3.22.3"
+  }
+}

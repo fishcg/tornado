@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>龙卷</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="layout">
+
+    <!-- ── 左侧边栏 ── -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="sidebar-brand-logo">
+          <img src="/images/logo.png" alt="logo" style="width:28px;height:28px;object-fit:contain;border-radius:6px">
+        </div>
+        <div class="sidebar-brand-text">
+          <div class="sidebar-brand-title">Tornado</div>
+          <div class="sidebar-brand-sub">虚拟伴侣聊天</div>
+        </div>
+      </div>
+
+      <div class="search-bar">
+        <input id="search-input" type="text" placeholder="搜索会话/消息 (Ctrl+K)">
+      </div>
+
+      <div class="session-list-header">
+        <span>会话列表</span>
+        <button id="btn-new" class="session-new-btn" title="新建对话">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新建
+        </button>
+      </div>
+
+      <ul id="session-list"></ul>
+
+      <div class="sidebar-shortcuts">
+        <button class="shortcut-btn" id="sc-search">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          搜索消息
+        </button>
+        <button class="shortcut-btn" id="sc-export">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          导出对话
+        </button>
+        <button class="shortcut-btn" id="sc-gallery">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          图片画廊
+        </button>
+        <button class="shortcut-btn" id="sc-archive">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+          归档会话
+        </button>
+        <button class="shortcut-btn" id="sc-logout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          退出登录
+        </button>
+      </div>
+
+      <div class="sidebar-mood-bar" id="sidebar-mood-bar">
+        <div id="sidebar-mood-indicator" class="mood-indicator"></div>
+      </div>
+    </aside>
+
+    <!-- ── 中间聊天区 ── -->
+    <main class="chat-area">
+      <div class="chat-header-bar">
+        <button class="btn-hamburger" id="btn-hamburger" title="菜单">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <div class="chat-header-left">
+          <div id="chat-header-avatar" class="chat-header-avatar"></div>
+          <span class="chat-title" id="chat-title-text">龙卷</span>
+          <!-- 沉浸模式下显示的心动值+情绪 -->
+          <div class="immersive-status" id="immersive-status">
+            <span class="immersive-mood" id="immersive-mood-dot"></span>
+            <span class="immersive-mood-label" id="immersive-mood-label"></span>
+            <button class="rp-heart-btn immersive-heart-btn" style="background:none;border:none;padding:0;cursor:pointer;display:inline-flex;align-items:center;gap:3px;color:inherit;font-size:inherit">
+              <span class="immersive-heart">♥</span>
+              <span id="immersive-heart-count">10</span>
+            </button>
+          </div>
+        </div>
+        <div class="chat-header-actions">
+          <button class="chat-action-btn" id="btn-scene-image" title="生成当前场景插图">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 8h.01"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m21 15-5-5L5 21"/><circle cx="9" cy="9" r="2"/></svg>
+            插图
+          </button>
+          <button class="chat-action-btn" id="btn-auto-mode" title="自动模式">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            自动
+          </button>
+          <button class="chat-action-btn" id="btn-semi-auto" title="半自动模式">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            半自动
+          </button>
+          <button class="chat-action-btn" id="btn-events" title="事件流">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            事件流
+          </button>
+          <button class="chat-action-btn" id="btn-immersive" title="沉浸模式">
+            <svg id="icon-immersive-enter" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            <svg id="icon-immersive-exit" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>
+          </button>
+          <button class="chat-action-btn" id="btn-fullscreen" title="全屏">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+          </button>
+          <button class="chat-action-btn" id="btn-more" title="更多">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="messages"></div>
+
+      <div class="input-area">
+        <div class="input-row">
+          <label class="btn-img" title="发送图片">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            <input type="file" id="img-input" accept="image/*" style="display:none">
+          </label>
+          <textarea id="input" placeholder="输入消息… (Enter 发送 / Shift+Enter 换行)" rows="1"></textarea>
+          <button id="btn-send" title="发送">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div class="input-hint">AI 提示</div>
+      </div>
+    </main>
+
+    <!-- ── 右侧角色面板 ── -->
+    <aside class="right-panel">
+      <div class="rp-header">
+        <span>我的伴侣</span>
+        <button class="rp-close-btn" id="rp-close-btn" title="关闭">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div class="rp-avatar-section">
+        <img id="rp-card-img" class="rp-card-img hidden" alt="">
+        <div id="rp-card-skeleton" class="rp-card-skeleton">
+          <div class="spinner"></div>
+          <span>生成角色卡片中…</span>
+        </div>
+        <div class="rp-card-overlay">
+          <span id="rp-card-name" class="rp-card-name"></span>
+          <button class="rp-heart-btn" id="rp-heart-btn">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            <span id="rp-heart-count">10</span>
+          </button>
+        </div>
+        <div class="rp-card-actions">
+          <button class="rp-card-btn" id="rp-card-regen" title="重新生成">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          </button>
+          <button class="rp-card-btn" id="rp-card-library" title="卡片库">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+          </button>
+          <button class="rp-card-btn" id="rp-avatar-reset" title="重置情绪头像">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="rp-char-name-row">
+        <span id="rp-char-name-text" class="rp-char-name"></span>
+        <button class="rp-heart-btn" id="rp-heart-btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+          <span id="rp-heart-count">10</span>
+        </button>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-section-title">当前情绪</div>
+        <div id="rp-mood-label" class="rp-mood-label"></div>
+        <div id="rp-mood-grid" class="rp-mood-grid"></div>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-section-title">话题摘要</div>
+        <div id="rp-topic-text" class="rp-info-text">暂无话题</div>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-section-title">记忆关联</div>
+        <div id="rp-memory-status" class="rp-info-text">记忆库：连接中…</div>
+        <button id="rp-ingest-btn" class="rp-ingest-btn">存入记忆库</button>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-dnd-row">
+          <span class="rp-section-title" style="margin-bottom:0">勿扰时段</span>
+          <div id="rp-dnd-toggle" class="rp-toggle" title="点击配置"></div>
+        </div>
+        <div id="rp-dnd-time" class="rp-info-text" style="margin-top:6px">未设置</div>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-recent-header">
+          <span class="rp-section-title" style="margin-bottom:0">最近生成的图片</span>
+          <button class="rp-view-all" id="rp-view-all">查看全部</button>
+        </div>
+        <div id="rp-recent-grid" class="rp-recent-grid"></div>
+      </div>
+
+      <div class="rp-section">
+        <div class="rp-soul-header" id="rp-soul-toggle">
+          <span class="rp-section-title" style="margin-bottom:0">角色设定</span>
+          <svg class="rp-soul-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div id="rp-soul-body" class="rp-soul-body hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <select id="character-select" class="time-input" style="width:auto;max-width:130px;font-size:12px"></select>
+            <button id="character-new-btn" class="rp-card-btn" style="padding:3px 8px;font-size:12px">+新建</button>
+          </div>
+          <div class="rp-soul-field">
+            <label>角色名称</label>
+            <input type="text" id="char-name" class="soul-field-input" style="height:28px;padding:4px 8px" placeholder="角色名">
+          </div>
+          <div class="rp-soul-field">
+            <label>外貌</label>
+            <textarea id="char-appearance" rows="2" class="soul-field-input" placeholder="外貌描述，用于生成图片"></textarea>
+          </div>
+          <div class="rp-soul-field">
+            <label>人物说明</label>
+            <textarea id="char-description" rows="2" class="soul-field-input" placeholder="角色来源、背景说明"></textarea>
+          </div>
+          <div class="rp-soul-field">
+            <label>性格</label>
+            <textarea id="char-personality" rows="3" class="soul-field-input" placeholder="性格特征"></textarea>
+          </div>
+          <div class="rp-soul-field">
+            <label>其他设定</label>
+            <textarea id="soul-editor" rows="8" class="soul-field-input" style="font-family:monospace;font-size:11px" placeholder="说话方式、禁忌、规则等"></textarea>
+          </div>
+          <button id="rp-soul-save" class="rp-ingest-btn" style="margin-top:8px">保存角色设定</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── 底部导航 ── -->
+    <nav class="bottom-nav">
+      <button class="nav-tab active" data-tab="chat">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        对话
+      </button>
+      <button class="nav-tab" data-tab="gallery">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+        画廊
+      </button>
+      <button class="nav-tab" data-tab="status">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+        状态
+      </button>
+      <button class="nav-tab" data-tab="search">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        搜索
+      </button>
+      <button class="nav-tab" data-tab="achievements">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+        成就
+      </button>
+      <button class="nav-tab" data-tab="settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        设置
+      </button>
+    </nav>
+
+  </div><!-- /.layout -->
+
+  <!-- ── 确认弹窗 ── -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal">
+      <p id="modal-msg"></p>
+      <div class="modal-actions">
+        <button id="modal-yes">存入记忆</button>
+        <button id="modal-no">不用了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 头像编辑弹窗 ── -->
+  <div id="avatar-modal" class="modal-overlay hidden">
+    <div class="modal avatar-modal-box">
+      <p id="avatar-modal-title">更换头像</p>
+      <div id="avatar-step1">
+        <div class="avatar-preview-row">
+          <div id="avatar-preview" class="avatar avatar-lg"></div>
+        </div>
+        <div class="avatar-actions">
+          <label class="btn-upload">
+            上传图片
+            <input type="file" id="avatar-file-input" accept="image/*" style="display:none">
+          </label>
+          <button id="avatar-remove">恢复默认</button>
+        </div>
+        <div class="modal-actions">
+          <button id="avatar-save">确定</button>
+          <button id="avatar-cancel">取消</button>
+        </div>
+      </div>
+      <div id="avatar-step2" class="hidden">
+        <div class="crop-wrap">
+          <canvas id="crop-canvas"></canvas>
+          <div class="crop-circle-mask"></div>
+        </div>
+        <p class="crop-hint">拖动移动 · 滚轮缩放</p>
+        <div class="modal-actions">
+          <button id="crop-confirm">确定裁剪</button>
+          <button id="crop-cancel">返回</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 设置面板 ── -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal settings-modal-box">
+      <p>设置</p>
+      <div class="settings-row">
+        <label>勿扰开始</label>
+        <input type="time" id="dnd-start" class="time-input">
+      </div>
+      <div class="settings-row">
+        <label>勿扰结束</label>
+        <input type="time" id="dnd-end" class="time-input">
+      </div>
+      <div class="settings-row">
+        <label>主动发消息间隔</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="proactive-idle" class="time-input" min="1" max="1440" placeholder="30" style="width:70px">
+          <span style="font-size:12px;color:var(--text-dim)">分钟</span>
+        </div>
+      </div>
+      <p class="settings-hint">设置后，龙卷在该时段内不会主动发消息。留空表示不限制。主动发消息间隔留空则使用默认值（30分钟）。</p>
+      <div class="settings-divider"></div>
+      <div class="settings-row">
+        <label>聊天背景透明度</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="bg-opacity" min="0" max="1" step="0.01" style="width:90px;accent-color:var(--accent)">
+          <span id="bg-opacity-val" style="font-size:12px;color:var(--text-dim);width:28px;text-align:right"></span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <label>气泡透明度</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="range" id="bubble-opacity" min="0" max="1" step="0.01" style="width:90px;accent-color:var(--accent)">
+          <span id="bubble-opacity-val" style="font-size:12px;color:var(--text-dim);width:28px;text-align:right"></span>
+        </div>
+      </div>
+      <div class="settings-divider"></div>
+      <div class="settings-row">
+        <label>卡片轮播</label>
+        <div id="slideshow-toggle" class="rp-toggle"></div>
+      </div>
+      <div class="settings-row">
+        <label>轮播间隔</label>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="slideshow-interval" class="time-input" min="1" max="1440" placeholder="30" style="width:70px">
+          <span style="font-size:12px;color:var(--text-dim)">分钟</span>
+        </div>
+      </div>
+      <p class="settings-hint">开启后每隔指定时间自动生成新卡片并切换展示。</p>
+      <div class="settings-divider"></div>
+      <div class="settings-row">
+        <label>隐藏动作描述</label>
+        <div id="collapse-action-toggle" class="rp-toggle"></div>
+      </div>
+      <p class="settings-hint">开启后，括号内的动作/情绪描述将被隐藏。</p>
+      <div class="settings-divider"></div>
+      <div class="settings-row">
+        <label>聊天插图</label>
+        <div id="chat-image-toggle" class="rp-toggle"></div>
+      </div>
+      <div class="settings-row">
+        <label>图片默认展开</label>
+        <div id="image-auto-expand-toggle" class="rp-toggle"></div>
+      </div>
+      <div class="settings-row">
+        <label>生图失败时启用备用 API</label>
+        <div id="image-fallback-toggle" class="rp-toggle"></div>
+      </div>
+      <p class="settings-hint">关闭聊天插图后，角色不会自动生成图片（[IMG:] 标记仍生效）。备用 API 失败时切换 DashScope 重试。</p>
+      <div class="modal-actions">
+        <button id="settings-save">保存</button>
+        <button id="settings-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 伴侣弹窗 ── -->
+  <div id="companion-modal" class="modal-overlay hidden">
+    <div class="companion-box">
+      <div class="gallery-header">
+        <span>我的伴侣</span>
+        <button id="companion-close">✕</button>
+      </div>
+      <div class="companion-body">
+
+        <div class="rp-avatar-section">
+          <img id="cm-card-img" class="rp-card-img hidden" alt="">
+          <div id="cm-card-skeleton" class="rp-card-skeleton">
+            <div class="spinner"></div>
+            <span>生成角色卡片中…</span>
+          </div>
+          <div class="rp-card-overlay">
+            <span id="cm-card-name" class="rp-card-name"></span>
+          </div>
+          <div class="rp-card-actions">
+            <button class="rp-card-btn" id="cm-card-regen" title="重新生成">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            </button>
+            <button class="rp-card-btn" id="cm-card-library" title="卡片库">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+            </button>
+            <button class="rp-card-btn" id="cm-avatar-reset" title="重置情绪头像">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="rp-section">
+          <div class="rp-section-title">当前情绪</div>
+          <div id="cm-mood-label" class="rp-mood-label"></div>
+        </div>
+
+        <div class="rp-section">
+          <div class="rp-section-title">话题摘要</div>
+          <div id="cm-topic-text" class="rp-info-text">暂无话题</div>
+        </div>
+
+        <div class="rp-section">
+          <div class="rp-section-title">记忆关联</div>
+          <div id="cm-memory-status" class="rp-info-text">记忆库：连接中…</div>
+          <button id="cm-ingest-btn" class="rp-ingest-btn">存入记忆库</button>
+        </div>
+
+        <div class="rp-section">
+          <div class="rp-soul-header" id="cm-soul-toggle">
+            <span class="rp-section-title" style="margin-bottom:0">角色设定</span>
+            <svg class="rp-soul-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
+          <div id="cm-soul-body" class="rp-soul-body hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <select id="cm-character-select" class="time-input" style="width:auto;max-width:130px;font-size:12px"></select>
+              <button id="cm-character-new-btn" class="rp-card-btn" style="padding:3px 8px;font-size:12px">+新建</button>
+            </div>
+            <div class="rp-soul-field">
+              <label>角色名称</label>
+              <input type="text" id="cm-char-name" class="soul-field-input" style="height:28px;padding:4px 8px" placeholder="角色名">
+            </div>
+            <div class="rp-soul-field">
+              <label>外貌</label>
+              <textarea id="cm-char-appearance" rows="2" class="soul-field-input" placeholder="外貌描述，用于生成图片"></textarea>
+            </div>
+            <div class="rp-soul-field">
+              <label>人物说明</label>
+              <textarea id="cm-char-description" rows="2" class="soul-field-input" placeholder="角色来源、背景说明"></textarea>
+            </div>
+            <div class="rp-soul-field">
+              <label>性格</label>
+              <textarea id="cm-char-personality" rows="3" class="soul-field-input" placeholder="性格特征"></textarea>
+            </div>
+            <div class="rp-soul-field">
+              <label>其他设定</label>
+              <textarea id="cm-soul-editor" rows="8" class="soul-field-input" style="font-family:monospace;font-size:11px" placeholder="说话方式、禁忌、规则等"></textarea>
+            </div>
+            <button id="cm-soul-save" class="rp-ingest-btn" style="margin-top:8px">保存角色设定</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 卡片库 ── -->
+  <div id="card-library-modal" class="modal-overlay hidden">
+    <div class="gallery-box">
+      <div class="gallery-header">
+        <span>角色卡片库</span>
+        <button id="card-library-close">✕</button>
+      </div>
+      <div id="card-library-grid" class="card-library-grid"></div>
+    </div>
+  </div>
+
+  <!-- ── 图片画廊 ── -->
+  <div id="gallery-modal" class="modal-overlay hidden">
+    <div class="gallery-box">
+      <div class="gallery-header">
+        <span>图片画廊</span>
+        <button id="gallery-close">✕</button>
+      </div>
+      <div id="gallery-grid" class="gallery-grid"></div>
+    </div>
+  </div>
+
+  <!-- ── 搜索结果面板 ── -->
+  <div id="search-results" class="search-results hidden"></div>
+
+  <!-- ── 归档会话 ── -->
+  <div id="archived-modal" class="modal-overlay hidden">
+    <div class="gallery-box">
+      <div class="gallery-header">
+        <span>归档会话</span>
+        <button id="archived-close">✕</button>
+      </div>
+      <div id="archived-list" class="archived-list"></div>
+    </div>
+  </div>
+
+  <div id="affection-modal" class="modal-overlay hidden">
+    <div class="companion-box">
+      <div class="companion-header">
+        <span>心动历程</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div id="affection-set-row" style="display:flex;align-items:center;gap:6px">
+            <input type="number" id="affection-set-input" min="0" max="100" placeholder="0~100" style="width:72px;padding:3px 7px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px">
+            <button id="affection-set-confirm" style="padding:3px 10px;border-radius:6px;border:none;background:var(--accent-dim);color:var(--accent);font-size:12px;cursor:pointer">设置</button>
+          </div>
+          <button id="affection-modal-close">✕</button>
+        </div>
+      </div>
+      <div id="affection-log-list" class="companion-body"></div>
+    </div>
+  </div>
+
+  <div id="achievements-modal" class="modal-overlay hidden">
+    <div class="companion-box" style="width:min(96vw,560px)">
+      <div class="companion-header">
+        <span>我的成就</span>
+        <button id="achievements-modal-close">✕</button>
+      </div>
+      <div id="achievements-list" class="companion-body"></div>
+    </div>
+  </div>
+
+  <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

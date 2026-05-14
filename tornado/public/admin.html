@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理后台 — Tornado</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .admin-layout {
+      display: flex;
+      min-height: 100vh;
+      background: var(--bg, #0e0e12);
+      color: var(--text, #e8e8f0);
+      font-family: system-ui, sans-serif;
+    }
+    .admin-nav {
+      width: 200px;
+      flex-shrink: 0;
+      background: var(--surface, #16161a);
+      border-right: 1px solid var(--border, #2a2a35);
+      display: flex;
+      flex-direction: column;
+      padding: 0;
+    }
+    .admin-nav-header {
+      padding: 20px 16px 12px;
+      border-bottom: 1px solid var(--border, #2a2a35);
+    }
+    .admin-nav-header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 4px;
+      color: var(--accent, #7c6fcd);
+    }
+    .admin-nav-header a {
+      font-size: 12px;
+      color: var(--text-dim, #888);
+      text-decoration: none;
+    }
+    .admin-nav-header a:hover { color: var(--text, #e8e8f0); }
+    .admin-nav-items { padding: 8px 0; flex: 1; }
+    .admin-nav-item {
+      display: block;
+      padding: 10px 16px;
+      font-size: 14px;
+      color: var(--text-dim, #888);
+      cursor: pointer;
+      border: none;
+      background: none;
+      width: 100%;
+      text-align: left;
+      border-left: 3px solid transparent;
+      transition: color 0.15s, background 0.15s;
+    }
+    .admin-nav-item:hover { color: var(--text, #e8e8f0); background: var(--surface2, #1a1a1e); }
+    .admin-nav-item.active { color: var(--accent, #7c6fcd); border-left-color: var(--accent, #7c6fcd); background: var(--surface2, #1a1a1e); }
+    .admin-content {
+      flex: 1;
+      padding: 28px 32px;
+      overflow-y: auto;
+    }
+    .admin-section { display: none; }
+    .admin-section.active { display: block; }
+    .admin-section h2 { font-size: 18px; font-weight: 600; margin: 0 0 20px; }
+    .admin-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .admin-stat-card {
+      background: var(--surface, #16161a);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 10px;
+      padding: 16px;
+      text-align: center;
+    }
+    .admin-stat-card .num { font-size: 28px; font-weight: 700; color: var(--accent, #7c6fcd); }
+    .admin-stat-card .label { font-size: 12px; color: var(--text-dim, #888); margin-top: 4px; }
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .admin-table th {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border, #2a2a35);
+      color: var(--text-dim, #888);
+      font-weight: 500;
+    }
+    .admin-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border, #2a2a35);
+      vertical-align: middle;
+    }
+    .admin-table tr:last-child td { border-bottom: none; }
+    .admin-table tr:hover td { background: var(--surface2, #1a1a1e); }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-admin { background: rgba(124,111,205,0.2); color: var(--accent, #7c6fcd); }
+    .badge-user { background: rgba(255,255,255,0.06); color: var(--text-dim, #888); }
+    .admin-form {
+      background: var(--surface, #16161a);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .admin-form h3 { font-size: 14px; font-weight: 600; margin: 0 0 14px; }
+    .admin-form input, .admin-form textarea {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--surface2, #1a1a1e);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 6px;
+      color: var(--text, #e8e8f0);
+      padding: 8px 10px;
+      font-size: 13px;
+      margin-bottom: 10px;
+      font-family: inherit;
+    }
+    .admin-form textarea { resize: vertical; min-height: 80px; }
+    .admin-form input:focus, .admin-form textarea:focus {
+      outline: none;
+      border-color: var(--accent, #7c6fcd);
+    }
+    .admin-form .row { display: flex; gap: 8px; align-items: flex-end; }
+    .admin-form .row input { margin-bottom: 0; }
+    .btn-sm {
+      padding: 6px 14px;
+      font-size: 12px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.15s;
+    }
+    .btn-sm:hover { opacity: 0.85; }
+    .btn-primary { background: var(--accent, #7c6fcd); color: #fff; }
+    .btn-danger { background: #c0392b; color: #fff; }
+    .btn-secondary { background: var(--surface2, #1a1a1e); color: var(--text, #e8e8f0); border: 1px solid var(--border, #2a2a35); }
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .toggle-wrap label { font-size: 14px; }
+    .toggle {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute;
+      inset: 0;
+      background: var(--surface2, #1a1a1e);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 22px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle-slider:before {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      left: 2px;
+      top: 2px;
+      background: var(--text-dim, #888);
+      border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--accent, #7c6fcd); border-color: var(--accent, #7c6fcd); }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(18px); background: #fff; }
+    .soul-editor { width: 100%; box-sizing: border-box; min-height: 320px; font-family: monospace; font-size: 13px; }
+    .msg { padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+    .msg-ok { background: rgba(39,174,96,0.15); color: #2ecc71; }
+    .msg-err { background: rgba(192,57,43,0.15); color: #e74c3c; }
+    .ach-toggle-btn {
+      padding: 3px 10px;
+      border-radius: 10px;
+      border: none;
+      font-size: 12px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: opacity .15s;
+    }
+    .ach-toggle-on { background: rgba(39,174,96,0.2); color: #2ecc71; }
+    .ach-toggle-off { background: rgba(100,100,120,0.2); color: var(--text-dim, #888); }
+    .ach-toggle-btn:hover { opacity: 0.75; }
+    .ach-toggle-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .ach-edit-input, .ach-edit-select {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border, #2a2a35);
+      background: var(--bg-input, #1a1a2e);
+      color: var(--text, #e0e0e0);
+      font-size: 13px;
+    }
+    .code-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface2, #1a1a1e);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-family: monospace;
+      font-size: 13px;
+      margin-bottom: 6px;
+    }
+    .ann-card {
+      background: var(--surface, #16161a);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .ann-card .ann-info { flex: 1; min-width: 0; }
+    .ann-card .ann-title { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+    .ann-card .ann-meta { font-size: 12px; color: var(--text-dim, #888); }
+    #adminMsg { display: none; }
+  </style>
+</head>
+<body>
+<div class="admin-layout">
+  <nav class="admin-nav">
+    <div class="admin-nav-header">
+      <h1><img src="/images/logo.png" alt="logo" style="width:18px;height:18px;object-fit:contain;border-radius:4px;vertical-align:middle;margin-right:6px">管理后台</h1>
+      <a href="/">← 返回主页</a>
+    </div>
+    <div class="admin-nav-items">
+      <button class="admin-nav-item active" data-section="dashboard">仪表盘</button>
+      <button class="admin-nav-item" data-section="users">用户管理</button>
+      <button class="admin-nav-item" data-section="invite-codes">邀请码</button>
+      <button class="admin-nav-item" data-section="announcements">公告管理</button>
+      <button class="admin-nav-item" data-section="achievements">成就管理</button>
+      <button class="admin-nav-item" data-section="system">系统设置</button>
+    </div>
+  </nav>
+
+  <main class="admin-content">
+    <div id="adminMsg" class="msg"></div>
+
+    <section id="section-dashboard" class="admin-section active">
+      <h2>仪表盘</h2>
+      <div class="admin-stats-grid" id="statsGrid">
+        <div class="admin-stat-card"><div class="num" id="stat-users">—</div><div class="label">用户</div></div>
+        <div class="admin-stat-card"><div class="num" id="stat-sessions">—</div><div class="label">会话</div></div>
+        <div class="admin-stat-card"><div class="num" id="stat-messages">—</div><div class="label">消息</div></div>
+        <div class="admin-stat-card"><div class="num" id="stat-announcements">—</div><div class="label">公告</div></div>
+        <div class="admin-stat-card"><div class="num" id="stat-invite-codes">—</div><div class="label">邀请码</div></div>
+      </div>
+    </section>
+
+    <section id="section-users" class="admin-section">
+      <h2>用户管理</h2>
+      <table class="admin-table">
+        <thead>
+          <tr><th>ID</th><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr>
+        </thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+    </section>
+
+    <section id="section-invite-codes" class="admin-section">
+      <h2>邀请码</h2>
+      <div class="admin-form">
+        <h3>新增邀请码</h3>
+        <div class="row">
+          <input id="newCodeInput" placeholder="留空则随机生成">
+          <button class="btn-sm btn-primary" id="addCodeBtn">添加</button>
+        </div>
+      </div>
+      <div id="codesList"></div>
+    </section>
+
+    <section id="section-announcements" class="admin-section">
+      <h2>公告管理</h2>
+      <div class="admin-form">
+        <h3>新建公告</h3>
+        <input id="annTitle" placeholder="标题">
+        <textarea id="annContent" placeholder="内容"></textarea>
+        <button class="btn-sm btn-primary" id="addAnnBtn">发布</button>
+      </div>
+      <div id="annList"></div>
+    </section>
+
+    <section id="section-achievements" class="admin-section">
+      <h2>成就管理</h2>
+      <div class="admin-form">
+        <h3>新建成就</h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+          <select id="ach-type" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);font-size:13px">
+            <option value="message_count">消息数</option>
+            <option value="affection">心动值</option>
+            <option value="streak_days">连续天数</option>
+          </select>
+          <input id="ach-threshold" type="number" min="1" placeholder="阈值" style="width:80px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);font-size:13px">
+          <input id="ach-name" type="text" placeholder="成就名称" style="flex:1;min-width:120px;padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:var(--text);font-size:13px">
+          <button class="btn-sm btn-primary" id="addAchBtn">添加</button>
+        </div>
+      </div>
+      <table class="admin-table" id="ach-table">
+        <thead><tr><th>名称</th><th>类型</th><th>阈值</th><th>启用</th><th>操作</th></tr></thead>
+        <tbody id="ach-list"></tbody>
+      </table>
+    </section>
+
+    <section id="section-system" class="admin-section">
+      <h2>系统设置</h2>
+      <div class="admin-form">
+        <h3>全局生图开关</h3>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="globalImageToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="globalImageToggle">开启全局生图（关闭后所有用户均不生图）</label>
+        </div>
+        <h3 style="margin-top:16px">每日手动插图上限（张/人）</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="number" id="dailySceneImageLimit" min="0" max="999" style="width:80px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <span style="color:var(--text-dim);font-size:13px">0 = 不限制</span>
+        </div>
+        <h3 style="margin-top:16px">心动值更新频次（轮/次）</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="number" id="affectionInterval" min="1" max="20" style="width:80px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <span style="color:var(--text-dim);font-size:13px">每隔多少轮对话评估一次心动值，默认 3</span>
+        </div>
+        <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
+      </div>
+      <div class="admin-form">
+        <h3>Soul 编辑（soul.md）</h3>
+        <textarea class="soul-editor" id="soulEditor" placeholder="加载中…"></textarea>
+        <button class="btn-sm btn-primary" id="saveSoulBtn" style="margin-top:8px">保存 Soul</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+async function api(path, options = {}) {
+  const hasBody = options.body != null;
+  const res = await fetch(path, {
+    headers: hasBody ? { "Content-Type": "application/json" } : {},
+    ...options
+  });
+  if (res.status === 401 || res.status === 403) {
+    location.href = "/";
+    return null;
+  }
+  return res.json();
+}
+
+function showMsg(text, ok = true) {
+  const el = document.getElementById("adminMsg");
+  el.textContent = text;
+  el.className = "msg " + (ok ? "msg-ok" : "msg-err");
+  el.style.display = "block";
+  setTimeout(() => { el.style.display = "none"; }, 3000);
+}
+
+function fmtDate(s) {
+  if (!s) return "—";
+  return new Date(s).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+// ── 导航 ──────────────────────────────────────────────────────────────────────
+document.querySelectorAll(".admin-nav-item").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".admin-nav-item").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".admin-section").forEach((s) => s.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("section-" + btn.dataset.section).classList.add("active");
+    loadSection(btn.dataset.section);
+  });
+});
+
+function loadSection(name) {
+  if (name === "dashboard") loadStats();
+  else if (name === "users") loadUsers();
+  else if (name === "invite-codes") loadCodes();
+  else if (name === "announcements") loadAnnouncements();
+  else if (name === "achievements") loadAchievements();
+  else if (name === "system") loadSystem();
+}
+
+// ── 仪表盘 ────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const data = await api("/admin/stats");
+  if (!data) return;
+  document.getElementById("stat-users").textContent = data.users;
+  document.getElementById("stat-sessions").textContent = data.sessions;
+  document.getElementById("stat-messages").textContent = data.messages;
+  document.getElementById("stat-announcements").textContent = data.announcements;
+  document.getElementById("stat-invite-codes").textContent = data.invite_codes;
+}
+
+// ── 用户管理 ──────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const rows = await api("/admin/users");
+  if (!rows) return;
+  const tbody = document.getElementById("usersBody");
+  tbody.innerHTML = rows.map((u) => `
+    <tr>
+      <td>${u.id}</td>
+      <td>${u.username}</td>
+      <td><span class="badge ${u.is_admin ? "badge-admin" : "badge-user"}">${u.is_admin ? "管理员" : "普通用户"}</span></td>
+      <td>${fmtDate(u.created_at)}</td>
+      <td style="display:flex;gap:6px">
+        <button class="btn-sm btn-secondary" onclick="toggleAdmin(${u.id}, ${u.is_admin})">${u.is_admin ? "取消管理员" : "设为管理员"}</button>
+        <button class="btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">删除</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+async function toggleAdmin(id, current) {
+  const data = await api(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify({ is_admin: current ? 0 : 1 }) });
+  if (data) { showMsg("已更新"); loadUsers(); }
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`确认删除用户「${name}」？此操作不可撤销。`)) return;
+  const data = await api(`/admin/users/${id}`, { method: "DELETE" });
+  if (data) { showMsg("已删除"); loadUsers(); loadStats(); }
+}
+
+// ── 邀请码 ────────────────────────────────────────────────────────────────────
+async function loadCodes() {
+  const rows = await api("/admin/invite-codes");
+  if (!rows) return;
+  const el = document.getElementById("codesList");
+  if (!rows.length) { el.innerHTML = '<p style="color:var(--text-dim);font-size:13px">暂无邀请码</p>'; return; }
+  el.innerHTML = rows.map((r) => `
+    <div class="code-chip">
+      <span>${r.code}</span>
+      <span style="color:var(--text-dim);font-size:11px">${fmtDate(r.created_at)}</span>
+      <button class="btn-sm btn-danger" style="padding:2px 8px" onclick="deleteCode('${r.code}')">删除</button>
+    </div><br>
+  `).join("");
+}
+
+document.getElementById("addCodeBtn").addEventListener("click", async () => {
+  const code = document.getElementById("newCodeInput").value.trim();
+  const data = await api("/admin/invite-codes", { method: "POST", body: JSON.stringify({ code }) });
+  if (data) { showMsg(`邀请码已添加：${data.code}`); document.getElementById("newCodeInput").value = ""; loadCodes(); loadStats(); }
+});
+
+async function deleteCode(code) {
+  if (!confirm(`确认删除邀请码「${code}」？`)) return;
+  const data = await api(`/admin/invite-codes/${encodeURIComponent(code)}`, { method: "DELETE" });
+  if (data) { showMsg("已删除"); loadCodes(); loadStats(); }
+}
+
+// ── 公告管理 ──────────────────────────────────────────────────────────────────
+async function loadAnnouncements() {
+  const rows = await api("/admin/announcements");
+  if (!rows) return;
+  const el = document.getElementById("annList");
+  if (!rows.length) { el.innerHTML = '<p style="color:var(--text-dim);font-size:13px">暂无公告</p>'; return; }
+  el.innerHTML = rows.map((a) => `
+    <div class="ann-card">
+      <div class="ann-info">
+        <div class="ann-title">${a.title}</div>
+        <div class="ann-meta">${fmtDate(a.created_at)}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-top:6px;white-space:pre-wrap">${a.content}</div>
+      </div>
+      <button class="btn-sm btn-danger" onclick="deleteAnn(${a.id})">删除</button>
+    </div>
+  `).join("");
+}
+
+document.getElementById("addAnnBtn").addEventListener("click", async () => {
+  const title = document.getElementById("annTitle").value.trim();
+  const content = document.getElementById("annContent").value.trim();
+  if (!title || !content) { showMsg("标题和内容不能为空", false); return; }
+  const data = await api("/admin/announcements", { method: "POST", body: JSON.stringify({ title, content }) });
+  if (data) {
+    showMsg("公告已发布");
+    document.getElementById("annTitle").value = "";
+    document.getElementById("annContent").value = "";
+    loadAnnouncements();
+    loadStats();
+  }
+});
+
+async function deleteAnn(id) {
+  if (!confirm("确认删除此公告？")) return;
+  const data = await api(`/admin/announcements/${id}`, { method: "DELETE" });
+  if (data) { showMsg("已删除"); loadAnnouncements(); loadStats(); }
+}
+
+// ── 系统设置 ──────────────────────────────────────────────────────────────────
+async function loadSystem() {
+  const [settings, soulData] = await Promise.all([
+    api("/admin/global-settings"),
+    api("/admin/soul")
+  ]);
+  if (settings) {
+    document.getElementById("globalImageToggle").checked = settings.chat_image_enabled !== "0";
+    document.getElementById("dailySceneImageLimit").value = settings.daily_scene_image_limit ?? "5";
+    document.getElementById("affectionInterval").value = settings.affection_interval ?? "3";
+  }
+  if (soulData) {
+    document.getElementById("soulEditor").value = soulData.soul || "";
+  }
+}
+
+document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async () => {
+  const enabled = document.getElementById("globalImageToggle").checked;
+  const limit = Number(document.getElementById("dailySceneImageLimit").value) || 0;
+  const affectionInterval = Number(document.getElementById("affectionInterval").value) || 3;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval }) });
+  if (data) showMsg("已保存");
+});
+
+document.getElementById("saveSoulBtn").addEventListener("click", async () => {
+  const soul = document.getElementById("soulEditor").value;
+  const data = await api("/admin/soul", { method: "PATCH", body: JSON.stringify({ soul }) });
+  if (data) showMsg("Soul 已保存");
+});
+
+// ── 成就管理 ──────────────────────────────────────────────────────────────────
+const ACH_TYPE_LABELS = { message_count: "消息数", affection: "心动值", streak_days: "连续天数" };
+const ACH_TYPE_VALUES = ["message_count", "affection", "streak_days"];
+
+async function loadAchievements() {
+  const rows = await api("/admin/achievements");
+  if (!rows) return;
+  const tbody = document.getElementById("ach-list");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);text-align:center;padding:16px">暂无成就</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map((r) => `
+    <tr data-id="${r.id}" class="ach-row">
+      <td class="ach-cell-name">${r.name}</td>
+      <td class="ach-cell-type">${ACH_TYPE_LABELS[r.type] || r.type}</td>
+      <td class="ach-cell-threshold">${r.threshold}</td>
+      <td>
+        <button class="ach-toggle-btn ${r.enabled ? 'ach-toggle-on' : 'ach-toggle-off'}" data-id="${r.id}" data-enabled="${r.enabled ? 1 : 0}">
+          ${r.enabled ? '启用' : '禁用'}
+        </button>
+      </td>
+      <td style="display:flex;gap:6px">
+        <button class="btn-sm btn-secondary ach-edit-btn" data-id="${r.id}">编辑</button>
+        <button class="btn-sm btn-danger ach-del-btn" data-id="${r.id}">删除</button>
+      </td>
+    </tr>
+  `).join("");
+
+  tbody.querySelectorAll(".ach-toggle-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const newEnabled = btn.dataset.enabled === "0";
+      btn.disabled = true;
+      const data = await api(`/admin/achievements/${btn.dataset.id}`, { method: "PATCH", body: JSON.stringify({ enabled: newEnabled }) });
+      if (data) {
+        btn.dataset.enabled = newEnabled ? "1" : "0";
+        btn.textContent = newEnabled ? "启用" : "禁用";
+        btn.className = `ach-toggle-btn ${newEnabled ? "ach-toggle-on" : "ach-toggle-off"}`;
+      }
+      btn.disabled = false;
+    });
+  });
+
+  tbody.querySelectorAll(".ach-edit-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tr = btn.closest("tr");
+      const id = btn.dataset.id;
+      const curName = tr.querySelector(".ach-cell-name").textContent;
+      const curType = Object.keys(ACH_TYPE_LABELS).find((k) => ACH_TYPE_LABELS[k] === tr.querySelector(".ach-cell-type").textContent) || "message_count";
+      const curThreshold = tr.querySelector(".ach-cell-threshold").textContent;
+      tr.innerHTML = `
+        <td><input class="ach-edit-input" value="${curName}" style="width:100%"></td>
+        <td>
+          <select class="ach-edit-select">
+            ${ACH_TYPE_VALUES.map((v) => `<option value="${v}" ${v === curType ? "selected" : ""}>${ACH_TYPE_LABELS[v]}</option>`).join("")}
+          </select>
+        </td>
+        <td><input class="ach-edit-input" type="number" min="1" value="${curThreshold}" style="width:70px"></td>
+        <td></td>
+        <td style="display:flex;gap:6px">
+          <button class="btn-sm btn-primary ach-save-btn" data-id="${id}">保存</button>
+          <button class="btn-sm btn-secondary ach-cancel-btn">取消</button>
+        </td>
+      `;
+      tr.querySelector(".ach-save-btn").addEventListener("click", async () => {
+        const inputs = tr.querySelectorAll(".ach-edit-input");
+        const name = inputs[0].value.trim();
+        const type = tr.querySelector(".ach-edit-select").value;
+        const threshold = parseInt(inputs[1].value, 10);
+        if (!name || isNaN(threshold) || threshold < 1) { showMsg("请填写完整信息", false); return; }
+        const data = await api(`/admin/achievements/${id}`, { method: "PATCH", body: JSON.stringify({ name, type, threshold }) });
+        if (data) { loadAchievements(); showMsg("已保存"); }
+      });
+      tr.querySelector(".ach-cancel-btn").addEventListener("click", () => loadAchievements());
+    });
+  });
+
+  tbody.querySelectorAll(".ach-del-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("确认删除此成就？")) return;
+      const data = await api(`/admin/achievements/${btn.dataset.id}`, { method: "DELETE" });
+      if (data) loadAchievements();
+    });
+  });
+}
+
+document.getElementById("addAchBtn").addEventListener("click", async () => {
+  const type = document.getElementById("ach-type").value;
+  const threshold = parseInt(document.getElementById("ach-threshold").value, 10);
+  const name = document.getElementById("ach-name").value.trim();
+  if (!name || isNaN(threshold) || threshold < 1) { showMsg("请填写完整信息", false); return; }
+  const data = await api("/admin/achievements", { method: "POST", body: JSON.stringify({ type, threshold, name }) });
+  if (data) {
+    document.getElementById("ach-threshold").value = "";
+    document.getElementById("ach-name").value = "";
+    loadAchievements();
+    showMsg("成就已添加");
+  }
+});
+
+// ── 初始化 ────────────────────────────────────────────────────────────────────
+(async () => {
+  const me = await api("/auth/me");
+  if (!me || !me.is_admin) {
+    document.querySelector(".admin-content").innerHTML = '<p style="color:var(--text-dim);padding:40px">无管理员权限。</p>';
+    return;
+  }
+  loadStats();
+})();
+</script>
+</body>
+</html>

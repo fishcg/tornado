@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory AI</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="page-shell">
+      <aside class="sidebar">
+        <div class="panel">
+          <p class="eyebrow">Always-On Memory</p>
+          <h1>Memory AI</h1>
+          <p class="muted">Node.js + OpenAI 版本。持续摄取、整理、巩固并查询长期记忆。</p>
+        </div>
+        <div class="panel">
+          <div class="stats" id="stats"></div>
+        </div>
+        <div class="panel">
+          <p class="label">接口</p>
+          <code>GET /status</code>
+          <code>GET /memories</code>
+          <code>GET /graph</code>
+          <code>POST /ingest</code>
+          <code>GET /query</code>
+          <code>POST /consolidate</code>
+        </div>
+      </aside>
+
+      <main class="content">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Dashboard</p>
+            <h2>Memory Bank</h2>
+          </div>
+          <button id="refreshButton" class="secondary">刷新</button>
+        </section>
+
+        <section class="grid">
+          <div class="panel">
+            <h3>摄取文本</h3>
+            <form id="ingestForm">
+              <input name="source" placeholder="source，例如 dashboard">
+              <textarea name="text" rows="8" placeholder="输入要记住的文本"></textarea>
+              <button type="submit">写入记忆</button>
+            </form>
+            <pre id="ingestResult" class="result"></pre>
+          </div>
+
+          <div class="panel">
+            <h3>查询记忆</h3>
+            <form id="queryForm">
+              <input name="question" placeholder="问一个问题">
+              <button type="submit">查询</button>
+            </form>
+            <pre id="queryResult" class="result"></pre>
+          </div>
+        </section>
+
+        <section class="grid grid-full">
+          <div class="panel graph-panel">
+            <div class="row">
+              <div>
+                <h3>实体关系图谱</h3>
+                <small>主体 - 关系 - 主体</small>
+              </div>
+              <small id="graphMeta" class="muted"></small>
+            </div>
+            <div id="graph" class="graph-view"></div>
+            <div id="graphDetails" class="graph-details muted">选中节点或边后，这里会显示证据记忆与关系详情。</div>
+          </div>
+        </section>
+
+        <section class="grid grid-full">
+          <div class="panel">
+            <div class="row">
+              <h3>记忆列表</h3>
+              <div style="display:flex;gap:8px;align-items:center">
+                <select id="sourceFilter" style="font-size:13px;padding:4px 8px;background:var(--surface2,#1a1a1e);color:inherit;border:1px solid var(--border,#333);border-radius:6px">
+                  <option value="">全部 source</option>
+                </select>
+                <button id="consolidateButton" class="secondary">手动巩固</button>
+              </div>
+            </div>
+            <div id="memories" class="memory-list"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>

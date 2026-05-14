@@ -1,0 +1,23 @@
+{
+  "name": "memory-ai-node",
+  "version": "1.0.0",
+  "description": "Always-on memory agent implemented with Node.js and OpenAI.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --env-file=.env --watch src/server.js",
+    "start": "node --env-file=.env src/server.js",
+    "check": "node --check src/server.js",
+    "all": "node start-all.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "fastify": "^5.2.1",
+    "mime-types": "^2.1.35",
+    "mysql2": "^3.22.3",
+    "openai": "^4.104.0"
+  }
+}
