@@ -526,7 +526,7 @@ toast.id = "toast";
 toast.className = "toast hidden";
 document.body.appendChild(toast);
 
-function showToast(msg, isHtml = false) {
+function showToast(msg, isHtml = false, duration = 3000) {
   if (isHtml) {
     toast.innerHTML = msg;
   } else {
@@ -534,7 +534,7 @@ function showToast(msg, isHtml = false) {
   }
   toast.classList.remove("hidden");
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => toast.classList.add("hidden"), 3000);
+  _toastTimer = setTimeout(() => toast.classList.add("hidden"), duration);
 }
 
 async function loadSessions() {
@@ -2498,4 +2498,20 @@ function showAnnouncementModal(list, index) {
   initChatTitleEdit();
   loadSessions();
   checkAnnouncements();
+
+  // 新用户引导：打开右侧状态面板并展开角色设定
+  if (localStorage.getItem("show_onboarding") === "1") {
+    localStorage.removeItem("show_onboarding");
+    setTimeout(() => {
+      openRightPanel();
+      const body = document.getElementById("rp-soul-body");
+      const header = document.getElementById("rp-soul-toggle");
+      if (body && body.classList.contains("hidden")) {
+        body.classList.remove("hidden");
+        header?.classList.add("open");
+      }
+      body?.scrollIntoView({ behavior: "smooth", block: "start" });
+      showToast("欢迎！已为你创建默认角色「龙卷」，可在【角色设定】中修改或新建角色", false, 6000);
+    }, 800);
+  }
 })();

@@ -1159,7 +1159,7 @@ async function handleRequest(req, res) {
     await ensureDefaultCharacter(userId);
     const sid = createAuthSession(userId, username);
     res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": `sid=${sid}; HttpOnly; Path=/; SameSite=Lax` });
-    res.end(JSON.stringify({ ok: true, username }));
+    res.end(JSON.stringify({ ok: true, username, is_new_user: true }));
     return;
   }
 
@@ -2332,6 +2332,13 @@ const server = http.createServer((req, res) => {
 });
 
 // 启动时确保 characters 表有激活角色（从 soul.md 初始化）
+const DEFAULT_CHARACTER = {
+  name: "龙卷",
+  appearance: "绿色长卷发，娇小纤细身材，白色连衣裙，气质高冷，动漫少女，精致五官，大眼睛，《一拳超人》动漫的地狱龙卷",
+  personality: "龙卷表面上傲娇、嘴硬，但内心其实很顺从，容易害羞",
+  description: "《一拳超人》动漫中的地狱龙卷",
+};
+
 async function ensureDefaultCharacter(userId) {
   let countRow;
   if (userId != null) {
@@ -2340,19 +2347,28 @@ async function ensureDefaultCharacter(userId) {
     countRow = await dbGet("SELECT COUNT(*) as n FROM characters WHERE user_id IS NULL", []);
   }
   if (countRow.n > 0) return;
+
   const fileSoul = loadSoulFromFile();
-  if (!fileSoul) return;
-  const name = extractSectionFromSoul(fileSoul, "# 角色名称") || "default";
-  const appearance = extractSectionFromSoul(fileSoul, "# 外貌") || "";
-  const personality = extractSectionFromSoul(fileSoul, "# 性格") || "";
-  const description = extractSectionFromSoul(fileSoul, "# 人物说明") || "";
-  // soul_content 保留去掉这四个 section 后的剩余内容
-  const remainingSoul = removeSections(fileSoul, ["# 角色名称", "# 外貌", "# 性格", "# 人物说明"]);
+  let name, appearance, personality, description, remainingSoul;
+  if (fileSoul && extractSectionFromSoul(fileSoul, "# 角色名称")) {
+    name = extractSectionFromSoul(fileSoul, "# 角色名称");
+    appearance = extractSectionFromSoul(fileSoul, "# 外貌") || "";
+    personality = extractSectionFromSoul(fileSoul, "# 性格") || "";
+    description = extractSectionFromSoul(fileSoul, "# 人物说明") || "";
+    remainingSoul = removeSections(fileSoul, ["# 角色名称", "# 外貌", "# 性格", "# 人物说明"]);
+  } else {
+    name = DEFAULT_CHARACTER.name;
+    appearance = DEFAULT_CHARACTER.appearance;
+    personality = DEFAULT_CHARACTER.personality;
+    description = DEFAULT_CHARACTER.description;
+    remainingSoul = fileSoul || "";
+  }
+
   await dbRun(
     "INSERT IGNORE INTO characters (name, appearance, personality, description, soul_content, is_active, created_at, user_id) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
     [name, appearance, personality, description, remainingSoul, nowIso(), userId ?? null]
   );
-  console.log(`已从 soul.md 初始化角色：${name}`);
+  console.log(`已初始化默认角色：${name}`);
 }
 
 function removeSections(soul, headers) {

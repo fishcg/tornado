@@ -99,6 +99,7 @@
         });
         const data = await res.json();
         if (!res.ok) { errEl.textContent = data.error || "注册失败"; return; }
+        if (data.is_new_user) localStorage.setItem("show_onboarding", "1");
         location.href = "/";
       } catch {
         errEl.textContent = "网络错误，请重试";
