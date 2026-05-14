@@ -2437,52 +2437,56 @@ async function generateAchievementInnerVoice(charName, affection, achievementNam
 }
 
 async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext) {
-  try {
-    const appearance = await getCharacterAppearance(userId);
+  const appearance = await getCharacterAppearance(userId);
 
-    const typeHint = {
-      message_count: "与聊天、手机、文字相关的日常场景",
-      affection:     "与情感、心动、甜蜜相关的温柔场景",
-      streak_days:   "与日常坚持、时间流逝、陪伴相关的生活场景",
-    }[achType] || "自然生活场景";
+  const typeHint = {
+    message_count: "与聊天、手机、文字相关的日常场景",
+    affection:     "与情感、心动、甜蜜相关的温柔场景",
+    streak_days:   "与日常坚持、时间流逝、陪伴相关的生活场景",
+  }[achType] || "自然生活场景";
 
-    const personalityHint = personality ? `角色性格：${personality}。` : "";
-    const descriptionHint = description ? `角色背景：${description}。` : "";
+  const personalityHint = personality ? `角色性格：${personality}。` : "";
+  const descriptionHint = description ? `角色背景：${description}。` : "";
 
-    const sceneRes = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
-      enable_thinking: false,
-      max_tokens: 120,
-      messages: [
-        {
-          role: "system",
-          content: `你是一个图片描述生成助手。根据成就信息和最近对话，为角色生成一段自然生活照或自拍的场景描述，用于生成图片。
+  const sceneRes = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    enable_thinking: false,
+    max_tokens: 120,
+    messages: [
+      {
+        role: "system",
+        content: `你是一个图片描述生成助手。根据成就信息和最近对话，为角色生成一段自然生活照或自拍的场景描述，用于生成图片。
 ${personalityHint}${descriptionHint}
 要求：
 - 场景要与成就"${achievementName}"（类型：${typeHint}）在情感上匹配，并结合最近对话的氛围
 - 自然真实，像生活照或随手自拍，不要摆拍感
 - 只描述场景、动作、氛围、光线，不要描述外貌
 - 60字以内，中文，直接输出描述，不加任何前缀`
-        },
-        {
-          role: "user",
-          content: `最近的对话记录：\n${recentContext}\n\n生成场景描述。`
-        }
-      ]
-    });
-    const sceneDesc = (sceneRes.choices?.[0]?.message?.content || "").trim() || "自然光线下，轻松自拍";
+      },
+      {
+        role: "user",
+        content: `最近的对话记录：\n${recentContext}\n\n生成场景描述。`
+      }
+    ]
+  });
+  const sceneDesc = (sceneRes.choices?.[0]?.message?.content || "").trim() || "自然光线下，轻松自拍";
+  const prompt = `${appearance}，${sceneDesc}，动漫风格，精致五官，高质量，自然真实感`;
 
-    const prompt = `${appearance}，${sceneDesc}，动漫风格，精致五官，高质量，自然真实感`;
-    const url = await callImageApi(prompt, { aspectRatio: "1:1" });
-    return url;
-  } catch {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const appearance = await getCharacterAppearance(userId);
-      const prompt = `${appearance}，自拍，自然光，动漫风格，高质量`;
-      return await callImageApiFallback(prompt, { aspectRatio: "1:1" });
-    } catch {
-      return null;
+      return await callImageApi(prompt, { aspectRatio: "1:1" });
+    } catch (err) {
+      console.error(`[achievements] 成就生图第 ${attempt} 次失败:`, err.message);
+      if (attempt === 3) break;
     }
+  }
+
+  // 3 次失败后走 fallback
+  try {
+    const fallbackPrompt = `${appearance}，自拍，自然光，动漫风格，高质量`;
+    return await callImageApiFallback(fallbackPrompt, { aspectRatio: "1:1" });
+  } catch {
+    return null;
   }
 }
 
