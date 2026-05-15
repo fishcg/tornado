@@ -1540,7 +1540,7 @@ async function openAchievementsModal() {
   list.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:16px;grid-column:1/-1">加载中…</p>';
   try {
     const [rows, milestones] = await Promise.all([
-      api("GET", "/achievements"),
+      api("GET", "/achievements").catch(() => []),
       api("GET", "/relationship/milestones").catch(() => []),
     ]);
     if ((!rows || !rows.length) && (!milestones || !milestones.length)) {
