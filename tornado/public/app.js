@@ -1226,10 +1226,6 @@ function handleWsPayload(payload) {
   }
   if (payload.achievement_unlock) {
     showAchievementModal(payload);
-    // 标记已通知
-    if (payload.ua_id) {
-      api("POST", "/achievements/notify", { ids: [payload.ua_id] }).catch(() => {});
-    }
   }
 }
 
@@ -1359,7 +1355,11 @@ function _showNextAchievement() {
   btn.className = "achievement-btn";
   btn.style.background = theme.color;
   btn.textContent = "好耶！";
-  btn.onclick = () => { overlay.remove(); _showNextAchievement(); };
+  btn.onclick = () => {
+    overlay.remove();
+    if (data.ua_id) api("POST", "/achievements/notify", { ids: [data.ua_id] }).catch(() => {});
+    _showNextAchievement();
+  };
 
   box.appendChild(header);
   box.appendChild(selfieWrap);
