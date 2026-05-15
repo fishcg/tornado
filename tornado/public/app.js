@@ -1155,83 +1155,122 @@ async function regenMessage(msgId, wrapEl) {
   sendMessage();
 }
 
-// ── SSE 主动消息 + 生图失败 ───────────────────────────────────────────────────
-let eventsSource = null;
+// ── WebSocket 推送 ────────────────────────────────────────────────────────────
+let _ws = null;
+let _wsSessionId = null;
+let _wsReconnectTimer = null;
+let _wsReconnectDelay = 1000;
 
-function connectEvents(sessionId) {
-  if (eventsSource) eventsSource.close();
-  eventsSource = new EventSource(`/sessions/${sessionId}/events`);
-  eventsSource.onmessage = (e) => {
-    if (!e.data || e.data.startsWith(":")) return;
-    try {
-      const payload = JSON.parse(e.data);
-      if (payload.proactive) {
-        const bubble = appendBubble("assistant", payload.text, "", null, payload.msg_id, new Date().toISOString());
-        if (payload.image_pending && payload.msg_id) {
-          pollForImage(payload.msg_id, bubble, { silent: true });
-        }
+function handleWsPayload(payload) {
+  if (payload.proactive) {
+    const bubble = appendBubble("assistant", payload.text, "", null, payload.msg_id, new Date().toISOString());
+    if (payload.image_pending && payload.msg_id) {
+      pollForImage(payload.msg_id, bubble, { silent: true });
+    }
+    scrollToBottom();
+  }
+  if (payload.image_ready && payload.msg_id && payload.url) {
+    if (payload.msg_id === _sceneImagePendingMsgId) {
+      _sceneImagePendingMsgId = null;
+      btnSceneImage.disabled = false;
+    }
+    const wrap = messages.querySelector(`[data-msg-id="${payload.msg_id}"]`);
+    if (wrap) {
+      const bubble = wrap.querySelector(".bubble");
+      const loading = bubble?.querySelector(".img-loading");
+      if (loading) loading.remove();
+      if (!bubble?.querySelector("img.bubble-img, .img-toggle-btn")) {
+        appendImageToBubble(bubble, payload.url);
+        setChatBackground(payload.url);
         scrollToBottom();
       }
-      if (payload.image_ready && payload.msg_id && payload.url) {
-        if (payload.msg_id === _sceneImagePendingMsgId) {
-          _sceneImagePendingMsgId = null;
-          btnSceneImage.disabled = false;
-        }
-        const wrap = messages.querySelector(`[data-msg-id="${payload.msg_id}"]`);
-        if (wrap) {
-          const bubble = wrap.querySelector(".bubble");
-          const loading = bubble?.querySelector(".img-loading");
-          if (loading) loading.remove();
-          if (!bubble?.querySelector("img.bubble-img, .img-toggle-btn")) {
-            appendImageToBubble(bubble, payload.url);
-            setChatBackground(payload.url);
-            scrollToBottom();
-          }
-        }
+    }
+  }
+  if (payload.image_failed && payload.msg_id) {
+    if (payload.msg_id === _sceneImagePendingMsgId) {
+      _sceneImagePendingMsgId = null;
+      btnSceneImage.disabled = false;
+    }
+    const wrap = messages.querySelector(`[data-msg-id="${payload.msg_id}"]`);
+    if (wrap) {
+      const bubble = wrap.querySelector(".bubble");
+      const loading = bubble?.querySelector(".img-loading");
+      if (loading) loading.remove();
+      if (!bubble?.querySelector(".img-retry-btn")) {
+        const retryBtn = document.createElement("button");
+        retryBtn.className = "img-retry-btn";
+        retryBtn.textContent = "图片生成失败，点击重试";
+        retryBtn.addEventListener("click", () => regenImage(payload.msg_id, bubble, retryBtn));
+        bubble?.appendChild(retryBtn);
       }
-      if (payload.image_failed && payload.msg_id) {
-        if (payload.msg_id === _sceneImagePendingMsgId) {
-          _sceneImagePendingMsgId = null;
-          btnSceneImage.disabled = false;
-        }
-        const wrap = messages.querySelector(`[data-msg-id="${payload.msg_id}"]`);
-        if (wrap) {
-          const bubble = wrap.querySelector(".bubble");
-          const loading = bubble?.querySelector(".img-loading");
-          if (loading) loading.remove();
-          if (!bubble?.querySelector(".img-retry-btn")) {
-            const retryBtn = document.createElement("button");
-            retryBtn.className = "img-retry-btn";
-            retryBtn.textContent = "图片生成失败，点击重试";
-            retryBtn.addEventListener("click", () => regenImage(payload.msg_id, bubble, retryBtn));
-            bubble?.appendChild(retryBtn);
-          }
-        }
-      }
-      if (payload.card_update && payload.card_url) {
-        renderCharacterCard(payload.card_url);
-        const btn = document.getElementById("rp-card-regen");
-        if (btn) btn.disabled = false;
-      }
-      if (payload.mood_update && payload.mood) {
-        if (payload.avatar_url) {
-          const key = avatarKey("assistant", payload.mood);
-          localStorage.setItem(key, payload.avatar_url);
-        }
-        currentMood = payload.mood;
-        refreshAllAssistantAvatars();
-        renderMoodIndicator(payload.mood);
-        renderRightPanelMood(payload.mood);
-        renderRightPanelAvatar();
-      }
-      if (payload.affection_update) {
-        renderAffection(payload.affection, payload.delta);
-      }
-      if (payload.achievement_unlock) {
-        showAchievementModal(payload);
-      }
-    } catch {}
+    }
+  }
+  if (payload.card_update && payload.card_url) {
+    renderCharacterCard(payload.card_url);
+    const btn = document.getElementById("rp-card-regen");
+    if (btn) btn.disabled = false;
+  }
+  if (payload.mood_update && payload.mood) {
+    if (payload.avatar_url) {
+      const key = avatarKey("assistant", payload.mood);
+      localStorage.setItem(key, payload.avatar_url);
+    }
+    currentMood = payload.mood;
+    refreshAllAssistantAvatars();
+    renderMoodIndicator(payload.mood);
+    renderRightPanelMood(payload.mood);
+    renderRightPanelAvatar();
+  }
+  if (payload.affection_update) {
+    renderAffection(payload.affection, payload.delta);
+  }
+  if (payload.achievement_unlock) {
+    showAchievementModal(payload);
+    // 标记已通知
+    if (payload.ua_id) {
+      api("POST", "/achievements/notify", { ids: [payload.ua_id] }).catch(() => {});
+    }
+  }
+}
+
+function connectEvents(sessionId) {
+  clearTimeout(_wsReconnectTimer);
+  if (_ws) {
+    _ws.onclose = null;
+    _ws.close();
+    _ws = null;
+  }
+  _wsSessionId = sessionId;
+  _wsReconnectDelay = 1000;
+  _wsConnect();
+}
+
+function _wsConnect() {
+  const sessionId = _wsSessionId;
+  if (!sessionId) return;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(`${proto}//${location.host}/ws?sessionId=${sessionId}`);
+  _ws = ws;
+
+  ws.onopen = () => {
+    _wsReconnectDelay = 1000;
+    console.log("[ws] 已连接 session=" + sessionId);
   };
+
+  ws.onmessage = (e) => {
+    try { handleWsPayload(JSON.parse(e.data)); } catch {}
+  };
+
+  ws.onclose = (ev) => {
+    if (_wsSessionId !== sessionId) return; // 已切换 session，不重连
+    console.log(`[ws] 断开 (${ev.code})，${_wsReconnectDelay}ms 后重连`);
+    _wsReconnectTimer = setTimeout(() => {
+      _wsReconnectDelay = Math.min(_wsReconnectDelay * 2, 30000);
+      _wsConnect();
+    }, _wsReconnectDelay);
+  };
+
+  ws.onerror = () => ws.close();
 }
 
 // ── 心动值 ────────────────────────────────────────────────────────────────────

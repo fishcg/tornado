@@ -3,6 +3,7 @@ import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { WebSocketServer } from "ws";
 import OpenAI from "../node_modules/openai/index.js";
 import { getDb, closeDb, initDb } from "./db.js";
 
@@ -1569,6 +1570,36 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // GET /achievements/pending — 已生成但未通知的成就
+  if (method === "GET" && pathname === "/achievements/pending") {
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 200, []); return; }
+    const rows = await dbAll(
+      `SELECT ua.id, ua.selfie_url, ua.inner_voice,
+              a.id as achievement_id, a.name, a.type, a.threshold
+       FROM user_achievements ua
+       JOIN achievements a ON a.id = ua.achievement_id
+       WHERE ua.user_id = ? AND ua.character_id = ? AND ua.notified = 0 AND ua.selfie_url IS NOT NULL`,
+      [userId, char.id]
+    );
+    send(res, 200, rows);
+    return;
+  }
+
+  // POST /achievements/notify — 标记成就已通知
+  if (method === "POST" && pathname === "/achievements/notify") {
+    const body = await readBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.map(Number).filter(Boolean) : [];
+    if (ids.length) {
+      await dbRun(
+        `UPDATE user_achievements SET notified = 1 WHERE id IN (${ids.map(() => "?").join(",")}) AND user_id = ?`,
+        [...ids, userId]
+      );
+    }
+    send(res, 200, { ok: true });
+    return;
+  }
+
   // PATCH /character/affection — 直接设置心动值
   if (method === "PATCH" && pathname === "/character/affection") {
     const char = await getActiveCharacter(userId);
@@ -2083,19 +2114,10 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // GET /sessions/:id/events — SSE，接收主动推送消息
+  // GET /sessions/:id/events — 已迁移到 WebSocket，保留空路由兼容旧客户端
   const eventsMatch = pathname.match(/^\/sessions\/(\d+)\/events$/);
   if (method === "GET" && eventsMatch) {
-    const sessionId = Number(eventsMatch[1]);
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Access-Control-Allow-Origin": "*",
-      Connection: "keep-alive"
-    });
-    res.write(": connected\n\n");
-    registerClient(sessionId, res);
-    req.on("close", () => unregisterClient(sessionId, res));
+    send(res, 410, { error: "SSE events endpoint removed, use WebSocket /ws" });
     return;
   }
 
@@ -2233,42 +2255,38 @@ async function handleRequest(req, res) {
   send(res, 404, { error: "not found" });
 }
 
-// ── 主动发消息（SSE 推送）────────────────────────────────────────────────────────
+// ── WebSocket 推送 ────────────────────────────────────────────────────────────
 
-const sessionClients = new Map(); // sessionId -> Set<res>
+// sessionId -> Set<WebSocket>
+const sessionClients = new Map();
 
-function registerClient(sessionId, res) {
+function registerClient(sessionId, ws) {
   if (!sessionClients.has(sessionId)) sessionClients.set(sessionId, new Set());
-  sessionClients.get(sessionId).add(res);
+  sessionClients.get(sessionId).add(ws);
 }
 
-function unregisterClient(sessionId, res) {
-  sessionClients.get(sessionId)?.delete(res);
+function unregisterClient(sessionId, ws) {
+  sessionClients.get(sessionId)?.delete(ws);
 }
 
 function pushToSession(sessionId, payload) {
   const clients = sessionClients.get(sessionId);
   if (!clients || clients.size === 0) return;
-  const data = `data: ${JSON.stringify(payload)}\n\n`;
-  for (const res of clients) {
-    try { res.write(data); } catch {}
+  const data = JSON.stringify(payload);
+  for (const ws of clients) {
+    if (ws.readyState === ws.OPEN) {
+      try { ws.send(data); } catch {}
+    }
   }
 }
 
-// 每 15 秒发一次 SSE comment，防止代理/浏览器因空闲超时断开连接
-setInterval(() => {
-  for (const [, clients] of sessionClients) {
-    for (const res of clients) {
-      try { res.write(": heartbeat\n\n"); } catch {}
-    }
-  }
-}, 15000);
-
 function broadcastCardUpdate(cardUrl) {
-  const data = `data: ${JSON.stringify({ card_update: true, card_url: cardUrl })}\n\n`;
+  const data = JSON.stringify({ card_update: true, card_url: cardUrl });
   for (const [, clients] of sessionClients) {
-    for (const res of clients) {
-      try { res.write(data); } catch {}
+    for (const ws of clients) {
+      if (ws.readyState === ws.OPEN) {
+        try { ws.send(data); } catch {}
+      }
     }
   }
 }
@@ -2336,6 +2354,75 @@ const server = http.createServer((req, res) => {
     send(res, 500, { error: err.message });
   });
 });
+
+// ── WebSocket 服务器（附加到同一 HTTP server）────────────────────────────────
+const wss = new WebSocketServer({ server, path: "/ws" });
+
+wss.on("connection", async (ws, req) => {
+  // 从 cookie 中取 session token 做鉴权
+  const cookieHeader = req.headers.cookie || "";
+  const tokenMatch = cookieHeader.match(/(?:^|;\s*)sid=([^;]+)/);
+  const token = tokenMatch ? tokenMatch[1] : null;
+  const authSession = token ? authSessions.get(token) : null;
+  const userId = authSession?.userId ?? null;
+
+  // 从 URL query 取 sessionId
+  const url = new URL(req.url, `http://localhost`);
+  const sessionId = Number(url.searchParams.get("sessionId"));
+  if (!sessionId) { ws.close(4001, "missing sessionId"); return; }
+
+  registerClient(sessionId, ws);
+  console.log(`[ws] 连接 session=${sessionId} user=${userId}`);
+
+  // 连接建立后立即下发未通知的成就
+  if (userId) {
+    try {
+      const char = await getActiveCharacter(userId);
+      if (char) {
+        const pending = await dbAll(
+          `SELECT ua.id, ua.selfie_url, ua.inner_voice,
+                  a.id as achievement_id, a.name, a.type, a.threshold
+           FROM user_achievements ua
+           JOIN achievements a ON a.id = ua.achievement_id
+           WHERE ua.user_id = ? AND ua.character_id = ? AND ua.notified = 0 AND ua.selfie_url IS NOT NULL`,
+          [userId, char.id]
+        );
+        for (const row of pending) {
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({
+              achievement_unlock: true,
+              achievement: { id: row.achievement_id, name: row.name, type: row.type, threshold: row.threshold },
+              selfie_url: row.selfie_url,
+              inner_voice: row.inner_voice,
+              ua_id: row.id
+            }));
+          }
+        }
+      }
+    } catch {}
+  }
+
+  ws.on("close", () => {
+    unregisterClient(sessionId, ws);
+    console.log(`[ws] 断开 session=${sessionId}`);
+  });
+
+  ws.on("error", () => unregisterClient(sessionId, ws));
+});
+
+// ping/pong keepalive，每 25 秒检测一次
+setInterval(() => {
+  for (const [, clients] of sessionClients) {
+    for (const ws of clients) {
+      if (ws.readyState === ws.OPEN) {
+        ws.ping();
+      } else {
+        // 清理已关闭的连接
+        clients.delete(ws);
+      }
+    }
+  }
+}, 25000);
 
 // 启动时确保 characters 表有激活角色（从 soul.md 初始化）
 const DEFAULT_CHARACTER = {
@@ -2571,7 +2658,8 @@ async function checkAndUnlockAchievements(userId, sessionId) {
         achievement_unlock: true,
         achievement: { id: ach.id, name: ach.name, type: ach.type, threshold: ach.threshold },
         selfie_url: selfieUrl,
-        inner_voice: innerVoice
+        inner_voice: innerVoice,
+        ua_id: insertId
       });
     })();
   }

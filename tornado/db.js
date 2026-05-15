@@ -184,6 +184,7 @@ const CREATE_TABLES = [
     selfie_url TEXT,
     inner_voice TEXT,
     unlocked_at VARCHAR(64) NOT NULL,
+    notified INT NOT NULL DEFAULT 0,
     UNIQUE KEY uq_user_achievement (user_id, achievement_id, character_id),
     KEY idx_user_achievements_user (user_id)
   ) CHARACTER SET utf8mb4`
@@ -222,6 +223,7 @@ export async function initDb() {
   await ensureColumn(pool, "characters", "last_chat_date", "VARCHAR(16)");
   await ensureColumn(pool, "user_settings", "scene_image_date", "VARCHAR(16)");
   await ensureColumn(pool, "user_settings", "scene_image_count", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "user_achievements", "notified", "INT NOT NULL DEFAULT 0");
   // 迁移：将 user_achievements 的唯一键从 (user_id, achievement_id) 改为包含 character_id
   try {
     const [cols] = await pool.execute(
