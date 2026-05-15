@@ -1296,6 +1296,8 @@ const ACH_TYPE_THEME = {
 };
 
 const _shownAchievements = new Set();
+const _achQueue = [];
+let _achShowing = false;
 
 function getAchTheme(type) {
   return ACH_TYPE_THEME[type] || { color: "#a78bfa", glow: "rgba(167,139,250,0.5)", icon: "✨", label: "成就" };
@@ -1305,9 +1307,14 @@ function showAchievementModal(data) {
   const achId = data.achievement?.id;
   if (achId && _shownAchievements.has(achId)) return;
   if (achId) _shownAchievements.add(achId);
+  _achQueue.push(data);
+  if (!_achShowing) _showNextAchievement();
+}
 
-  const existing = document.getElementById("achievement-modal-overlay");
-  if (existing) existing.remove();
+function _showNextAchievement() {
+  if (_achQueue.length === 0) { _achShowing = false; return; }
+  _achShowing = true;
+  const data = _achQueue.shift();
 
   const type = data.achievement?.type || "";
   const theme = getAchTheme(type);
@@ -1352,7 +1359,7 @@ function showAchievementModal(data) {
   btn.className = "achievement-btn";
   btn.style.background = theme.color;
   btn.textContent = "好耶！";
-  btn.onclick = () => overlay.remove();
+  btn.onclick = () => { overlay.remove(); _showNextAchievement(); };
 
   box.appendChild(header);
   box.appendChild(selfieWrap);
