@@ -724,11 +724,13 @@ async function generateCharacterCard(force = false, userId) {
     if (existing) return existing.image_url;
   }
 
+  const settings = userId ? await getUserSettings(userId) : { imageFallbackEnabled: true };
   const prompt = `${await buildCharacterPromptPrefix(userId)}，半身照，竖版构图，精美动漫插画风格，单人，仅一个人物，人物居中，高质量`;
   let url = null;
   try {
     url = await callImageApi(prompt, { hd: true, aspectRatio: "2:3" });
   } catch (err) {
+    if (!settings.imageFallbackEnabled) { console.error(`角色卡片生成失败 [${character}]:`, err.message); return null; }
     console.log(`角色卡片主 API 失败，切换 DashScope 重试: ${err.message}`);
     try {
       url = await callImageApiFallback(prompt, { aspectRatio: "2:3" });
@@ -751,6 +753,7 @@ async function generateMoodAvatar(mood, userId) {
   const existing = await dbGet("SELECT image_url, appearance_hash FROM mood_avatars WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [character, mood, userId ?? null]);
   if (existing && existing.appearance_hash === appearanceHash) return existing.image_url;
 
+  const settings = userId ? await getUserSettings(userId) : { imageFallbackEnabled: true };
   const moodDesc = MOOD_AVATAR_PROMPTS[mood] || "neutral expression";
   const prompt = `${await buildCharacterPromptPrefix(userId)}，portrait headshot, ${moodDesc}, simple background, anime style`;
   let url = null;
@@ -761,8 +764,17 @@ async function generateMoodAvatar(mood, userId) {
     } catch (err) {
       console.log(`情绪头像生成失败 [${character}:${mood}] 第${attempt + 1}次: ${err.message}`);
       if (attempt === 2) {
-        console.error(`情绪头像生成放弃 [${character}:${mood}]`);
-        return null;
+        if (settings.imageFallbackEnabled) {
+          try {
+            url = await callImageApiFallback(prompt, { aspectRatio: "1:1" });
+          } catch {
+            console.error(`情绪头像生成放弃 [${character}:${mood}]`);
+            return null;
+          }
+        } else {
+          console.error(`情绪头像生成放弃 [${character}:${mood}]`);
+          return null;
+        }
       }
     }
   }
@@ -919,8 +931,9 @@ ${personality}当前心动值：${current}/100，${relationStage}。
       await dbRun("INSERT INTO affection_log (character_id, delta, value, mood, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)", [char.id, clamped, newVal, sessionMood, reason, nowIso()]);
       console.log(`[affection] ${charName} ${clamped > 0 ? "+" : ""}${clamped} → ${newVal} | ${reason}`);
       pushToSession(sessionId, { affection_update: true, affection: newVal, delta: clamped });
-      checkAndUnlockAchievements(userId, sessionId).catch((e) => console.error("[achievements] 调用失败:", e.message));
-      checkRelationshipMilestone(userId, sessionId, current, newVal).catch((e) => console.error("[milestone] 调用失败:", e.message));
+      const settings = await getUserSettings(userId);
+      checkAndUnlockAchievements(userId, sessionId, settings).catch((e) => console.error("[achievements] 调用失败:", e.message));
+      checkRelationshipMilestone(userId, sessionId, current, newVal, settings).catch((e) => console.error("[milestone] 调用失败:", e.message));
     }
   } catch (err) {
     console.error("[affection] 更新失败:", err.message);
@@ -1707,7 +1720,10 @@ async function handleRequest(req, res) {
     }
     const sessions = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [userId]);
     if (sessions) pushToSession(sessions.id, { affection_update: true, affection: value, delta });
-    if (delta !== 0) checkRelationshipMilestone(userId, sessions?.id ?? null, prev, value).catch(() => {});
+    if (delta !== 0) {
+      const settings = await getUserSettings(userId);
+      checkRelationshipMilestone(userId, sessions?.id ?? null, prev, value, settings).catch(() => {});
+    }
     send(res, 200, { affection: value });
     return;
   }
@@ -2129,7 +2145,7 @@ async function handleRequest(req, res) {
       updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message));
     }
     updateStreakDays(userId).catch(() => {});
-    checkAndUnlockAchievements(userId, sessionId).catch((e) => console.error("[achievements] 调用失败:", e.message));
+    checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
 
     res.end();
     return;
@@ -2661,7 +2677,7 @@ async function generateAchievementInnerVoice(charName, affection, achievementNam
   }
 }
 
-async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext) {
+async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext, { imageFallbackEnabled = true } = {}) {
   const appearance = (await getCharacterAppearance(userId)).slice(0, 200);
 
   const typeHint = {
@@ -2707,6 +2723,7 @@ ${personalityHint}${descriptionHint}
   }
 
   // 3 次失败后走 fallback
+  if (!imageFallbackEnabled) return null;
   try {
     const fallbackPrompt = `${appearance}，自拍，自然光，动漫风格，高质量`;
     return await callImageApiFallback(fallbackPrompt, { aspectRatio: "1:1" });
@@ -2732,7 +2749,7 @@ function getRelationStage(affection) {
   return current;
 }
 
-async function generateRelationComic(charName, stageName, affection, personality, description, recentContext) {
+async function generateRelationComic(charName, stageName, affection, personality, description, recentContext, { imageFallbackEnabled = true } = {}) {
   const appearance = (await getCharacterAppearance(null)).slice(0, 200);
   const personalityHint = personality ? `角色性格：${personality}。` : "";
   const descHint = description ? `角色背景：${description}。` : "";
@@ -2781,19 +2798,33 @@ ${personalityHint}${descHint}
     return `${appearance}，六格漫画，2行3列网格排列，从左到右从上到下依次是：${panels}。画面中只有该角色一人，不出现其他人物。动漫风格，精致画面，电影感光线，高质量`;
   };
 
+  const tryGenImage = async (prompt) => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return await callImageApi(prompt, { aspectRatio: "16:9" });
+      } catch (err) {
+        console.error(`[milestone] 漫画生图第 ${attempt} 次失败: ${err.message}`);
+        if (attempt === 3) {
+          if (!imageFallbackEnabled) return null;
+          try {
+            return await callImageApiFallback(prompt, { aspectRatio: "16:9" });
+          } catch {
+            return null;
+          }
+        }
+      }
+    }
+  };
+
   const [url1, url2] = await Promise.all([
-    callImageApi(makePrompt(comic1), { aspectRatio: "16:9" }).catch(() =>
-      callImageApiFallback(makePrompt(comic1), { aspectRatio: "16:9" }).catch(() => null)
-    ),
-    callImageApi(makePrompt(comic2), { aspectRatio: "16:9" }).catch(() =>
-      callImageApiFallback(makePrompt(comic2), { aspectRatio: "16:9" }).catch(() => null)
-    ),
+    tryGenImage(makePrompt(comic1)),
+    tryGenImage(makePrompt(comic2)),
   ]);
 
   return { url1, url2 };
 }
 
-async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAffection) {
+async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAffection, { imageFallbackEnabled = true } = {}) {
   const oldStage = getRelationStage(oldAffection);
   const newStage = getRelationStage(newAffection);
   if (newStage.stage <= oldStage.stage) return;
@@ -2826,7 +2857,7 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
     }
     let url1 = null, url2 = null;
     try {
-      ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext));
+      ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext, { imageFallbackEnabled }));
     } catch (err) {
       console.error(`[milestone] 漫画生成失败:`, err.message);
     }
@@ -2843,7 +2874,7 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
   })();
 }
 
-async function checkAndUnlockAchievements(userId, sessionId) {
+async function checkAndUnlockAchievements(userId, sessionId, { imageFallbackEnabled = true } = {}) {
   const achievements = await dbAll("SELECT * FROM achievements WHERE enabled = 1", []);
   if (!achievements.length) return;
 
@@ -2903,7 +2934,7 @@ async function checkAndUnlockAchievements(userId, sessionId) {
       try {
         [innerVoice, selfieUrl] = await Promise.all([
           generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
-          generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext)
+          generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext, { imageFallbackEnabled })
         ]);
       } catch (err) {
         console.error(`[achievements] 生成内容失败：${ach.name}`, err.message);
