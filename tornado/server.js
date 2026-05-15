@@ -2352,14 +2352,20 @@ async function handleRequest(req, res) {
 
 // sessionId -> Set<WebSocket>
 const sessionClients = new Map();
+const userClients = new Map(); // userId -> Set<ws>
 
-function registerClient(sessionId, ws) {
+function registerClient(sessionId, ws, userId) {
   if (!sessionClients.has(sessionId)) sessionClients.set(sessionId, new Set());
   sessionClients.get(sessionId).add(ws);
+  if (userId) {
+    if (!userClients.has(userId)) userClients.set(userId, new Set());
+    userClients.get(userId).add(ws);
+  }
 }
 
-function unregisterClient(sessionId, ws) {
+function unregisterClient(sessionId, ws, userId) {
   sessionClients.get(sessionId)?.delete(ws);
+  if (userId) userClients.get(userId)?.delete(ws);
 }
 
 function pushToSession(sessionId, payload) {
@@ -2380,6 +2386,17 @@ function broadcastCardUpdate(cardUrl) {
       if (ws.readyState === ws.OPEN) {
         try { ws.send(data); } catch {}
       }
+    }
+  }
+}
+
+function pushToUser(userId, payload) {
+  const clients = userClients.get(userId);
+  if (!clients || clients.size === 0) return;
+  const data = JSON.stringify(payload);
+  for (const ws of clients) {
+    if (ws.readyState === ws.OPEN) {
+      try { ws.send(data); } catch {}
     }
   }
 }
@@ -2464,7 +2481,7 @@ wss.on("connection", async (ws, req) => {
   const sessionId = Number(url.searchParams.get("sessionId"));
   if (!sessionId) { ws.close(4001, "missing sessionId"); return; }
 
-  registerClient(sessionId, ws);
+  registerClient(sessionId, ws, userId);
   console.log(`[ws] 连接 session=${sessionId} user=${userId}`);
 
   // 连接建立后立即下发未通知的成就
@@ -2515,11 +2532,11 @@ wss.on("connection", async (ws, req) => {
   }
 
   ws.on("close", () => {
-    unregisterClient(sessionId, ws);
+    unregisterClient(sessionId, ws, userId);
     console.log(`[ws] 断开 session=${sessionId}`);
   });
 
-  ws.on("error", () => unregisterClient(sessionId, ws));
+  ws.on("error", () => unregisterClient(sessionId, ws, userId));
 });
 
 // ping/pong keepalive，每 25 秒检测一次
@@ -2805,7 +2822,7 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
       console.error(`[milestone] 漫画生成失败:`, err.message);
     }
     await dbRun("UPDATE relationship_milestones SET comic_url_1 = ?, comic_url_2 = ? WHERE id = ?", [url1, url2, milestoneId]);
-    pushToSession(sessionId, {
+    pushToUser(userId, {
       relation_milestone: true,
       milestone_id: milestoneId,
       stage: newStage.stage,
