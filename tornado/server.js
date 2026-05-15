@@ -2740,18 +2740,19 @@ async function generateRelationComic(charName, stageName, affection, personality
   const scriptRes = await openai.chat.completions.create({
     model: OPENAI_MODEL,
     enable_thinking: false,
-    max_tokens: 300,
+    max_tokens: 500,
     messages: [
       {
         role: "system",
         content: `你是一个漫画分镜脚本生成助手。根据角色信息和最近对话，为"关系升级到${stageName}"这一时刻生成两组漫画分镜描述。
 ${personalityHint}${descHint}
 要求：
-- 每组描述3格连续分镜，格与格之间有时间/情绪递进
-- 第一组：回顾两人相处的温馨瞬间
-- 第二组：关系升级这一刻的情感爆发
-- 每格描述场景、动作、光线、氛围，不描述外貌，50字以内
-- 输出严格 JSON：{"comic1": ["第1格描述","第2格描述","第3格描述"], "comic2": ["第1格","第2格","第3格"]}`
+- 每组描述6格连续分镜，格与格之间有时间/情绪递进
+- 第一组：回顾与角色相处的6个温馨瞬间，从初见到熟悉
+- 第二组：关系升级这一刻的情感爆发，共6格，情绪层层递进到高潮
+- 画面中只出现该角色一人，不出现其他任何人物
+- 每格描述场景、动作、光线、氛围，不描述外貌，40字以内
+- 输出严格 JSON：{"comic1": ["格1","格2","格3","格4","格5","格6"], "comic2": ["格1","格2","格3","格4","格5","格6"]}`
       },
       { role: "user", content: `最近对话：\n${recentContext}\n\n当前心动值：${affection}，关系阶段：${stageName}` }
     ]
@@ -2765,12 +2766,20 @@ ${personalityHint}${descHint}
     comic1 = parsed.comic1 || [];
     comic2 = parsed.comic2 || [];
   } catch {
-    comic1 = ["温馨相处的瞬间，柔和光线", "两人相视而笑，气氛轻松", "静静陪伴，岁月静好"];
-    comic2 = ["心跳加速的瞬间，光晕弥漫", "情感涌上心头，眼神交汇", "关系升华，新的开始"];
+    comic1 = ["清晨阳光洒落，角色独自微笑", "窗边发呆，思绪飘远", "翻看旧物，嘴角上扬", "夜灯下静静等待", "雨天望窗，心情复杂", "终于鼓起勇气，眼神坚定"];
+    comic2 = ["心跳加速，光晕弥漫", "深吸一口气，闭上眼睛", "情感涌上心头", "泪光闪烁，却在微笑", "抬起头，眼神明亮", "新的阶段，新的开始"];
   }
 
-  const makePrompt = (frames) =>
-    `${appearance}，三格漫画分镜，从左到右依次是：第一格：${frames[0] || "温馨场景"}；第二格：${frames[1] || "情感递进"}；第三格：${frames[2] || "情感升华"}。动漫风格，精致画面，电影感光线，高质量`;
+  // 确保每组恰好 6 格
+  while (comic1.length < 6) comic1.push("温馨瞬间");
+  while (comic2.length < 6) comic2.push("情感升华");
+  comic1 = comic1.slice(0, 6);
+  comic2 = comic2.slice(0, 6);
+
+  const makePrompt = (frames) => {
+    const panels = frames.map((f, i) => `第${i + 1}格：${f}`).join("；");
+    return `${appearance}，六格漫画，2行3列网格排列，从左到右从上到下依次是：${panels}。画面中只有该角色一人，不出现其他人物。动漫风格，精致画面，电影感光线，高质量`;
+  };
 
   const [url1, url2] = await Promise.all([
     callImageApi(makePrompt(comic1), { aspectRatio: "16:9" }).catch(() =>
