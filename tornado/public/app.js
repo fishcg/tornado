@@ -1543,17 +1543,19 @@ async function openAchievementsModal() {
       api("GET", "/achievements").catch(() => []),
       api("GET", "/relationship/milestones").catch(() => []),
     ]);
-    if ((!rows || !rows.length) && (!milestones || !milestones.length)) {
+    const achRows = Array.isArray(rows) ? rows : [];
+    const rmRows = Array.isArray(milestones) ? milestones : [];
+    if (!achRows.length && !rmRows.length) {
       list.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:16px;grid-column:1/-1">还没有解锁任何成就</p>';
       return;
     }
 
     list.innerHTML = "";
 
-    if (rows && rows.length) {
+    if (achRows.length) {
       const grid = document.createElement("div");
       grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;";
-      grid.innerHTML = rows.map((r, i) => {
+      grid.innerHTML = achRows.map((r, i) => {
         const theme = getAchTheme(r.type);
         return `
           <div class="ach-review-item ach-type-${r.type}" data-idx="${i}" style="--ach-color:${theme.color};--ach-glow:${theme.glow}">
@@ -1573,18 +1575,18 @@ async function openAchievementsModal() {
       }).join("");
       grid.querySelectorAll(".ach-review-item").forEach((el, i) => {
         el.style.animationDelay = `${i * 0.07}s`;
-        el.addEventListener("click", () => openAchievementLightbox(rows[i]));
+        el.addEventListener("click", () => openAchievementLightbox(achRows[i]));
       });
       list.appendChild(grid);
     }
 
-    if (milestones && milestones.length) {
+    if (rmRows.length) {
       const section = document.createElement("div");
       section.className = "rm-review-section";
       section.innerHTML = `<div class="rm-review-title">关系回顾</div>`;
       const rmList = document.createElement("div");
       rmList.className = "rm-review-list";
-      milestones.forEach((m) => {
+      rmRows.forEach((m) => {
         const item = document.createElement("div");
         item.className = "rm-review-item";
         const thumbHtml = m.comic_url_1
