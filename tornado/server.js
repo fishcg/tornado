@@ -2524,23 +2524,12 @@ async function checkAndUnlockAchievements(userId, sessionId) {
 
     console.log(`[achievements] 尝试解锁：${ach.name}，当前值 ${current}，阈值 ${ach.threshold}`);
 
-    // 新解锁
-    let innerVoice, selfieUrl;
-    try {
-      [innerVoice, selfieUrl] = await Promise.all([
-        generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
-        generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext)
-      ]);
-    } catch (err) {
-      console.error(`[achievements] 生成内容失败：${ach.name}`, err.message);
-      continue;
-    }
-
+    // 先写入数据库占位，立即推送弹窗（不带图）
     let insertResult;
     try {
       insertResult = await dbRun(
         "INSERT IGNORE INTO user_achievements (user_id, achievement_id, character_id, selfie_url, inner_voice, unlocked_at) VALUES (?, ?, ?, ?, ?, ?)",
-        [userId, ach.id, char.id, selfieUrl, innerVoice, nowIso()]
+        [userId, ach.id, char.id, null, null, nowIso()]
       );
     } catch (err) {
       console.error(`[achievements] 插入失败：${ach.name}`, err.message);
@@ -2552,13 +2541,30 @@ async function checkAndUnlockAchievements(userId, sessionId) {
       continue;
     }
 
+    const insertId = insertResult.insertId;
     console.log(`[achievements] 用户 ${userId} 解锁成就：${ach.name}`);
-    pushToSession(sessionId, {
-      achievement_unlock: true,
-      achievement: { id: ach.id, name: ach.name, type: ach.type, threshold: ach.threshold },
-      selfie_url: selfieUrl,
-      inner_voice: innerVoice
-    });
+
+    // 生成图和独白后再推送弹窗
+    (async () => {
+      let innerVoice, selfieUrl;
+      try {
+        [innerVoice, selfieUrl] = await Promise.all([
+          generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
+          generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext)
+        ]);
+      } catch (err) {
+        console.error(`[achievements] 生成内容失败：${ach.name}`, err.message);
+        innerVoice = null;
+        selfieUrl = null;
+      }
+      await dbRun("UPDATE user_achievements SET selfie_url = ?, inner_voice = ? WHERE id = ?", [selfieUrl, innerVoice, insertId]);
+      pushToSession(sessionId, {
+        achievement_unlock: true,
+        achievement: { id: ach.id, name: ach.name, type: ach.type, threshold: ach.threshold },
+        selfie_url: selfieUrl,
+        inner_voice: innerVoice
+      });
+    })();
   }
 }
 

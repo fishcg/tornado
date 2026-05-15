@@ -906,7 +906,7 @@ async function sendMessage() {
     sending = false;
     btnSend.disabled = false;
     scrollToBottom();
-    input.focus();
+    input.focus({ preventScroll: true });
   }
 }
 
@@ -1011,6 +1011,7 @@ window.addEventListener("beforeunload", (e) => {
 // 用 visibilitychange hidden 来捕捉"关闭/切走"，此时还能展示弹窗
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState !== "hidden") return;
+  if (document.fullscreenElement) return;
   if (!currentSessionId) return;
   // 存一个标记，避免重复触发
   if (sessionStorage.getItem("saving")) return;
