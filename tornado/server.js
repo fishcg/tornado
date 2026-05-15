@@ -2533,7 +2533,7 @@ async function generateAchievementInnerVoice(charName, affection, achievementNam
 }
 
 async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext) {
-  const appearance = await getCharacterAppearance(userId);
+  const appearance = (await getCharacterAppearance(userId)).slice(0, 200);
 
   const typeHint = {
     message_count: "与聊天、手机、文字相关的日常场景",
@@ -2607,10 +2607,10 @@ async function checkAndUnlockAchievements(userId, sessionId) {
   let recentContext = "";
   if (sessionId) {
     const recentMsgs = await dbAll(
-      "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 30",
+      "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 10",
       [sessionId]
     );
-    recentContext = recentMsgs.reverse().map(m => `${m.role === 'user' ? '用户' : '角色'}：${m.content}`).join("\n");
+    recentContext = recentMsgs.reverse().map(m => `${m.role === 'user' ? '用户' : '角色'}：${m.content.slice(0, 100)}`).join("\n");
   }
 
   for (const ach of achievements) {
