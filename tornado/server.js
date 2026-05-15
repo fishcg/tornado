@@ -2697,9 +2697,6 @@ ${personalityHint}${descriptionHint}
   }
 }
 
-  }
-}
-
 // ── 关系阶段升级 ──────────────────────────────────────────────────────────────
 
 const RELATION_STAGES = [
