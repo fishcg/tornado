@@ -2607,7 +2607,7 @@ async function checkAndUnlockAchievements(userId, sessionId) {
   let recentContext = "";
   if (sessionId) {
     const recentMsgs = await dbAll(
-      "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 10",
+      "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 5",
       [sessionId]
     );
     recentContext = recentMsgs.reverse().map(m => `${m.role === 'user' ? '用户' : '角色'}：${m.content.slice(0, 100)}`).join("\n");
