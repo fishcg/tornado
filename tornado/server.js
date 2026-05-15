@@ -28,6 +28,7 @@ const PUBLIC_DIR = path.join(__dirname, "public");
 const UPLOADS_DIR = path.join(PUBLIC_DIR, "uploads");
 // 主动发消息：空闲多久后触发（分钟），可通过环境变量覆盖
 const PROACTIVE_IDLE_MINUTES = Number(process.env.PROACTIVE_IDLE_MINUTES || 30);
+const WEATHER_CITY = process.env.WEATHER_CITY || "";
 const PASSWORD_SALT = process.env.PASSWORD_SALT || "tornado-default-salt-2025";
 const DEFAULT_INVITE_CODE = process.env.DEFAULT_INVITE_CODE || "tornado2025";
 
@@ -952,6 +953,77 @@ async function updateTopicSummary(sessionId, recentMsgs, userId) {
   }
 }
 
+// ── 主动消息背景上下文 ────────────────────────────────────────────────────────
+
+const CN_HOLIDAYS = [
+  { month: 1,  day: 1,  name: "元旦" },
+  { month: 2,  day: 14, name: "情人节" },
+  { month: 3,  day: 8,  name: "妇女节" },
+  { month: 4,  day: 1,  name: "愚人节" },
+  { month: 5,  day: 1,  name: "劳动节" },
+  { month: 5,  day: 20, name: "520" },
+  { month: 6,  day: 1,  name: "儿童节" },
+  { month: 7,  day: 7,  name: "七夕" },
+  { month: 9,  day: 9,  name: "重阳节" },
+  { month: 10, day: 1,  name: "国庆节" },
+  { month: 11, day: 11, name: "双十一" },
+  { month: 12, day: 24, name: "平安夜" },
+  { month: 12, day: 25, name: "圣诞节" },
+];
+
+let _weatherCache = { text: null, fetchedAt: 0 };
+
+async function fetchWeather() {
+  if (!WEATHER_CITY) return null;
+  const now = Date.now();
+  if (_weatherCache.text && now - _weatherCache.fetchedAt < 30 * 60 * 1000) {
+    return _weatherCache.text;
+  }
+  try {
+    const res = await fetch(`https://wttr.in/${encodeURIComponent(WEATHER_CITY)}?format=3`, {
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!res.ok) return null;
+    const text = (await res.text()).trim();
+    _weatherCache = { text, fetchedAt: now };
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+async function buildProactiveContext() {
+  const now = new Date();
+  const hour = now.getHours();
+  const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][now.getDay()];
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+  const timeSlot =
+    hour >= 5  && hour < 9  ? "清晨" :
+    hour >= 9  && hour < 12 ? "上午" :
+    hour >= 12 && hour < 14 ? "午后" :
+    hour >= 14 && hour < 18 ? "下午" :
+    hour >= 18 && hour < 21 ? "傍晚" :
+    hour >= 21 && hour < 24 ? "夜晚" : "深夜";
+
+  const month = now.getMonth() + 1;
+  const day = now.getDate();
+  const nearHolidays = CN_HOLIDAYS.filter(h => {
+    const diff = (h.month - month) * 30 + (h.day - day);
+    return diff >= -1 && diff <= 1;
+  }).map(h => {
+    const diff = (h.month - month) * 30 + (h.day - day);
+    return diff === 0 ? `今天是${h.name}` : diff === 1 ? `明天是${h.name}` : `昨天是${h.name}`;
+  });
+
+  const parts = [`今天${weekday}${isWeekend ? "（周末）" : ""}，现在是${timeSlot}`];
+  if (nearHolidays.length) parts.push(nearHolidays.join("，"));
+
+  const weather = await fetchWeather();
+  if (weather) parts.push(`天气：${weather}`);
+
+  return parts.join("，") + "。";
+}
+
 async function generateProactiveMessage(sessionId, userId) {
   const msgs = await getMessages(sessionId);
   if (msgs.length === 0) return null;
@@ -959,8 +1031,8 @@ async function generateProactiveMessage(sessionId, userId) {
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
-  const session = await getSession(sessionId);  // internal use, no user isolation needed for proactive
   const soul = await loadSoul(userId);
+  const bgContext = await buildProactiveContext();
   try {
     const res = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -968,7 +1040,7 @@ async function generateProactiveMessage(sessionId, userId) {
       messages: [
         {
           role: "system",
-          content: `${soul}\n\n用户已经有一段时间没有说话了。根据之前的对话，主动发一条自然的消息，就像真实的人会做的那样——可以是随口一句、分享一件小事、或者接着之前的话题说点什么。不要问"你还在吗"这种话。保持角色口吻，简短自然。`
+          content: `${soul}\n\n【当前背景】${bgContext}\n\n用户已经有一段时间没有说话了。根据之前的对话和当前背景，主动发一条自然的消息——可以结合时间、天气、节日或之前的话题随口说点什么，就像真实的人会做的那样。不要问"你还在吗"这种话。保持角色口吻，简短自然。`
         },
         { role: "user", content: `最近对话：\n${context}` }
       ]
