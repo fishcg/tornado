@@ -1705,8 +1705,9 @@ async function handleRequest(req, res) {
     if (delta !== 0) {
       await dbRun("INSERT INTO affection_log (character_id, delta, value, mood, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)", [char.id, delta, value, null, "手动设置", nowIso()]);
     }
-    const sessions = await dbGet("SELECT id FROM sessions WHERE archived = 0 ORDER BY updated_at DESC LIMIT 1", []);
+    const sessions = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [userId]);
     if (sessions) pushToSession(sessions.id, { affection_update: true, affection: value, delta });
+    if (delta !== 0) checkRelationshipMilestone(userId, sessions?.id ?? null, prev, value).catch(() => {});
     send(res, 200, { affection: value });
     return;
   }
