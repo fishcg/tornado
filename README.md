@@ -2,9 +2,15 @@
 
 虚拟伴侣聊天系统，核心亮点是持续演化的长期记忆。
 
+- 主界面
 <img width="1165" height="808" alt="image" src="https://github.com/user-attachments/assets/506e10ae-3de2-46a2-b4b6-79403a4b1d3a" />
 
+- 
+成就玩法
 <img width="1143" height="710" alt="image" src="https://github.com/user-attachments/assets/84f19bee-22af-43c6-ac19-e6fcc5540314" />
+
+- 心动值玩法
+<img width="869" height="537" alt="image" src="https://github.com/user-attachments/assets/3a9aae56-a383-4dec-bb83-5e534960e460" />
 
 
 
