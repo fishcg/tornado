@@ -920,6 +920,7 @@ ${personality}当前心动值：${current}/100，${relationStage}。
       console.log(`[affection] ${charName} ${clamped > 0 ? "+" : ""}${clamped} → ${newVal} | ${reason}`);
       pushToSession(sessionId, { affection_update: true, affection: newVal, delta: clamped });
       checkAndUnlockAchievements(userId, sessionId).catch((e) => console.error("[achievements] 调用失败:", e.message));
+      checkRelationshipMilestone(userId, sessionId, current, newVal).catch((e) => console.error("[milestone] 调用失败:", e.message));
     }
   } catch (err) {
     console.error("[affection] 更新失败:", err.message);
@@ -1672,7 +1673,26 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // PATCH /character/affection — 直接设置心动值
+  // GET /relationship/milestones — 所有关系里程碑（用于回看）
+  if (method === "GET" && pathname === "/relationship/milestones") {
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 200, []); return; }
+    const rows = await dbAll(
+      "SELECT * FROM relationship_milestones WHERE user_id = ? AND character_id = ? ORDER BY stage ASC",
+      [userId, char.id]
+    );
+    send(res, 200, rows);
+    return;
+  }
+
+  // POST /relationship/milestones/:id/notify — 标记已通知
+  const milestoneNotifyMatch = pathname.match(/^\/relationship\/milestones\/(\d+)\/notify$/);
+  if (method === "POST" && milestoneNotifyMatch) {
+    const id = Number(milestoneNotifyMatch[1]);
+    await dbRun("UPDATE relationship_milestones SET notified = 1 WHERE id = ? AND user_id = ?", [id, userId]);
+    send(res, 200, { ok: true });
+    return;
+  }
   if (method === "PATCH" && pathname === "/character/affection") {
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
@@ -2470,6 +2490,25 @@ wss.on("connection", async (ws, req) => {
             }));
           }
         }
+
+        // 补推未通知的关系里程碑
+        const pendingMilestones = await dbAll(
+          "SELECT * FROM relationship_milestones WHERE user_id = ? AND character_id = ? AND notified = 0 AND comic_url_1 IS NOT NULL",
+          [userId, char.id]
+        );
+        for (const row of pendingMilestones) {
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({
+              relation_milestone: true,
+              milestone_id: row.id,
+              stage: row.stage,
+              stage_name: row.stage_name,
+              affection: row.affection,
+              comic_url_1: row.comic_url_1,
+              comic_url_2: row.comic_url_2,
+            }));
+          }
+        }
       }
     } catch {}
   }
@@ -2656,6 +2695,128 @@ ${personalityHint}${descriptionHint}
   } catch {
     return null;
   }
+}
+
+  }
+}
+
+// ── 关系阶段升级 ──────────────────────────────────────────────────────────────
+
+const RELATION_STAGES = [
+  { stage: 1, name: "初识", min: 0  },
+  { stage: 2, name: "相知", min: 30 },
+  { stage: 3, name: "羁绊", min: 60 },
+  { stage: 4, name: "挚爱", min: 90 },
+];
+
+function getRelationStage(affection) {
+  let current = RELATION_STAGES[0];
+  for (const s of RELATION_STAGES) {
+    if (affection >= s.min) current = s;
+  }
+  return current;
+}
+
+async function generateRelationComic(charName, stageName, affection, personality, description, recentContext) {
+  const appearance = (await getCharacterAppearance(null)).slice(0, 200);
+  const personalityHint = personality ? `角色性格：${personality}。` : "";
+  const descHint = description ? `角色背景：${description}。` : "";
+
+  const scriptRes = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    enable_thinking: false,
+    max_tokens: 300,
+    messages: [
+      {
+        role: "system",
+        content: `你是一个漫画分镜脚本生成助手。根据角色信息和最近对话，为"关系升级到${stageName}"这一时刻生成两组漫画分镜描述。
+${personalityHint}${descHint}
+要求：
+- 每组描述3格连续分镜，格与格之间有时间/情绪递进
+- 第一组：回顾两人相处的温馨瞬间
+- 第二组：关系升级这一刻的情感爆发
+- 每格描述场景、动作、光线、氛围，不描述外貌，50字以内
+- 输出严格 JSON：{"comic1": ["第1格描述","第2格描述","第3格描述"], "comic2": ["第1格","第2格","第3格"]}`
+      },
+      { role: "user", content: `最近对话：\n${recentContext}\n\n当前心动值：${affection}，关系阶段：${stageName}` }
+    ]
+  });
+
+  let comic1 = [], comic2 = [];
+  try {
+    let raw = (scriptRes.choices?.[0]?.message?.content || "").trim();
+    raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const parsed = JSON.parse(raw);
+    comic1 = parsed.comic1 || [];
+    comic2 = parsed.comic2 || [];
+  } catch {
+    comic1 = ["温馨相处的瞬间，柔和光线", "两人相视而笑，气氛轻松", "静静陪伴，岁月静好"];
+    comic2 = ["心跳加速的瞬间，光晕弥漫", "情感涌上心头，眼神交汇", "关系升华，新的开始"];
+  }
+
+  const makePrompt = (frames) =>
+    `${appearance}，三格漫画分镜，从左到右依次是：第一格：${frames[0] || "温馨场景"}；第二格：${frames[1] || "情感递进"}；第三格：${frames[2] || "情感升华"}。动漫风格，精致画面，电影感光线，高质量`;
+
+  const [url1, url2] = await Promise.all([
+    callImageApi(makePrompt(comic1), { aspectRatio: "16:9" }).catch(() =>
+      callImageApiFallback(makePrompt(comic1), { aspectRatio: "16:9" }).catch(() => null)
+    ),
+    callImageApi(makePrompt(comic2), { aspectRatio: "16:9" }).catch(() =>
+      callImageApiFallback(makePrompt(comic2), { aspectRatio: "16:9" }).catch(() => null)
+    ),
+  ]);
+
+  return { url1, url2 };
+}
+
+async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAffection) {
+  const oldStage = getRelationStage(oldAffection);
+  const newStage = getRelationStage(newAffection);
+  if (newStage.stage <= oldStage.stage) return;
+
+  const char = await getActiveCharacter(userId);
+  if (!char) return;
+
+  // INSERT IGNORE 防重复
+  let insertResult;
+  try {
+    insertResult = await dbRun(
+      "INSERT IGNORE INTO relationship_milestones (user_id, character_id, stage, stage_name, affection, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [userId, char.id, newStage.stage, newStage.name, newAffection, nowIso()]
+    );
+  } catch { return; }
+  if (!insertResult || insertResult.affectedRows === 0) return;
+
+  const milestoneId = insertResult.insertId;
+  console.log(`[milestone] 用户 ${userId} 关系升级：${oldStage.name} → ${newStage.name}`);
+
+  // 异步生成漫画
+  (async () => {
+    let recentContext = "";
+    if (sessionId) {
+      const msgs = await dbAll(
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 5",
+        [sessionId]
+      );
+      recentContext = msgs.reverse().map(m => `${m.role === "user" ? "用户" : "角色"}：${m.content.slice(0, 100)}`).join("\n");
+    }
+    let url1 = null, url2 = null;
+    try {
+      ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext));
+    } catch (err) {
+      console.error(`[milestone] 漫画生成失败:`, err.message);
+    }
+    await dbRun("UPDATE relationship_milestones SET comic_url_1 = ?, comic_url_2 = ? WHERE id = ?", [url1, url2, milestoneId]);
+    pushToSession(sessionId, {
+      relation_milestone: true,
+      milestone_id: milestoneId,
+      stage: newStage.stage,
+      stage_name: newStage.name,
+      affection: newAffection,
+      comic_url_1: url1,
+      comic_url_2: url2,
+    });
+  })();
 }
 
 async function checkAndUnlockAchievements(userId, sessionId) {

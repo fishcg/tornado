@@ -1227,6 +1227,9 @@ function handleWsPayload(payload) {
   if (payload.achievement_unlock) {
     showAchievementModal(payload);
   }
+  if (payload.relation_milestone) {
+    showRelationMilestoneModal(payload);
+  }
 }
 
 function connectEvents(sessionId) {
@@ -1372,6 +1375,125 @@ function _showNextAchievement() {
   requestAnimationFrame(() => box.classList.add("achievement-box-in"));
 }
 
+// ── 关系阶段升级演出 ──────────────────────────────────────────────────────────
+function showRelationMilestoneModal(data) {
+  const existing = document.getElementById("rm-overlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "rm-overlay";
+  overlay.className = "rm-overlay";
+
+  const badge = document.createElement("div");
+  badge.className = "rm-stage-badge";
+  badge.textContent = "关系升级";
+
+  const stageName = document.createElement("div");
+  stageName.className = "rm-stage-name";
+  stageName.textContent = data.stage_name || "";
+
+  const book = document.createElement("div");
+  book.className = "rm-book";
+
+  const page1 = document.createElement("div");
+  page1.className = "rm-page rm-page-1";
+  if (data.comic_url_1) {
+    const img = document.createElement("img");
+    img.src = data.comic_url_1;
+    img.alt = "第一章";
+    page1.appendChild(img);
+  } else {
+    page1.innerHTML = `<div class="rm-page-placeholder">💫</div>`;
+  }
+  const label1 = document.createElement("div");
+  label1.className = "rm-page-label";
+  label1.textContent = "第一章";
+  page1.appendChild(label1);
+
+  const page2 = document.createElement("div");
+  page2.className = "rm-page rm-page-2";
+  if (data.comic_url_2) {
+    const img = document.createElement("img");
+    img.src = data.comic_url_2;
+    img.alt = "第二章";
+    page2.appendChild(img);
+  } else {
+    page2.innerHTML = `<div class="rm-page-placeholder">✨</div>`;
+  }
+  const label2 = document.createElement("div");
+  label2.className = "rm-page-label";
+  label2.textContent = "第二章";
+  page2.appendChild(label2);
+
+  book.appendChild(page1);
+  book.appendChild(page2);
+
+  let currentPage = 1;
+
+  const nav = document.createElement("div");
+  nav.className = "rm-nav";
+
+  const prevBtn = document.createElement("button");
+  prevBtn.className = "rm-nav-btn";
+  prevBtn.innerHTML = "‹";
+  prevBtn.disabled = true;
+
+  const dots = document.createElement("div");
+  dots.className = "rm-page-dots";
+  const dot1 = document.createElement("div");
+  dot1.className = "rm-dot active";
+  const dot2 = document.createElement("div");
+  dot2.className = "rm-dot";
+  dots.appendChild(dot1);
+  dots.appendChild(dot2);
+
+  const nextBtn = document.createElement("button");
+  nextBtn.className = "rm-nav-btn";
+  nextBtn.innerHTML = "›";
+
+  function goToPage(n) {
+    currentPage = n;
+    if (n === 2) {
+      page1.classList.add("flipped");
+      prevBtn.disabled = false;
+      nextBtn.disabled = true;
+      dot1.classList.remove("active");
+      dot2.classList.add("active");
+    } else {
+      page1.classList.remove("flipped");
+      prevBtn.disabled = true;
+      nextBtn.disabled = false;
+      dot1.classList.add("active");
+      dot2.classList.remove("active");
+    }
+  }
+
+  prevBtn.onclick = () => goToPage(1);
+  nextBtn.onclick = () => goToPage(2);
+
+  nav.appendChild(prevBtn);
+  nav.appendChild(dots);
+  nav.appendChild(nextBtn);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.className = "rm-close-btn";
+  closeBtn.textContent = "收下了";
+  closeBtn.onclick = () => {
+    overlay.style.animation = "rm-fade-in 0.3s ease reverse both";
+    setTimeout(() => overlay.remove(), 280);
+    if (data.milestone_id) {
+      api("POST", `/relationship/milestones/${data.milestone_id}/notify`).catch(() => {});
+    }
+  };
+
+  overlay.appendChild(badge);
+  overlay.appendChild(stageName);
+  overlay.appendChild(book);
+  overlay.appendChild(nav);
+  overlay.appendChild(closeBtn);
+  document.body.appendChild(overlay);
+}
+
 async function openAffectionLog() {
   const modal = document.getElementById("affection-modal");
   const list = document.getElementById("affection-log-list");
@@ -1417,34 +1539,71 @@ async function openAchievementsModal() {
   modal.classList.remove("hidden");
   list.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:16px;grid-column:1/-1">加载中…</p>';
   try {
-    const rows = await api("GET", "/achievements");
-    if (!rows || !rows.length) {
+    const [rows, milestones] = await Promise.all([
+      api("GET", "/achievements"),
+      api("GET", "/relationship/milestones").catch(() => []),
+    ]);
+    if ((!rows || !rows.length) && (!milestones || !milestones.length)) {
       list.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:16px;grid-column:1/-1">还没有解锁任何成就</p>';
       return;
     }
-    list.innerHTML = rows.map((r, i) => {
-      const theme = getAchTheme(r.type);
-      return `
-        <div class="ach-review-item ach-type-${r.type}" data-idx="${i}" style="--ach-color:${theme.color};--ach-glow:${theme.glow}">
-          <div class="ach-review-selfie-wrap" style="border-color:${theme.color}">
-            ${r.selfie_url
-              ? `<img src="${r.selfie_url}" class="ach-review-selfie" alt="">`
-              : `<div class="ach-review-selfie-placeholder">${theme.icon}</div>`}
-            <div class="ach-review-type-badge">${theme.icon}</div>
-          </div>
-          <div class="ach-review-info">
-            <div class="ach-review-name" style="color:${theme.color}">「${r.name}」</div>
-            ${r.inner_voice ? `<div class="ach-review-voice">${r.inner_voice}</div>` : ""}
-            <div class="ach-review-date">${new Date(r.unlocked_at).toLocaleDateString("zh-CN")}</div>
-          </div>
-        </div>
-      `;
-    }).join("");
 
-    list.querySelectorAll(".ach-review-item").forEach((el, i) => {
-      el.style.animationDelay = `${i * 0.07}s`;
-      el.addEventListener("click", () => openAchievementLightbox(rows[i]));
-    });
+    list.innerHTML = "";
+
+    if (rows && rows.length) {
+      const grid = document.createElement("div");
+      grid.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;";
+      grid.innerHTML = rows.map((r, i) => {
+        const theme = getAchTheme(r.type);
+        return `
+          <div class="ach-review-item ach-type-${r.type}" data-idx="${i}" style="--ach-color:${theme.color};--ach-glow:${theme.glow}">
+            <div class="ach-review-selfie-wrap" style="border-color:${theme.color}">
+              ${r.selfie_url
+                ? `<img src="${r.selfie_url}" class="ach-review-selfie" alt="">`
+                : `<div class="ach-review-selfie-placeholder">${theme.icon}</div>`}
+              <div class="ach-review-type-badge">${theme.icon}</div>
+            </div>
+            <div class="ach-review-info">
+              <div class="ach-review-name" style="color:${theme.color}">「${r.name}」</div>
+              ${r.inner_voice ? `<div class="ach-review-voice">${r.inner_voice}</div>` : ""}
+              <div class="ach-review-date">${new Date(r.unlocked_at).toLocaleDateString("zh-CN")}</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+      grid.querySelectorAll(".ach-review-item").forEach((el, i) => {
+        el.style.animationDelay = `${i * 0.07}s`;
+        el.addEventListener("click", () => openAchievementLightbox(rows[i]));
+      });
+      list.appendChild(grid);
+    }
+
+    if (milestones && milestones.length) {
+      const section = document.createElement("div");
+      section.className = "rm-review-section";
+      section.innerHTML = `<div class="rm-review-title">关系回顾</div>`;
+      const rmList = document.createElement("div");
+      rmList.className = "rm-review-list";
+      milestones.forEach((m) => {
+        const item = document.createElement("div");
+        item.className = "rm-review-item";
+        const thumbHtml = m.comic_url_1
+          ? `<img src="${m.comic_url_1}" alt="">`
+          : `<div class="rm-review-thumb-ph">💫</div>`;
+        item.innerHTML = `
+          <div class="rm-review-thumb">${thumbHtml}</div>
+          <div class="rm-review-info">
+            <div class="rm-review-stage-name">${m.stage_name}</div>
+            <div class="rm-review-date">${new Date(m.created_at).toLocaleDateString("zh-CN")}</div>
+          </div>
+          <div class="rm-review-arrow">›</div>
+        `;
+        item.addEventListener("click", () => showRelationMilestoneModal(Object.assign({}, m, { milestone_id: null })));
+        rmList.appendChild(item);
+      });
+      section.appendChild(rmList);
+      list.appendChild(section);
+    }
   } catch {
     list.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:16px;grid-column:1/-1">加载失败</p>';
   }

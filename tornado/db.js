@@ -187,6 +187,21 @@ const CREATE_TABLES = [
     notified INT NOT NULL DEFAULT 0,
     UNIQUE KEY uq_user_achievement (user_id, achievement_id, character_id),
     KEY idx_user_achievements_user (user_id)
+  ) CHARACTER SET utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS relationship_milestones (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    character_id INT NOT NULL,
+    stage INT NOT NULL,
+    stage_name VARCHAR(32) NOT NULL,
+    affection INT NOT NULL,
+    comic_url_1 TEXT,
+    comic_url_2 TEXT,
+    notified INT NOT NULL DEFAULT 0,
+    created_at VARCHAR(64) NOT NULL,
+    UNIQUE KEY uq_user_char_stage (user_id, character_id, stage),
+    KEY idx_rm_user (user_id)
   ) CHARACTER SET utf8mb4`
 ];
 
