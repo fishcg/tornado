@@ -2255,6 +2255,15 @@ function pushToSession(sessionId, payload) {
   }
 }
 
+// 每 15 秒发一次 SSE comment，防止代理/浏览器因空闲超时断开连接
+setInterval(() => {
+  for (const [, clients] of sessionClients) {
+    for (const res of clients) {
+      try { res.write(": heartbeat\n\n"); } catch {}
+    }
+  }
+}, 15000);
+
 function broadcastCardUpdate(cardUrl) {
   const data = `data: ${JSON.stringify({ card_update: true, card_url: cardUrl })}\n\n`;
   for (const [, clients] of sessionClients) {
