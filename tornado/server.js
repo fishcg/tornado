@@ -314,7 +314,7 @@ async function llmChatStream(messages) {
     model: DEEPSEEK_MODEL,
     messages,
     stream: true,
-    max_tokens: 300
+    max_tokens: 600
   });
   return { stream, t0 };
 }
