@@ -155,7 +155,7 @@ const NEWAPI_API_KEY = process.env.NEWAPI_API_KEY || "";
 const NEWAPI_MODEL = process.env.NEWAPI_MODEL || "grok-4.20-0309";
 const newapi = new OpenAI({
   apiKey: NEWAPI_API_KEY,
-  baseURL: "https://www.newapi.ai/v1"
+  baseURL: "https://api.glmbigmodel.me/v1"
 });
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
