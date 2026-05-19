@@ -210,6 +210,11 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .layout.immersive .immersive-status {
   display: flex;
 }
+@media (max-width: 768px) {
+  .immersive-status {
+    display: flex;
+  }
+}
 .layout.immersive .chat-area {
   border-right: none;
   grid-row: 1 / -1;
