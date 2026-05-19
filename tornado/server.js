@@ -324,12 +324,14 @@ async function llmChatStream(messages, provider = "deepseek") {
   const t0 = Date.now();
   const client = provider === "newapi" ? newapi : deepseek;
   const model = provider === "newapi" ? NEWAPI_MODEL : DEEPSEEK_MODEL;
-  const stream = await client.chat.completions.create({
+  const createOpts = {
     model,
     messages,
     stream: true,
     max_tokens: 600
-  });
+  };
+  if (provider === "newapi") createOpts.enable_nsfw = true;
+  const stream = await client.chat.completions.create(createOpts);
   return { stream, t0 };
 }
 
