@@ -383,6 +383,15 @@
         <div id="image-fallback-toggle" class="rp-toggle"></div>
       </div>
       <p class="settings-hint">关闭聊天插图后，角色不会自动生成图片（[IMG:] 标记仍生效）。备用 API 失败时切换 DashScope 重试。</p>
+      <div class="settings-divider" id="llm-provider-row" style="display:none">
+        <div class="settings-row">
+          <label>聊天模型</label>
+          <select id="llm-provider-select" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px">
+            <option value="deepseek">DeepSeek</option>
+            <option value="newapi">NewAPI (grok-4.20)</option>
+          </select>
+        </div>
+      </div>
       <div class="modal-actions">
         <button id="settings-save">保存</button>
         <button id="settings-cancel">取消</button>

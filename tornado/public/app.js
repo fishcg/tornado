@@ -2091,9 +2091,10 @@ async function openSettings() {
   bbSlider.value = getBubbleOpacity();
   bbVal.textContent = Math.round(getBubbleOpacity() * 100) + "%";
   try {
-    const [gs, mood] = await Promise.all([
+    const [gs, mood, user] = await Promise.all([
       api("GET", "/settings"),
-      currentSessionId ? api("GET", `/sessions/${currentSessionId}/mood`) : Promise.resolve(null)
+      currentSessionId ? api("GET", `/sessions/${currentSessionId}/mood`) : Promise.resolve(null),
+      api("GET", "/auth/me").catch(() => ({ is_admin: 0 })),
     ]);
     const chatImgToggle = document.getElementById("chat-image-toggle");
     const fallbackToggle = document.getElementById("image-fallback-toggle");
@@ -2105,6 +2106,13 @@ async function openSettings() {
     window._collapseAction = !!gs.collapseAction;
     const collapseToggle = document.getElementById("collapse-action-toggle");
     if (collapseToggle) collapseToggle.classList.toggle("on", !!gs.collapseAction);
+    // LLM 提供商（仅 admin）
+    const providerRow = document.getElementById("llm-provider-row");
+    const providerSelect = document.getElementById("llm-provider-select");
+    if (user?.is_admin && providerRow) {
+      providerRow.style.display = "";
+      if (providerSelect) providerSelect.value = gs.llmProvider || "deepseek";
+    }
     if (mood) {
       document.getElementById("dnd-start").value = mood.dnd_start || "";
       document.getElementById("dnd-end").value = mood.dnd_end || "";
@@ -2124,9 +2132,11 @@ document.getElementById("settings-save").addEventListener("click", async () => {
   const imageFallbackEnabled = document.getElementById("image-fallback-toggle").classList.contains("on");
   const imageAutoExpand = document.getElementById("image-auto-expand-toggle").classList.contains("on");
   const collapseAction = document.getElementById("collapse-action-toggle").classList.contains("on");
+  const providerSelect = document.getElementById("llm-provider-select");
+  const llmProvider = providerSelect ? providerSelect.value : "deepseek";
   const tasks = [
     api("PATCH", "/character/slideshow", { enabled: slideshowEnabled, interval_minutes: slideshowInterval }),
-    api("PATCH", "/settings", { chatImageEnabled, imageFallbackEnabled, imageAutoExpand, collapseAction })
+    api("PATCH", "/settings", { chatImageEnabled, imageFallbackEnabled, imageAutoExpand, collapseAction, llmProvider })
   ];
   if (currentSessionId) {
     tasks.push(api("PATCH", `/sessions/${currentSessionId}/settings`, { dnd_start: dndStart, dnd_end: dndEnd, proactive_idle_minutes: proactiveIdleMinutes }));

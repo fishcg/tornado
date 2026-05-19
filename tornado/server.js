@@ -111,6 +111,7 @@ async function getUserSettings(userId) {
     chatImageEnabled:     !!(flags & FLAG_CHAT_IMAGE),
     imageAutoExpand:      !!(flags & FLAG_IMAGE_AUTOEXPAND),
     collapseAction:       !!(flags & FLAG_COLLAPSE_ACTION),
+    llmProvider:          row?.llm_provider || "deepseek",
   };
   if (!globalImageEnabled) base.chatImageEnabled = false;
   return base;
@@ -133,6 +134,9 @@ async function saveUserSettings(userId, patch) {
       }
     }
   }
+  if ("llmProvider" in patch && patch.llmProvider !== undefined) {
+    await dbRun("UPDATE user_settings SET llm_provider = ? WHERE user_id = ?", [patch.llmProvider, userId]);
+  }
 }
 
 const openai = new OpenAI({
@@ -144,6 +148,14 @@ const openai = new OpenAI({
 const deepseek = new OpenAI({
   apiKey: DEEPSEEK_API_KEY,
   baseURL: DEEPSEEK_API_URL
+});
+
+// NewAPI — 仅 admin 可使用
+const NEWAPI_API_KEY = process.env.NEWAPI_API_KEY || "";
+const NEWAPI_MODEL = process.env.NEWAPI_MODEL || "grok-4.20-0309";
+const newapi = new OpenAI({
+  apiKey: NEWAPI_API_KEY,
+  baseURL: "https://www.newapi.ai/v1"
 });
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
@@ -308,10 +320,12 @@ async function ingestToMemory(text, characterName, userId) {
 
 // ── LLM ───────────────────────────────────────────────────────────────────────
 
-async function llmChatStream(messages) {
+async function llmChatStream(messages, provider = "deepseek") {
   const t0 = Date.now();
-  const stream = await deepseek.chat.completions.create({
-    model: DEEPSEEK_MODEL,
+  const client = provider === "newapi" ? newapi : deepseek;
+  const model = provider === "newapi" ? NEWAPI_MODEL : DEEPSEEK_MODEL;
+  const stream = await client.chat.completions.create({
+    model,
     messages,
     stream: true,
     max_tokens: 600
@@ -2050,7 +2064,8 @@ async function handleRequest(req, res) {
 
     let fullReply = "";
     try {
-      const { stream, t0 } = await llmChatStream(messages);
+      const userSettings = await getUserSettings(userId);
+      const { stream, t0 } = await llmChatStream(messages, userSettings.llmProvider);
       let firstContent = false;
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
@@ -2356,6 +2371,14 @@ async function handleRequest(req, res) {
     if ("chatImageEnabled" in body) patch.chatImageEnabled = !!body.chatImageEnabled;
     if ("imageAutoExpand" in body) patch.imageAutoExpand = !!body.imageAutoExpand;
     if ("collapseAction" in body) patch.collapseAction = !!body.collapseAction;
+    if ("llmProvider" in body) {
+      const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [userId]);
+      if (body.llmProvider === "newapi" && !user?.is_admin) {
+        send(res, 403, { error: "only admin can use newapi" });
+        return;
+      }
+      patch.llmProvider = body.llmProvider;
+    }
     await saveUserSettings(userId, patch);
     send(res, 200, await getUserSettings(userId));
     return;
