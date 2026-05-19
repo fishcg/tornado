@@ -1999,7 +1999,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
+  padding: 40px 0 36px;
   animation: rm-fade-in 0.6s ease both;
   overflow: hidden;
 }
@@ -2007,24 +2008,22 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-.rm-stage-badge {
-  position: absolute;
-  top: 28px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 13px;
-  letter-spacing: 3px;
-  color: rgba(255,255,255,0.5);
-  text-transform: uppercase;
+.rm-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
   animation: ach-fadeslide 0.5s 0.3s ease both;
+}
+.rm-stage-badge {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
   white-space: nowrap;
 }
 .rm-stage-name {
-  position: absolute;
-  top: 52px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 700;
   color: #fff;
   letter-spacing: 4px;
@@ -2033,14 +2032,15 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   white-space: nowrap;
 }
 @keyframes rm-name-in {
-  from { opacity: 0; transform: translateX(-50%) scale(0.6); }
-  to   { opacity: 1; transform: translateX(-50%) scale(1); }
+  from { opacity: 0; transform: scale(0.6); }
+  to   { opacity: 1; transform: scale(1); }
 }
 .rm-book {
   position: relative;
-  width: min(90vw, 480px);
+  width: min(96vw, 860px);
   aspect-ratio: 16/9;
   perspective: 1200px;
+  flex-shrink: 0;
 }
 .rm-page {
   position: absolute;
@@ -2088,12 +2088,17 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   letter-spacing: 1px;
   pointer-events: none;
 }
+.rm-footer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  animation: ach-fadeslide 0.4s 0.8s ease both;
+}
 .rm-nav {
   display: flex;
   align-items: center;
   gap: 24px;
-  margin-top: 28px;
-  animation: ach-fadeslide 0.4s 0.8s ease both;
 }
 .rm-nav-btn {
   background: rgba(255,255,255,0.1);
@@ -2127,22 +2132,17 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   transform: scale(1.3);
 }
 .rm-close-btn {
-  position: absolute;
-  bottom: 32px;
-  left: 50%;
-  transform: translateX(-50%);
   background: rgba(255,255,255,0.12);
   border: 1px solid rgba(255,255,255,0.25);
   color: #fff;
   border-radius: 24px;
-  padding: 10px 32px;
+  padding: 10px 36px;
   font-size: 15px;
   cursor: pointer;
   letter-spacing: 1px;
   transition: background 0.2s, transform 0.15s;
-  animation: ach-fadeslide 0.4s 1s ease both;
 }
-.rm-close-btn:hover { background: rgba(255,255,255,0.22); transform: translateX(-50%) scale(1.04); }
+.rm-close-btn:hover { background: rgba(255,255,255,0.22); transform: scale(1.04); }
 
 /* 成就页关系回顾 */
 .rm-review-section {

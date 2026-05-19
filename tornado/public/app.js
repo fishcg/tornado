@@ -1486,11 +1486,19 @@ function showRelationMilestoneModal(data) {
     }
   };
 
-  overlay.appendChild(badge);
-  overlay.appendChild(stageName);
+  const header = document.createElement("div");
+  header.className = "rm-header";
+  header.appendChild(badge);
+  header.appendChild(stageName);
+
+  const footer = document.createElement("div");
+  footer.className = "rm-footer";
+  footer.appendChild(nav);
+  footer.appendChild(closeBtn);
+
+  overlay.appendChild(header);
   overlay.appendChild(book);
-  overlay.appendChild(nav);
-  overlay.appendChild(closeBtn);
+  overlay.appendChild(footer);
   document.body.appendChild(overlay);
 }
 
