@@ -234,7 +234,7 @@ function sendFile(res, filePath) {
     send(res, 404, "Not found");
     return;
   }
-  res.writeHead(200, { "Content-Type": mime[ext] || "text/plain" });
+  res.writeHead(200, { "Content-Type": mime[ext] || "text/plain", "Cache-Control": "no-cache" });
   fs.createReadStream(filePath).pipe(res);
 }
 
