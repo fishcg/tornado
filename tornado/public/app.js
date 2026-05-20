@@ -1423,7 +1423,13 @@ function showRelationMilestoneModal(data) {
     video.playsInline = true;
     video.setAttribute("playsinline", "");
     video.setAttribute("webkit-playsinline", "");
+    video.style.pointerEvents = "none";
     videoWrap.appendChild(video);
+    // 透明遮罩拦截所有点击，阻止浏览器弹出原生控件
+    const videoMask = document.createElement("div");
+    videoMask.style.cssText = "position:absolute;inset:0;z-index:1;cursor:pointer";
+    videoMask.addEventListener("click", () => closeBtn.click());
+    videoWrap.appendChild(videoMask);
     // 静音自动播放后尝试取消静音
     video.addEventListener("canplay", () => {
       video.muted = false;
@@ -1433,9 +1439,6 @@ function showRelationMilestoneModal(data) {
     overlay.appendChild(videoWrap);
     overlay.appendChild(header);
     overlay.appendChild(footer);
-    overlay.addEventListener("click", (e) => {
-      if (e.target === overlay || e.target === videoWrap || e.target === video) closeBtn.click();
-    });
   } else {
     const book = document.createElement("div");
     book.className = "rm-book";
