@@ -2961,9 +2961,6 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
             break;
           } catch (err) {
             console.error(`[milestone] 视频首帧生图第 ${attempt} 次失败: ${err.message}`);
-            if (attempt === 3 && imageFallbackEnabled) {
-              frameUrl = await callImageApiFallback(imgPrompt, { aspectRatio: "16:9" }).catch(() => null);
-            }
           }
         }
         if (frameUrl) {
