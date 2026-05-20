@@ -2026,13 +2026,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   color: rgba(255,255,255,0.45);
   text-transform: uppercase;
   white-space: nowrap;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8), 0 0 20px rgba(0,0,0,0.6);
 }
 .rm-stage-name {
   font-size: 30px;
   font-weight: 700;
   color: #fff;
   letter-spacing: 4px;
-  text-shadow: 0 0 30px rgba(255,200,100,0.8), 0 0 60px rgba(255,200,100,0.4);
+  text-shadow: 0 0 30px rgba(255,200,100,0.8), 0 0 60px rgba(255,200,100,0.4), 0 2px 8px rgba(0,0,0,0.9);
   animation: rm-name-in 0.7s 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   white-space: nowrap;
 }
@@ -2177,6 +2178,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   cursor: pointer;
   letter-spacing: 1px;
   transition: background 0.2s, transform 0.15s;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
 }
 .rm-close-btn:hover { background: rgba(255,255,255,0.22); transform: scale(1.04); }
 
