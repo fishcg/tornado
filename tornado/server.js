@@ -2950,10 +2950,11 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
     if (milestoneMode === "video") {
       let videoUrl = null;
       try {
-        const appearance = (await getCharacterAppearance(null)).slice(0, 200);
-        const personalityHint = char.personality ? `角色性格：${char.personality}。` : "";
-        const descHint = char.description ? `角色背景：${char.description}。` : "";
-        const imgPrompt = `${appearance}，${personalityHint}${descHint}关系升级到"${newStage.name}"的情感高潮瞬间，画面中只有该角色一人，动漫风格，精致画面，电影感光线，高质量`;
+        const appearance = (await getCharacterAppearance(null)).slice(0, 150);
+        const personalityHint = char.personality ? `${char.personality.slice(0, 50)}，` : "";
+        const descHint = char.description ? `${char.description.slice(0, 50)}，` : "";
+        const imgPrompt = `${appearance}，${personalityHint}${descHint}关系升级到"${newStage.name}"的情感高潮瞬间，只有该角色一人，动漫风格，电影感光线`;
+        console.log(`[milestone] 首帧 prompt 长度=${imgPrompt.length}`);
         let frameUrl = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
           try {
