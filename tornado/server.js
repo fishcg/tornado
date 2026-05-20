@@ -2826,7 +2826,7 @@ async function generateRelationVideo(imageUrl, stageName, duration = 3) {
           prompt,
           media: [{ type: "first_frame", url: imageUrl }]
         },
-        parameters: { resolution: "720P", duration }
+        parameters: { resolution: "720P", duration, watermark: false }
       }),
       signal: controller.signal
     });
