@@ -2970,14 +2970,16 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
         console.error(`[milestone] 视频生成失败:`, err.message);
       }
       await dbRun("UPDATE relationship_milestones SET video_url = ? WHERE id = ?", [videoUrl, milestoneId]);
-      pushToUser(userId, {
-        relation_milestone: true,
-        milestone_id: milestoneId,
-        stage: newStage.stage,
-        stage_name: newStage.name,
-        affection: newAffection,
-        video_url: videoUrl,
-      });
+      if (videoUrl) {
+        pushToUser(userId, {
+          relation_milestone: true,
+          milestone_id: milestoneId,
+          stage: newStage.stage,
+          stage_name: newStage.name,
+          affection: newAffection,
+          video_url: videoUrl,
+        });
+      }
     } else {
       let url1 = null, url2 = null;
       try {
