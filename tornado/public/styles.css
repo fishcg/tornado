@@ -2021,7 +2021,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   animation: ach-fadeslide 0.5s 0.3s ease both;
 }
 .rm-stage-badge {
-  font-size: 12px;
+  font-size: 16px;
   letter-spacing: 3px;
   color: rgba(255,255,255,0.45);
   text-transform: uppercase;
