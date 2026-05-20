@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import OpenAI from "../node_modules/openai/index.js";
+import OSS from "../node_modules/ali-oss/lib/client.js";
 import { getDb, closeDb, initDb } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,27 @@ const PROACTIVE_IDLE_MINUTES = Number(process.env.PROACTIVE_IDLE_MINUTES || 30);
 const WEATHER_CITY = process.env.WEATHER_CITY || "";
 const PASSWORD_SALT = process.env.PASSWORD_SALT || "tornado-default-salt-2025";
 const DEFAULT_INVITE_CODE = process.env.DEFAULT_INVITE_CODE || "tornado2025";
+
+const OSS_REGION = process.env.OSS_REGION || "";
+const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || "";
+const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || "";
+const OSS_BUCKET = process.env.OSS_BUCKET || "";
+const OSS_BASE_URL = process.env.OSS_BASE_URL || "";
+
+function getOssClient() {
+  return new OSS({
+    region: OSS_REGION,
+    accessKeyId: OSS_ACCESS_KEY_ID,
+    accessKeySecret: OSS_ACCESS_KEY_SECRET,
+    bucket: OSS_BUCKET
+  });
+}
+
+async function uploadToOss(buffer, filename) {
+  const client = getOssClient();
+  await client.put(`tornado/${filename}`, buffer);
+  return `${OSS_BASE_URL}/tornado/${filename}`;
+}
 
 // ── 鉴权 ──────────────────────────────────────────────────────────────────────
 
@@ -2816,8 +2838,8 @@ async function generateRelationVideo(imageUrl, stageName, duration = 3) {
     const taskId = submitData.output?.task_id;
     if (!taskId) throw new Error("DashScope video: no task_id");
     console.log(`[milestone] 视频任务已提交 taskId=${taskId}`);
-    for (let i = 0; i < 120; i++) {
-      await new Promise(r => setTimeout(r, 5000));
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 30000));
       const pollRes = await fetch(`https://dashscope.aliyuncs.com/api/v1/tasks/${taskId}`, {
         headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
       });
@@ -2825,9 +2847,16 @@ async function generateRelationVideo(imageUrl, stageName, duration = 3) {
       const pollData = await pollRes.json();
       const status = pollData.output?.task_status;
       if (status === "SUCCEEDED") {
-        const url = pollData.output?.results?.[0]?.url;
-        if (!url) throw new Error("DashScope video: no url in result");
-        return url;
+        const tempUrl = pollData.output?.video_url;
+        if (!tempUrl) throw new Error("DashScope video: no video_url in result");
+        // 下载并上传到 OSS，避免临时链接过期
+        const dlRes = await fetch(tempUrl);
+        if (!dlRes.ok) throw new Error(`下载视频失败: ${dlRes.status}`);
+        const buf = Buffer.from(await dlRes.arrayBuffer());
+        const filename = `milestone-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`;
+        const ossUrl = await uploadToOss(buf, filename);
+        console.log(`[milestone] 视频已上传 OSS: ${ossUrl}`);
+        return ossUrl;
       }
       if (status === "FAILED") throw new Error(`DashScope video task failed: ${JSON.stringify(pollData.output).slice(0, 200)}`);
     }
