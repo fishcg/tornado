@@ -2047,6 +2047,13 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   perspective: 1200px;
   flex-shrink: 0;
 }
+.rm-video-wrap {
+  width: min(96vw, 860px);
+  flex-shrink: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.8);
+}
 .rm-page {
   position: absolute;
   inset: 0;

@@ -1462,7 +1462,9 @@ async function handleRequest(req, res) {
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
-        affection_interval: await getGlobalSetting("affection_interval", "3")
+        affection_interval: await getGlobalSetting("affection_interval", "3"),
+        milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
+        milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3")
       });
       return;
     }
@@ -1478,10 +1480,19 @@ async function handleRequest(req, res) {
         const n = Math.max(1, Math.min(20, Math.floor(Number(body.affection_interval) || 3)));
         await setGlobalSetting("affection_interval", String(n));
       }
+      if ("milestone_mode" in body && ["comic", "video"].includes(body.milestone_mode)) {
+        await setGlobalSetting("milestone_mode", body.milestone_mode);
+      }
+      if ("milestone_video_duration" in body) {
+        const n = Math.max(3, Math.min(10, Math.floor(Number(body.milestone_video_duration) || 3)));
+        await setGlobalSetting("milestone_video_duration", String(n));
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
-        affection_interval: await getGlobalSetting("affection_interval", "3")
+        affection_interval: await getGlobalSetting("affection_interval", "3"),
+        milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
+        milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3")
       });
       return;
     }
@@ -2552,7 +2563,7 @@ wss.on("connection", async (ws, req) => {
 
         // 补推未通知的关系里程碑
         const pendingMilestones = await dbAll(
-          "SELECT * FROM relationship_milestones WHERE user_id = ? AND character_id = ? AND notified = 0 AND comic_url_1 IS NOT NULL",
+          "SELECT * FROM relationship_milestones WHERE user_id = ? AND character_id = ? AND notified = 0 AND (comic_url_1 IS NOT NULL OR video_url IS NOT NULL)",
           [userId, char.id]
         );
         for (const row of pendingMilestones) {
@@ -2565,6 +2576,7 @@ wss.on("connection", async (ws, req) => {
               affection: row.affection,
               comic_url_1: row.comic_url_1,
               comic_url_2: row.comic_url_2,
+              video_url: row.video_url,
             }));
           }
         }
@@ -2774,6 +2786,57 @@ function getRelationStage(affection) {
   return current;
 }
 
+async function generateRelationVideo(imageUrl, stageName, duration = 3) {
+  const prompt = `结合图片场景，让人物动起来，超高帧数，把"${stageName}"字符自然的融入到画面中，但是要重点突出`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 600_000);
+  try {
+    const submitRes = await fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+        "X-DashScope-Async": "enable"
+      },
+      body: JSON.stringify({
+        model: "happyhorse-1.0-i2v",
+        input: {
+          prompt,
+          media: [{ type: "first_frame", url: imageUrl }]
+        },
+        parameters: { resolution: "720P", duration }
+      }),
+      signal: controller.signal
+    });
+    if (!submitRes.ok) {
+      const errBody = await submitRes.text().catch(() => "");
+      throw new Error(`DashScope video submit ${submitRes.status}: ${errBody.slice(0, 200)}`);
+    }
+    const submitData = await submitRes.json();
+    const taskId = submitData.output?.task_id;
+    if (!taskId) throw new Error("DashScope video: no task_id");
+    console.log(`[milestone] 视频任务已提交 taskId=${taskId}`);
+    for (let i = 0; i < 120; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const pollRes = await fetch(`https://dashscope.aliyuncs.com/api/v1/tasks/${taskId}`, {
+        headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+      });
+      if (!pollRes.ok) continue;
+      const pollData = await pollRes.json();
+      const status = pollData.output?.task_status;
+      if (status === "SUCCEEDED") {
+        const url = pollData.output?.results?.[0]?.url;
+        if (!url) throw new Error("DashScope video: no url in result");
+        return url;
+      }
+      if (status === "FAILED") throw new Error(`DashScope video task failed: ${JSON.stringify(pollData.output).slice(0, 200)}`);
+    }
+    throw new Error("DashScope video: task timed out");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function generateRelationComic(charName, stageName, affection, personality, description, recentContext, { imageFallbackEnabled = true } = {}) {
   const appearance = (await getCharacterAppearance(null)).slice(0, 200);
   const personalityHint = personality ? `角色性格：${personality}。` : "";
@@ -2870,7 +2933,7 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
   const milestoneId = insertResult.insertId;
   console.log(`[milestone] 用户 ${userId} 关系升级：${oldStage.name} → ${newStage.name}`);
 
-  // 异步生成漫画
+  // 异步生成漫画或视频
   (async () => {
     let recentContext = "";
     if (sessionId) {
@@ -2880,22 +2943,62 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
       );
       recentContext = msgs.reverse().map(m => `${m.role === "user" ? "用户" : "角色"}：${m.content.slice(0, 100)}`).join("\n");
     }
-    let url1 = null, url2 = null;
-    try {
-      ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext, { imageFallbackEnabled }));
-    } catch (err) {
-      console.error(`[milestone] 漫画生成失败:`, err.message);
+
+    const milestoneMode = await getGlobalSetting("milestone_mode", "comic");
+    const videoDuration = Number(await getGlobalSetting("milestone_video_duration", "3"));
+
+    if (milestoneMode === "video") {
+      let videoUrl = null;
+      try {
+        const appearance = (await getCharacterAppearance(null)).slice(0, 200);
+        const personalityHint = char.personality ? `角色性格：${char.personality}。` : "";
+        const descHint = char.description ? `角色背景：${char.description}。` : "";
+        const imgPrompt = `${appearance}，${personalityHint}${descHint}关系升级到"${newStage.name}"的情感高潮瞬间，画面中只有该角色一人，动漫风格，精致画面，电影感光线，高质量`;
+        let frameUrl = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            frameUrl = await callImageApi(imgPrompt, { aspectRatio: "16:9" });
+            break;
+          } catch (err) {
+            console.error(`[milestone] 视频首帧生图第 ${attempt} 次失败: ${err.message}`);
+            if (attempt === 3 && imageFallbackEnabled) {
+              frameUrl = await callImageApiFallback(imgPrompt, { aspectRatio: "16:9" }).catch(() => null);
+            }
+          }
+        }
+        if (frameUrl) {
+          videoUrl = await generateRelationVideo(frameUrl, newStage.name, videoDuration);
+        }
+      } catch (err) {
+        console.error(`[milestone] 视频生成失败:`, err.message);
+      }
+      await dbRun("UPDATE relationship_milestones SET video_url = ? WHERE id = ?", [videoUrl, milestoneId]);
+      pushToUser(userId, {
+        relation_milestone: true,
+        milestone_id: milestoneId,
+        stage: newStage.stage,
+        stage_name: newStage.name,
+        affection: newAffection,
+        video_url: videoUrl,
+      });
+    } else {
+      let url1 = null, url2 = null;
+      try {
+        ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext, { imageFallbackEnabled }));
+      } catch (err) {
+        console.error(`[milestone] 漫画生成失败:`, err.message);
+      }
+      await dbRun("UPDATE relationship_milestones SET comic_url_1 = ?, comic_url_2 = ? WHERE id = ?", [url1, url2, milestoneId]);
+      pushToUser(userId, {
+        relation_milestone: true,
+        milestone_id: milestoneId,
+        stage: newStage.stage,
+        stage_name: newStage.name,
+        affection: newAffection,
+        comic_url_1: url1,
+        comic_url_2: url2,
+      });
     }
-    await dbRun("UPDATE relationship_milestones SET comic_url_1 = ?, comic_url_2 = ? WHERE id = ?", [url1, url2, milestoneId]);
-    pushToUser(userId, {
-      relation_milestone: true,
-      milestone_id: milestoneId,
-      stage: newStage.stage,
-      stage_name: newStage.name,
-      affection: newAffection,
-      comic_url_1: url1,
-      comic_url_2: url2,
-    });
   })();
 }
 

@@ -1392,89 +1392,6 @@ function showRelationMilestoneModal(data) {
   stageName.className = "rm-stage-name";
   stageName.textContent = data.stage_name || "";
 
-  const book = document.createElement("div");
-  book.className = "rm-book";
-
-  const page1 = document.createElement("div");
-  page1.className = "rm-page rm-page-1";
-  if (data.comic_url_1) {
-    const img = document.createElement("img");
-    img.src = data.comic_url_1;
-    img.alt = "第一章";
-    page1.appendChild(img);
-  } else {
-    page1.innerHTML = `<div class="rm-page-placeholder">💫</div>`;
-  }
-  const label1 = document.createElement("div");
-  label1.className = "rm-page-label";
-  label1.textContent = "第一章";
-  page1.appendChild(label1);
-
-  const page2 = document.createElement("div");
-  page2.className = "rm-page rm-page-2";
-  if (data.comic_url_2) {
-    const img = document.createElement("img");
-    img.src = data.comic_url_2;
-    img.alt = "第二章";
-    page2.appendChild(img);
-  } else {
-    page2.innerHTML = `<div class="rm-page-placeholder">✨</div>`;
-  }
-  const label2 = document.createElement("div");
-  label2.className = "rm-page-label";
-  label2.textContent = "第二章";
-  page2.appendChild(label2);
-
-  book.appendChild(page1);
-  book.appendChild(page2);
-
-  let currentPage = 1;
-
-  const nav = document.createElement("div");
-  nav.className = "rm-nav";
-
-  const prevBtn = document.createElement("button");
-  prevBtn.className = "rm-nav-btn";
-  prevBtn.innerHTML = "‹";
-  prevBtn.disabled = true;
-
-  const dots = document.createElement("div");
-  dots.className = "rm-page-dots";
-  const dot1 = document.createElement("div");
-  dot1.className = "rm-dot active";
-  const dot2 = document.createElement("div");
-  dot2.className = "rm-dot";
-  dots.appendChild(dot1);
-  dots.appendChild(dot2);
-
-  const nextBtn = document.createElement("button");
-  nextBtn.className = "rm-nav-btn";
-  nextBtn.innerHTML = "›";
-
-  function goToPage(n) {
-    currentPage = n;
-    if (n === 2) {
-      page1.classList.add("flipped");
-      prevBtn.disabled = false;
-      nextBtn.disabled = true;
-      dot1.classList.remove("active");
-      dot2.classList.add("active");
-    } else {
-      page1.classList.remove("flipped");
-      prevBtn.disabled = true;
-      nextBtn.disabled = false;
-      dot1.classList.add("active");
-      dot2.classList.remove("active");
-    }
-  }
-
-  prevBtn.onclick = () => goToPage(1);
-  nextBtn.onclick = () => goToPage(2);
-
-  nav.appendChild(prevBtn);
-  nav.appendChild(dots);
-  nav.appendChild(nextBtn);
-
   const closeBtn = document.createElement("button");
   closeBtn.className = "rm-close-btn";
   closeBtn.textContent = "收下了";
@@ -1493,12 +1410,113 @@ function showRelationMilestoneModal(data) {
 
   const footer = document.createElement("div");
   footer.className = "rm-footer";
-  footer.appendChild(nav);
-  footer.appendChild(closeBtn);
 
-  overlay.appendChild(header);
-  overlay.appendChild(book);
-  overlay.appendChild(footer);
+  if (data.video_url) {
+    const videoWrap = document.createElement("div");
+    videoWrap.className = "rm-video-wrap";
+    const video = document.createElement("video");
+    video.src = data.video_url;
+    video.controls = true;
+    video.autoplay = true;
+    video.loop = true;
+    video.style.cssText = "width:100%;border-radius:12px;max-height:60vh;object-fit:contain;background:#000";
+    videoWrap.appendChild(video);
+    footer.appendChild(closeBtn);
+    overlay.appendChild(header);
+    overlay.appendChild(videoWrap);
+    overlay.appendChild(footer);
+  } else {
+    const book = document.createElement("div");
+    book.className = "rm-book";
+
+    const page1 = document.createElement("div");
+    page1.className = "rm-page rm-page-1";
+    if (data.comic_url_1) {
+      const img = document.createElement("img");
+      img.src = data.comic_url_1;
+      img.alt = "第一章";
+      page1.appendChild(img);
+    } else {
+      page1.innerHTML = `<div class="rm-page-placeholder">💫</div>`;
+    }
+    const label1 = document.createElement("div");
+    label1.className = "rm-page-label";
+    label1.textContent = "第一章";
+    page1.appendChild(label1);
+
+    const page2 = document.createElement("div");
+    page2.className = "rm-page rm-page-2";
+    if (data.comic_url_2) {
+      const img = document.createElement("img");
+      img.src = data.comic_url_2;
+      img.alt = "第二章";
+      page2.appendChild(img);
+    } else {
+      page2.innerHTML = `<div class="rm-page-placeholder">✨</div>`;
+    }
+    const label2 = document.createElement("div");
+    label2.className = "rm-page-label";
+    label2.textContent = "第二章";
+    page2.appendChild(label2);
+
+    book.appendChild(page1);
+    book.appendChild(page2);
+
+    let currentPage = 1;
+
+    const nav = document.createElement("div");
+    nav.className = "rm-nav";
+
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "rm-nav-btn";
+    prevBtn.innerHTML = "‹";
+    prevBtn.disabled = true;
+
+    const dots = document.createElement("div");
+    dots.className = "rm-page-dots";
+    const dot1 = document.createElement("div");
+    dot1.className = "rm-dot active";
+    const dot2 = document.createElement("div");
+    dot2.className = "rm-dot";
+    dots.appendChild(dot1);
+    dots.appendChild(dot2);
+
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "rm-nav-btn";
+    nextBtn.innerHTML = "›";
+
+    function goToPage(n) {
+      currentPage = n;
+      if (n === 2) {
+        page1.classList.add("flipped");
+        prevBtn.disabled = false;
+        nextBtn.disabled = true;
+        dot1.classList.remove("active");
+        dot2.classList.add("active");
+      } else {
+        page1.classList.remove("flipped");
+        prevBtn.disabled = true;
+        nextBtn.disabled = false;
+        dot1.classList.add("active");
+        dot2.classList.remove("active");
+      }
+    }
+
+    prevBtn.onclick = () => goToPage(1);
+    nextBtn.onclick = () => goToPage(2);
+
+    nav.appendChild(prevBtn);
+    nav.appendChild(dots);
+    nav.appendChild(nextBtn);
+
+    footer.appendChild(nav);
+    footer.appendChild(closeBtn);
+
+    overlay.appendChild(header);
+    overlay.appendChild(book);
+    overlay.appendChild(footer);
+  }
+
   document.body.appendChild(overlay);
 }
 
@@ -1597,7 +1615,9 @@ async function openAchievementsModal() {
       rmRows.forEach((m) => {
         const item = document.createElement("div");
         item.className = "rm-review-item";
-        const thumbHtml = m.comic_url_1
+        const thumbHtml = m.video_url
+          ? `<video src="${m.video_url}" muted playsinline style="width:100%;height:100%;object-fit:cover;border-radius:6px"></video>`
+          : m.comic_url_1
           ? `<img src="${m.comic_url_1}" alt="">`
           : `<div class="rm-review-thumb-ph">💫</div>`;
         item.innerHTML = `
