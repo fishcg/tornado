@@ -1412,19 +1412,30 @@ function showRelationMilestoneModal(data) {
   footer.className = "rm-footer";
 
   if (data.video_url) {
+    overlay.classList.add("rm-video-mode");
     const videoWrap = document.createElement("div");
     videoWrap.className = "rm-video-wrap";
     const video = document.createElement("video");
     video.src = data.video_url;
-    video.controls = true;
     video.autoplay = true;
     video.loop = true;
-    video.style.cssText = "width:100%;border-radius:12px;max-height:60vh;object-fit:contain;background:#000";
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.setAttribute("webkit-playsinline", "");
     videoWrap.appendChild(video);
+    // 静音自动播放后尝试取消静音
+    video.addEventListener("canplay", () => {
+      video.muted = false;
+      video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
+    }, { once: true });
     footer.appendChild(closeBtn);
-    overlay.appendChild(header);
     overlay.appendChild(videoWrap);
+    overlay.appendChild(header);
     overlay.appendChild(footer);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay || e.target === videoWrap || e.target === video) closeBtn.click();
+    });
   } else {
     const book = document.createElement("div");
     book.className = "rm-book";
