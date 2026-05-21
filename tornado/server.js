@@ -3180,7 +3180,7 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
     throw new Error(`QwenTTS ${res.status}: ${body.slice(0, 300)}`);
   }
   const data = await res.json();
-  const tempUrl = data.output?.choices?.[0]?.message?.content?.[0]?.audio?.url;
+  const tempUrl = data.output?.audio?.url || data.output?.choices?.[0]?.message?.content?.[0]?.audio?.url;
   if (!tempUrl) throw new Error(`QwenTTS: no audio url. ${JSON.stringify(data).slice(0, 200)}`);
   const dlRes = await fetch(tempUrl);
   if (!dlRes.ok) throw new Error(`QwenTTS 音频下载失败: ${dlRes.status}`);
