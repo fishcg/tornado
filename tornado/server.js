@@ -399,8 +399,8 @@ async function getCharacterDescription(userId) {
 }
 
 async function buildCharacterPromptPrefix(userId) {
-  const appearance = await getCharacterAppearance(userId);
-  const desc = await getCharacterDescription(userId);
+  const appearance = (await getCharacterAppearance(userId)).slice(0, 200);
+  const desc = (await getCharacterDescription(userId)).slice(0, 80);
   return desc ? `${desc}，${appearance}` : appearance;
 }
 
@@ -808,7 +808,8 @@ async function generateMoodAvatar(mood, userId) {
 
   const settings = userId ? await getUserSettings(userId) : { imageFallbackEnabled: true };
   const moodDesc = MOOD_AVATAR_PROMPTS[mood] || "neutral expression";
-  const prompt = `${await buildCharacterPromptPrefix(userId)}，portrait headshot, ${moodDesc}, simple background, anime style`;
+  const prefix = await buildCharacterPromptPrefix(userId);
+  const prompt = `${prefix}，头像特写，${moodDesc}，纯色背景，动漫风格，高质量`;
   let url = null;
   for (let attempt = 0; attempt <= 2; attempt++) {
     try {
@@ -2296,6 +2297,7 @@ async function handleRequest(req, res) {
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
 
     // 异步 TTS 合成，合成完通过 WS 推送播放
+    console.log(`[tts] 检查条件 ttsEnabled=${ttsSettings.ttsEnabled} voice_id=${ttsChar?.voice_id || "无"}`);
     if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
       (async () => {
         try {
