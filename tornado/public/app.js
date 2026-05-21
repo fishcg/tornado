@@ -2725,6 +2725,7 @@ async function loadCharacter() {
     }
     renderCharacterCard(data.card_url || null);
     initSlideshow(data.slideshow_enabled, data.slideshow_interval ?? 30);
+    startCardCarousel();
     renderAffection(data.affection ?? 10);
     // 同步设置面板
     const toggle = document.getElementById("slideshow-toggle");
