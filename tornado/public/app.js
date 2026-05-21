@@ -707,11 +707,12 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
   // 所有消息加删除按钮
   if (msgId) addDelBtn(wrap, msgId);
 
+  messages.appendChild(wrap);
+
   if (audioUrl && role === "assistant") {
     attachTtsPlayer(msgId, audioUrl, false);
   }
 
-  messages.appendChild(wrap);
   return bubble;
 }
 
@@ -2145,13 +2146,11 @@ async function loadCharacterList() {
     ).join("");
     sel.onchange = async () => {
       await api("PATCH", `/characters/${sel.value}`, { is_active: true });
+      setChatBackground(null);
+      await newSession();
       await loadCharacter();
       showToast("已切换角色");
     };
-  } catch {}
-}
-
-async function openSettings() {
   document.getElementById("settings-modal").classList.remove("hidden");
   // 同步滑块显示值
   const bgSlider = document.getElementById("bg-opacity");
@@ -2436,6 +2435,8 @@ document.getElementById("cm-soul-toggle")?.addEventListener("click", async () =>
         ).join("");
         sel.onchange = async () => {
           await api("PATCH", `/characters/${sel.value}`, { is_active: true });
+          setChatBackground(null);
+          await newSession();
           await loadCharacter();
           showToast("已切换角色");
         };
