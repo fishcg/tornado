@@ -3,7 +3,7 @@ import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import OpenAI from "../node_modules/openai/index.js";
 import OSS from "../node_modules/ali-oss/lib/client.js";
 import { getDb, closeDb, initDb } from "./db.js";
@@ -38,6 +38,8 @@ const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || "";
 const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || "";
 const OSS_BUCKET = process.env.OSS_BUCKET || "";
 const OSS_BASE_URL = process.env.OSS_BASE_URL || "";
+
+const VOLC_API_KEY = process.env.VOLC_API_KEY || "";
 
 function getOssClient() {
   return new OSS({
@@ -1544,7 +1546,8 @@ async function handleRequest(req, res) {
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
-        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0")
+        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
+        tts_channel: await getGlobalSetting("tts_channel", "cosyvoice")
       });
       return;
     }
@@ -1570,13 +1573,17 @@ async function handleRequest(req, res) {
       if ("deepseek_thinking" in body) {
         await setGlobalSetting("deepseek_thinking", body.deepseek_thinking ? "1" : "0");
       }
+      if ("tts_channel" in body && ["cosyvoice", "volcengine"].includes(body.tts_channel)) {
+        await setGlobalSetting("tts_channel", body.tts_channel);
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
-        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0")
+        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
+        tts_channel: await getGlobalSetting("tts_channel", "cosyvoice")
       });
       return;
     }
@@ -1884,8 +1891,8 @@ async function handleRequest(req, res) {
   // GET /character/voice
   if (method === "GET" && pathname === "/character/voice") {
     const char = await getActiveCharacter(userId);
-    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0 }); return; }
-    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0 });
+    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0, voice_channel: "cosyvoice" }); return; }
+    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0, voice_channel: char.voice_channel || "cosyvoice" });
     return;
   }
 
@@ -1912,13 +1919,20 @@ async function handleRequest(req, res) {
     const ct = req.headers["content-type"] || "";
     const extMap = { "audio/wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".mp4", "audio/m4a": ".m4a", "audio/ogg": ".ogg", "audio/webm": ".webm" };
     const ext = extMap[ct.split(";")[0].trim()] || ".wav";
-    const filename = `voice-sample-${char.id}-${Date.now()}${ext}`;
-    const ossUrl = await uploadToOss(buf, filename);
-    const voiceId = await cloneVoice(ossUrl, char.id);
-    // 若已有旧音色，异步删除
-    if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
-    await dbRun("UPDATE characters SET voice_id = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, char.id]);
-    send(res, 200, { voice_id: voiceId });
+    const format = ext.slice(1);
+    const channel = await getGlobalSetting("tts_channel", "cosyvoice");
+    let voiceId;
+    if (channel === "volcengine") {
+      voiceId = await cloneVoiceVolc(buf, char.id, format);
+    } else {
+      const filename = `voice-sample-${char.id}-${Date.now()}${ext}`;
+      const ossUrl = await uploadToOss(buf, filename);
+      voiceId = await cloneVoice(ossUrl, char.id);
+    }
+    // 若已有旧音色，异步删除（仅 cosyvoice 有删除接口）
+    if (char.voice_id && (char.voice_channel || "cosyvoice") === "cosyvoice") deleteVoice(char.voice_id).catch(() => {});
+    await dbRun("UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, channel, char.id]);
+    send(res, 200, { voice_id: voiceId, voice_channel: channel });
     return;
   }
 
@@ -1926,7 +1940,7 @@ async function handleRequest(req, res) {
   if (method === "DELETE" && pathname === "/character/voice") {
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
-    if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
+    if (char.voice_id && (char.voice_channel || "cosyvoice") === "cosyvoice") deleteVoice(char.voice_id).catch(() => {});
     await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0, voice_preview_url = NULL WHERE id = ?", [char.id]);
     send(res, 200, { ok: true });
     return;
@@ -1945,7 +1959,8 @@ async function handleRequest(req, res) {
     let text = "你好，我是你的专属伴侣，很高兴认识你。";
     if (lang === "ja") text = await translateToJapanese(text);
     try {
-      const { url: audioUrl } = await synthesizeSpeech(text, char.voice_id, lang);
+      const synthFn = (char.voice_channel || "cosyvoice") === "volcengine" ? synthesizeSpeechVolc : synthesizeSpeech;
+      const { url: audioUrl } = await synthFn(text, char.voice_id, lang);
       await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
       send(res, 200, { audio_url: audioUrl });
     } catch (err) {
@@ -2355,7 +2370,10 @@ async function handleRequest(req, res) {
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
           console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
-          const { url: audioUrl } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
+          const isVolc = (ttsChar.voice_channel || "cosyvoice") === "volcengine";
+          const { url: audioUrl } = isVolc
+            ? await synthesizeSpeechVolc(ttsInput, ttsChar.voice_id, lang)
+            : await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
           console.log(`[tts] 合成完成 url=${audioUrl}`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
           pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
@@ -3017,6 +3035,116 @@ async function deleteVoice(voiceId) {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: "voice-enrollment", input: { action: "delete_voice", voice_id: voiceId } })
   });
+}
+
+async function cloneVoiceVolc(audioBuf, charId, format = "wav") {
+  const customId = `tornado-c${charId}-${Date.now().toString(36)}`;
+  const body = {
+    speaker_id: "custom_speaker_id",
+    custom_speaker_id: customId,
+    audio: { data: audioBuf.toString("base64"), format },
+    language: 0
+  };
+  const res = await fetch("https://openspeech.bytedance.com/api/v3/tts/voice_clone", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Api-Key": VOLC_API_KEY,
+      "X-Api-Request-Id": crypto.randomUUID()
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Volcengine clone ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (data.code && data.code !== 0) throw new Error(`Volcengine clone error ${data.code}: ${data.message}`);
+  return customId;
+}
+
+async function synthesizeSpeechVolc(text, voiceId, lang = "zh") {
+  const langMap = { zh: "zh-cn", ja: "ja" };
+  const explicitLang = langMap[lang] || "zh-cn";
+  const audioChunks = await new Promise((resolve, reject) => {
+    const ws = new WebSocket("wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream", {
+      headers: {
+        "X-Api-Key": VOLC_API_KEY,
+        "X-Api-Resource-Id": "seed-icl-2.0",
+        "X-Api-Request-Id": crypto.randomUUID()
+      }
+    });
+    const chunks = [];
+    let settled = false;
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      err ? reject(err) : resolve(result);
+    };
+    const timer = setTimeout(() => { ws.terminate(); finish(new Error("Volcengine TTS timeout")); }, 60000);
+
+    ws.on("open", () => {
+      const payload = JSON.stringify({
+        user: { uid: `t-${Date.now()}` },
+        req_params: {
+          text,
+          speaker: voiceId,
+          audio_params: { format: "mp3", sample_rate: 24000 },
+          additions: JSON.stringify({ explicit_language: explicitLang })
+        }
+      });
+      const payloadBuf = Buffer.from(payload, "utf8");
+      const frame = Buffer.alloc(8 + payloadBuf.length);
+      frame[0] = 0x11; frame[1] = 0x10; frame[2] = 0x10; frame[3] = 0x00;
+      frame.writeUInt32BE(payloadBuf.length, 4);
+      payloadBuf.copy(frame, 8);
+      ws.send(frame);
+    });
+
+    ws.on("message", (data) => {
+      if (!Buffer.isBuffer(data)) data = Buffer.from(data);
+      if (data.length < 4) return;
+      const msgType = (data[1] >> 4) & 0xF;
+      const hasEvent = (data[1] & 0x4) !== 0;
+      let offset = 4;
+      let eventNum = 0;
+      if (hasEvent && offset + 4 <= data.length) {
+        eventNum = data.readUInt32BE(offset);
+        offset += 4;
+      }
+      if (offset + 4 > data.length) return;
+      const sessionIdLen = data.readUInt32BE(offset);
+      offset += 4 + sessionIdLen;
+      if (offset + 4 > data.length) return;
+      const payloadLen = data.readUInt32BE(offset);
+      offset += 4;
+      const payload = data.slice(offset, offset + payloadLen);
+      if (msgType === 0xB) {
+        chunks.push(payload);
+      } else if (eventNum === 152) {
+        // SessionFinished — send FinishConnection
+        const fp = Buffer.from("{}", "utf8");
+        const ff = Buffer.alloc(12 + fp.length);
+        ff[0] = 0x11; ff[1] = 0x14; ff[2] = 0x10; ff[3] = 0x00;
+        ff.writeUInt32BE(2, 4);
+        ff.writeUInt32BE(fp.length, 8);
+        fp.copy(ff, 12);
+        ws.send(ff);
+      } else if (eventNum === 52) {
+        ws.close();
+        finish(null, chunks);
+      }
+    });
+
+    ws.on("error", (err) => finish(err));
+    ws.on("close", () => finish(chunks.length ? null : new Error("Volcengine TTS: no audio received"), chunks));
+  });
+
+  const audioBuf = Buffer.concat(audioChunks);
+  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.mp3`;
+  const url = await uploadToOss(audioBuf, filename);
+  return { url, durationMs: 0 };
 }
 
 async function summarizePlot(msgs) {

@@ -434,6 +434,14 @@
           </label>
           <label for="deepseekThinkingToggle">开启后主聊天使用 DeepSeek 深度思考（更慢但更准）</label>
         </div>
+        <h3 style="margin-top:16px">TTS 合成渠道</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <select id="ttsChannel" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <option value="cosyvoice">阿里云 CosyVoice</option>
+            <option value="volcengine">火山引擎（豆包声音复刻）</option>
+          </select>
+          <span style="color:var(--text-dim);font-size:13px">影响新上传音色使用的复刻渠道</span>
+        </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
       <div class="admin-form">
@@ -703,6 +711,7 @@ async function loadSystem() {
     document.getElementById("milestoneVideoDuration").value = settings.milestone_video_duration ?? "3";
     document.getElementById("videoDurationRow").style.display = settings.milestone_mode === "video" ? "flex" : "none";
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
+    document.getElementById("ttsChannel").value = settings.tts_channel ?? "cosyvoice";
   }
   if (soulData) {
     document.getElementById("soulEditor").value = soulData.soul || "";
@@ -720,7 +729,8 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const milestoneMode = document.getElementById("milestoneMode").value;
   const milestoneVideoDuration = Number(document.getElementById("milestoneVideoDuration").value) || 3;
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking }) });
+  const ttsChannel = document.getElementById("ttsChannel").value;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, tts_channel: ttsChannel }) });
   if (data) showMsg("已保存");
 });
 
