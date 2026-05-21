@@ -48,9 +48,10 @@ function getOssClient() {
   });
 }
 
-async function uploadToOss(buffer, filename) {
+async function uploadToOss(buffer, filename, mimeType) {
   const client = getOssClient();
-  await client.put(`tornado/${filename}`, buffer);
+  const opts = mimeType ? { mime: mimeType } : {};
+  await client.put(`tornado/${filename}`, buffer, opts);
   return `${OSS_BASE_URL}/tornado/${filename}`;
 }
 
@@ -3060,6 +3061,25 @@ async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", instruction
   return { url, durationMs: 0 };
 }
 
+function pcm16ToWav(pcmBuf, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
+  const dataSize = pcmBuf.length;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * channels * bitsPerSample / 8, 28);
+  header.writeUInt16LE(channels * bitsPerSample / 8, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+  return Buffer.concat([header, pcmBuf]);
+}
+
 async function cloneVoice(audioUrl, charId) {
   const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
     method: "POST",
@@ -3161,7 +3181,7 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
       if (msg.type === "session.created") {
-        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, output_audio_format: "mp3" } }));
+        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, output_audio_format: "pcm16" } }));
       } else if (msg.type === "session.updated") {
         ws.send(JSON.stringify({
           type: "conversation.item.create",
@@ -3181,9 +3201,10 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
     ws.on("close", () => finish(chunks.length ? null : new Error("QwenTTS: no audio received"), chunks));
   });
 
-  const buf = Buffer.concat(audioChunks);
-  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.mp3`;
-  const url = await uploadToOss(buf, filename);
+  const pcm = Buffer.concat(audioChunks);
+  const wav = pcm16ToWav(pcm, 24000, 1, 16);
+  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
+  const url = await uploadToOss(wav, filename, "audio/wav");
   return { url, durationMs: 0 };
 }
 
