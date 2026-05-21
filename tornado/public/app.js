@@ -657,7 +657,7 @@ function loadOlderMessages(loadMoreEl) {
   for (let i = slice.length - 1; i >= 0; i--) {
     const m = slice[i];
     const text = m.content === "[图片]" ? "" : m.content;
-    const bubble = appendBubble(m.role, text, "", m.image_url || null, m.id, m.created_at);
+    const bubble = appendBubble(m.role, text, "", m.image_url || null, m.id, m.created_at, m.tts_audio_url || null);
     const wrap = bubble.closest(".bubble-wrap");
     messages.insertBefore(wrap, firstExisting);
   }
@@ -710,7 +710,7 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
   messages.appendChild(wrap);
 
   if (audioUrl && role === "assistant") {
-    attachTtsPlayer(msgId, audioUrl, false);
+    attachTtsPlayer(msgId, audioUrl, false, wrap);
   }
 
   return bubble;
@@ -818,9 +818,9 @@ async function doStream(sessionId, text, replyBubble) {
       if (!line.startsWith("data: ")) continue;
       const payload = JSON.parse(line.slice(6));
       if (payload.error) throw new Error(payload.error);
-      if (payload.text) {
+      if (payload.text && !payload.done) {
+        // 普通流式文字块
         replyBubble.classList.remove("thinking");
-        // 清除打字动画
         const dots = replyBubble.querySelector(".typing-dots");
         if (dots) dots.remove();
         fullText += payload.text;
@@ -828,8 +828,24 @@ async function doStream(sessionId, text, replyBubble) {
         scrollToBottom();
       }
       if (payload.done) {
+        // TTS 模式：done 事件携带完整文字和音频
+        if (payload.text) {
+          fullText = payload.text;
+          replyBubble.classList.remove("thinking");
+          const dots = replyBubble.querySelector(".typing-dots");
+          if (dots) dots.remove();
+          if (payload.audio_url && payload.audio_duration_ms > 0) {
+            const audio = new Audio(payload.audio_url);
+            audio.play().catch(() => {});
+            await typeOutText(replyBubble, fullText, payload.audio_duration_ms);
+            const wrap = replyBubble.closest(".bubble-wrap");
+            if (wrap) attachTtsPlayer(payload.msg_id, payload.audio_url, false, wrap);
+          } else {
+            replyBubble.innerHTML = renderBubbleText(fullText);
+            scrollToBottom();
+          }
+        }
         if (payload.msg_id) {
-          // 助手消息：设置 msgId，加重新生成和删除按钮
           const wrap = replyBubble.closest(".bubble-wrap");
           if (wrap && !wrap.dataset.msgId) {
             wrap.dataset.msgId = payload.msg_id;
@@ -843,7 +859,6 @@ async function doStream(sessionId, text, replyBubble) {
           }
         }
         if (payload.user_msg_id) {
-          // 用户消息：找到最近一条没有 msgId 的 user bubble-wrap，补上删除按钮
           const userWraps = [...messages.querySelectorAll(".bubble-wrap.user:not([data-msg-id])")];
           const userWrap = userWraps[userWraps.length - 1];
           if (userWrap) {
@@ -1384,9 +1399,36 @@ function _showNextAchievement() {
 }
 
 // ── TTS 语音播放器 ────────────────────────────────────────────────────────────
-function attachTtsPlayer(msgId, audioUrl, autoPlay = true) {
-  const wrap = msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null;
-  const target = wrap || document.querySelector(".bubble-wrap.assistant:last-child");
+function typeOutText(bubble, text, durationMs) {
+  return new Promise(resolve => {
+    const totalChars = text.length;
+    if (totalChars === 0 || durationMs <= 0) {
+      bubble.innerHTML = renderBubbleText(text);
+      scrollToBottom();
+      resolve();
+      return;
+    }
+    const startTime = performance.now();
+    function frame() {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(elapsed / durationMs, 1);
+      const charsToShow = Math.floor(progress * totalChars);
+      bubble.textContent = text.slice(0, charsToShow);
+      scrollToBottom();
+      if (progress < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        bubble.innerHTML = renderBubbleText(text);
+        scrollToBottom();
+        resolve();
+      }
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+function attachTtsPlayer(msgId, audioUrl, autoPlay = true, targetWrap = null) {
+  const target = targetWrap || (msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null) || document.querySelector(".bubble-wrap.assistant:last-child");
   if (!target) return;
   if (target.querySelector(".tts-player")) return;
 
@@ -2162,10 +2204,11 @@ async function loadCharacterList() {
   bbSlider.value = getBubbleOpacity();
   bbVal.textContent = Math.round(getBubbleOpacity() * 100) + "%";
   try {
-    const [gs, mood, user] = await Promise.all([
+    const [gs, mood, user, voiceData] = await Promise.all([
       api("GET", "/settings"),
       currentSessionId ? api("GET", `/sessions/${currentSessionId}/mood`) : Promise.resolve(null),
       api("GET", "/auth/me").catch(() => ({ is_admin: 0 })),
+      api("GET", "/character/voice").catch(() => null),
     ]);
     const chatImgToggle = document.getElementById("chat-image-toggle");
     const fallbackToggle = document.getElementById("image-fallback-toggle");
@@ -2181,6 +2224,16 @@ async function loadCharacterList() {
     if (ttsToggle) ttsToggle.classList.toggle("on", !!gs.ttsEnabled);
     const ttsLangSelect = document.getElementById("tts-lang-select");
     if (ttsLangSelect) ttsLangSelect.value = gs.ttsLang || "zh";
+    const ttsHint = document.querySelector(".settings-hint.tts-hint");
+    if (ttsHint) {
+      if (gs.ttsEnabled && !voiceData?.voice_id) {
+        ttsHint.textContent = "⚠️ 当前角色尚未复刻声音，配音不会生效。请在角色设定中上传音频。";
+        ttsHint.style.color = "#f87171";
+      } else {
+        ttsHint.textContent = "开启后，角色每条回复将自动配音。需先在角色设定中上传音频完成声音复刻。";
+        ttsHint.style.color = "";
+      }
+    }
     // LLM 提供商（仅 admin）
     const providerRow = document.getElementById("llm-provider-row");
     const providerSelect = document.getElementById("llm-provider-select");

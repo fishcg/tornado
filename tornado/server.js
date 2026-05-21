@@ -1903,7 +1903,7 @@ async function handleRequest(req, res) {
     let text = "你好，我是你的专属伴侣，很高兴认识你。";
     if (lang === "ja") text = await translateToJapanese(text);
     try {
-      const audioUrl = await synthesizeSpeech(text, char.voice_id, lang);
+      const { url: audioUrl } = await synthesizeSpeech(text, char.voice_id, lang);
       await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
       send(res, 200, { audio_url: audioUrl });
     } catch (err) {
@@ -2191,10 +2191,12 @@ async function handleRequest(req, res) {
     });
 
     let fullReply = "";
+    const ttsChar = await getActiveCharacter(userId);
+    const ttsSettings = await getUserSettings(userId);
+    const ttsMode = ttsSettings.ttsEnabled && !!ttsChar?.voice_id;
     try {
-      const userSettings = await getUserSettings(userId);
-      console.log(`[chat] 开始 LLM 请求 provider=${userSettings.llmProvider}`);
-      const { stream, t0 } = await llmChatStream(messages, userSettings.llmProvider);
+      console.log(`[chat] 开始 LLM 请求 provider=${ttsSettings.llmProvider}`);
+      const { stream, t0 } = await llmChatStream(messages, ttsSettings.llmProvider);
       let firstContent = false;
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
@@ -2209,7 +2211,10 @@ async function handleRequest(req, res) {
             console.log(`[chat] 首包延迟 ${Date.now() - t0}ms`);
           }
           fullReply += text;
-          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          // TTS 模式下缓冲全文，不流式输出
+          if (!ttsMode) {
+            res.write(`data: ${JSON.stringify({ text })}\n\n`);
+          }
         }
       }
     } catch (err) {
@@ -2223,8 +2228,7 @@ async function handleRequest(req, res) {
     let { cleanText, prompt: imgPrompt } = extractImageTag(fullReply);
     let imgSilent = false;
 
-    const settings = await getUserSettings(userId);
-    if (!settings.chatImageEnabled) {
+    if (!ttsSettings.chatImageEnabled) {
       // 关闭聊天插图时，忽略所有图片生成
       imgPrompt = null;
     } else {
@@ -2271,10 +2275,41 @@ async function handleRequest(req, res) {
         console.log(`[自动插图] 用户 ${userId} 今日配额已用完，跳过`);
       }
     }
+
+    // TTS 模式：合成完再发送文字，客户端同步播放
+    if (ttsMode) {
+      const stripped = cleanText
+        .replace(/[（(][^）)]{0,80}[）)]/g, "")
+        .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+        .replace(/\*[^*]{0,80}\*/g, "")
+        .replace(/\s{2,}/g, " ")
+        .trim()
+        .slice(0, 300);
+      if (stripped) {
+        try {
+          const lang = ttsSettings.ttsLang || "zh";
+          let ttsInput = stripped;
+          if (lang === "ja") ttsInput = await translateToJapanese(stripped);
+          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length}`);
+          const { url: audioUrl, durationMs } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang);
+          console.log(`[tts] 合成完成 url=${audioUrl} duration=${durationMs}ms`);
+          await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
+          donePayload.text = cleanText;
+          donePayload.audio_url = audioUrl;
+          donePayload.audio_duration_ms = durationMs;
+        } catch (err) {
+          console.error("[tts] 合成失败:", err.message);
+          donePayload.text = cleanText;
+        }
+      } else {
+        donePayload.text = cleanText;
+      }
+    }
+
     res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
 
     if (imgPrompt && quotaAllowed) {
-      fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: settings.imageFallbackEnabled, userId });
+      fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: ttsSettings.imageFallbackEnabled, userId });
     }
 
     // 异步更新情绪和话题摘要（不阻塞响应）
@@ -2292,38 +2327,6 @@ async function handleRequest(req, res) {
     }
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
-
-    // 异步 TTS 合成
-    const ttsChar = await getActiveCharacter(userId);
-    const ttsSettings = await getUserSettings(userId);
-    if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
-      (async () => {
-        try {
-          // 去掉括号内的动作/情绪描述
-          const stripped = cleanText
-            .replace(/[（(][^）)]{0,80}[）)]/g, "")
-            .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
-            .replace(/\*[^*]{0,80}\*/g, "")
-            .replace(/\s{2,}/g, " ")
-            .trim()
-            .slice(0, 300);
-          const lang = ttsSettings.ttsLang || "zh";
-          let ttsInput = stripped;
-          if (lang === "ja") {
-            console.log(`[tts] 翻译为日语...`);
-            ttsInput = await translateToJapanese(stripped);
-            console.log(`[tts] 翻译完成 chars=${ttsInput.length}`);
-          }
-          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length}`);
-          const audioUrl = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang);
-          console.log(`[tts] 合成完成 url=${audioUrl}`);
-          await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
-          pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl, lang });
-        } catch (err) {
-          console.error("[tts] 合成失败:", err.message);
-        }
-      })();
-    }
 
     res.end();
     return;
@@ -3007,8 +3010,22 @@ async function synthesizeSpeech(text, voiceId, lang = "zh") {
   const dlRes = await fetch(tempUrl);
   if (!dlRes.ok) throw new Error(`TTS 音频下载失败: ${dlRes.status}`);
   const buf = Buffer.from(await dlRes.arrayBuffer());
+  // Parse WAV header for duration
+  let durationMs = 0;
+  try {
+    if (buf.length >= 44 && buf.toString("ascii", 0, 4) === "RIFF") {
+      const sampleRate = buf.readUInt32LE(24);
+      const numChannels = buf.readUInt16LE(22);
+      const bitsPerSample = buf.readUInt16LE(34);
+      const dataSize = buf.readUInt32LE(40);
+      if (sampleRate > 0 && numChannels > 0 && bitsPerSample > 0) {
+        durationMs = Math.round(dataSize / (sampleRate * numChannels * (bitsPerSample / 8)) * 1000);
+      }
+    }
+  } catch (_) {}
   const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
-  return await uploadToOss(buf, filename);
+  const url = await uploadToOss(buf, filename);
+  return { url, durationMs };
 }
 
 async function generateRelationVideo(imageUrl, stageName, duration = 3) {
