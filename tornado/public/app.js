@@ -2177,6 +2177,10 @@ async function loadCharacterList() {
       showToast("已切换角色");
     };
   } catch {}
+}
+
+async function openSettings() {
+  await loadCharacterList();
   document.getElementById("settings-modal").classList.remove("hidden");
   // 同步滑块显示值
   const bgSlider = document.getElementById("bg-opacity");
@@ -2218,7 +2222,6 @@ async function loadCharacterList() {
         ttsHint.style.color = "";
       }
     }
-    // LLM 提供商（仅 admin）
     const providerRow = document.getElementById("llm-provider-row");
     const providerSelect = document.getElementById("llm-provider-select");
     if (user?.is_admin && providerRow) {
