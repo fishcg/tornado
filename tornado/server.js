@@ -2989,33 +2989,30 @@ async function cloneVoice(audioUrl, charId) {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "voice-enrollment",
+      model: "qwen-voice-enrollment",
       input: {
-        action: "create_voice",
-        target_model: "cosyvoice-v3.5-plus",
-        prefix: `char${charId}`,
-        url: audioUrl,
-        language_hints: ["zh"],
-        max_prompt_audio_length: 20.0,
-        enable_preprocess: true
+        action: "create",
+        target_model: "qwen3.5-omni-plus-realtime",
+        preferred_name: `char${charId}`,
+        audio: { data: audioUrl }
       }
     })
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`CosyVoice clone ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`QwenTTS clone ${res.status}: ${body.slice(0, 200)}`);
   }
   const data = await res.json();
-  const voiceId = data.output?.voice_id;
-  if (!voiceId) throw new Error(`CosyVoice clone: no voice_id in response`);
-  return voiceId;
+  const voice = data.output?.voice;
+  if (!voice) throw new Error(`QwenTTS clone: no voice in response. ${JSON.stringify(data).slice(0, 200)}`);
+  return voice;
 }
 
 async function deleteVoice(voiceId) {
   await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "voice-enrollment", input: { action: "delete_voice", voice_id: voiceId } })
+    body: JSON.stringify({ model: "qwen-voice-enrollment", input: { action: "delete", voice: voiceId } })
   });
 }
 
@@ -3069,45 +3066,47 @@ async function translateToJapanese(text) {
 }
 
 async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
-  const input = { text, voice: voiceId, format: "wav", sample_rate: 24000, language_hints: [lang] };
-  if (instruction) input.instruction = instruction;
-  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "cosyvoice-v3.5-plus",
-      input
-    })
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const tempUrl = data.output?.audio?.url;
-  if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url. response: ${JSON.stringify(data).slice(0, 300)}`);
-  const dlRes = await fetch(tempUrl);
-  if (!dlRes.ok) throw new Error(`TTS 音频下载失败: ${dlRes.status}`);
-  const buf = Buffer.from(await dlRes.arrayBuffer());
-  // Parse WAV header for duration
-  let durationMs = 0;
-  try {
-    if (buf.length >= 44 && buf.toString("ascii", 0, 4) === "RIFF") {
-      const sampleRate = buf.readUInt32LE(24);
-      const numChannels = buf.readUInt16LE(22);
-      const bitsPerSample = buf.readUInt16LE(34);
-      const dataSize = buf.readUInt32LE(40);
-      if (sampleRate > 0 && numChannels > 0 && bitsPerSample > 0) {
-        durationMs = Math.round(dataSize / (sampleRate * numChannels * (bitsPerSample / 8)) * 1000);
+  const audioChunks = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(
+      "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime",
+      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` } }
+    );
+    const chunks = [];
+    let settled = false;
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      err ? reject(err) : resolve(result);
+    };
+    const timer = setTimeout(() => { ws.terminate(); finish(new Error("QwenTTS timeout")); }, 60000);
+
+    ws.on("message", (data) => {
+      let msg;
+      try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg.type === "session.created") {
+        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, response_format: "mp3", sample_rate: 24000 } }));
+        ws.send(JSON.stringify({ type: "input_text_buffer.append", text }));
+        ws.send(JSON.stringify({ type: "input_text_buffer.commit" }));
+      } else if (msg.type === "response.audio.delta") {
+        chunks.push(Buffer.from(msg.delta, "base64"));
+      } else if (msg.type === "response.audio.done") {
+        ws.send(JSON.stringify({ type: "session.finish" }));
+      } else if (msg.type === "session.finished") {
+        ws.close();
+        finish(null, chunks);
+      } else if (msg.type === "error") {
+        finish(new Error(`QwenTTS error: ${msg.error?.message || JSON.stringify(msg)}`));
       }
-    }
-  } catch (_) {}
-  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
+    });
+    ws.on("error", (err) => finish(err));
+    ws.on("close", () => finish(chunks.length ? null : new Error("QwenTTS: no audio received"), chunks));
+  });
+
+  const buf = Buffer.concat(audioChunks);
+  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.mp3`;
   const url = await uploadToOss(buf, filename);
-  return { url, durationMs };
+  return { url, durationMs: 0 };
 }
 
 async function generateRelationVideo(imageUrl, stageName, duration = 3) {
