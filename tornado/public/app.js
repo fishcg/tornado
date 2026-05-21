@@ -835,17 +835,17 @@ async function doStream(sessionId, text, replyBubble) {
           const dots = replyBubble.querySelector(".typing-dots");
           if (dots) dots.remove();
           if (payload.audio_url && payload.audio_duration_ms > 0) {
-            const audio = new Audio(payload.audio_url);
-            audio.preload = "auto";
-            await new Promise(resolve => {
-              audio.addEventListener("canplay", resolve, { once: true });
-              audio.addEventListener("error", resolve, { once: true });
-              setTimeout(resolve, 5000); // 最多等 5s
-            });
-            audio.play().catch(() => {});
-            await typeOutText(replyBubble, fullText, payload.audio_duration_ms);
-            const wrap = replyBubble.closest(".bubble-wrap");
-            if (wrap) attachTtsPlayer(payload.msg_id, payload.audio_url, false, wrap);
+            try {
+              const audio = new Audio(payload.audio_url);
+              audio.play().catch(() => {});
+              const cappedDuration = Math.min(payload.audio_duration_ms, 30000);
+              await typeOutText(replyBubble, fullText, cappedDuration);
+              const wrap = replyBubble.closest(".bubble-wrap");
+              if (wrap) attachTtsPlayer(payload.msg_id, payload.audio_url, false, wrap);
+            } catch {
+              replyBubble.innerHTML = renderBubbleText(fullText);
+              scrollToBottom();
+            }
           } else {
             replyBubble.innerHTML = renderBubbleText(fullText);
             scrollToBottom();
@@ -1418,7 +1418,7 @@ function typeOutText(bubble, text, durationMs) {
     function frame() {
       const elapsed = performance.now() - startTime;
       const progress = Math.min(elapsed / durationMs, 1);
-      const charsToShow = Math.floor(progress * totalChars);
+      const charsToShow = Math.max(1, Math.floor(progress * totalChars));
       bubble.textContent = text.slice(0, charsToShow);
       scrollToBottom();
       if (progress < 1) {

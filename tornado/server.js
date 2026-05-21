@@ -2190,6 +2190,7 @@ async function handleRequest(req, res) {
       "Access-Control-Allow-Origin": "*"
     });
 
+    try {
     let fullReply = "";
     const ttsChar = await getActiveCharacter(userId);
     const ttsSettings = await getUserSettings(userId);
@@ -2330,6 +2331,11 @@ async function handleRequest(req, res) {
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
 
     res.end();
+    } catch (sseErr) {
+      console.error("[chat] SSE 处理异常:", sseErr.message);
+      try { res.write(`data: ${JSON.stringify({ error: sseErr.message })}\n\n`); } catch {}
+      try { res.end(); } catch {}
+    }
     return;
   }
 
