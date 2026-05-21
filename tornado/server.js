@@ -2313,7 +2313,7 @@ async function handleRequest(req, res) {
           let ttsInput = stripped;
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
-          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length}`);
+          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
           const { url: audioUrl } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
           console.log(`[tts] 合成完成 url=${audioUrl}`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
