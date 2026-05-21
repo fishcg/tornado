@@ -2934,25 +2934,20 @@ async function synthesizeSpeech(text, voiceId, lang = "zh") {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "cosyvoice-v3.5-plus",
-      input: {
-        messages: [
-          { role: "user", content: [{ type: "text", text }] }
-        ]
-      },
-      parameters: {
-        voice: voiceId,
-        language_type: langMap[lang] || "Chinese"
-      }
+      input: { text, voice: voiceId },
+      parameters: { language_type: langMap[lang] || "Chinese" }
     })
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 300)}`);
   }
   const data = await res.json();
-  const tempUrl = data.output?.audio?.url || data.output?.choices?.[0]?.message?.audio?.url;
+  console.log("[tts] response:", JSON.stringify(data).slice(0, 400));
+  const tempUrl = data.output?.audio?.url
+    || data.output?.choices?.[0]?.message?.audio?.url
+    || data.output?.audio_url;
   if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url. response: ${JSON.stringify(data).slice(0, 300)}`);
-  // 下载并上传 OSS，避免临时链接过期
   const dlRes = await fetch(tempUrl);
   if (!dlRes.ok) throw new Error(`TTS 音频下载失败: ${dlRes.status}`);
   const buf = Buffer.from(await dlRes.arrayBuffer());
