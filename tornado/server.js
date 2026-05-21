@@ -3171,8 +3171,6 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
       } else if (msg.type === "response.audio.delta") {
         chunks.push(Buffer.from(msg.delta, "base64"));
       } else if (msg.type === "response.done") {
-        ws.send(JSON.stringify({ type: "session.finish" }));
-      } else if (msg.type === "session.finished") {
         ws.close();
         finish(null, chunks);
       } else if (msg.type === "error") {
