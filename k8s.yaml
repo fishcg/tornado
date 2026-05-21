@@ -115,11 +115,6 @@ spec:
                 secretKeyRef:
                   name: tornado-secret
                   key: default_invite_code
-            - name: VOLC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: tornado-secret
-                  key: volc_api_key
 ---
 # kubectl create secret generic tornado-secret \
 #   --from-literal=mysql_host=127.0.0.1 \
@@ -133,5 +128,4 @@ spec:
 #   --from-literal=image_api_url=https://api.test.ai/openapi/v1/generate \
 #   --from-literal=image_api_key=YOUR_KEY \
 #   --from-literal=password_salt=YOUR_SALT \
-#   --from-literal=default_invite_code=YOUR_CODE \
-#   --from-literal=volc_api_key=YOUR_KEY
+#   --from-literal=default_invite_code=YOUR_CODE
