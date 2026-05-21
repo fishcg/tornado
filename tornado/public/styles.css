@@ -241,6 +241,25 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   align-items: flex-end;
 }
 .bubble-wrap.user { flex-direction: row-reverse; }
+.tts-player {
+  display: flex;
+  gap: 4px;
+  align-self: flex-end;
+  margin-bottom: 2px;
+}
+.tts-btn {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--text-dim, #888);
+  border-radius: 12px;
+  padding: 2px 9px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  line-height: 1.6;
+}
+.tts-btn:hover { background: rgba(255,255,255,0.12); color: var(--text, #e8e8f0); }
+.tts-btn.tts-btn-active { background: var(--accent-dim, #2a2540); color: var(--accent, #7c6fcd); border-color: var(--accent, #7c6fcd); }
 
 .avatar {
   width: 32px; height: 32px; border-radius: 50%;

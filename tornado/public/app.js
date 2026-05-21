@@ -1230,6 +1230,9 @@ function handleWsPayload(payload) {
   if (payload.relation_milestone) {
     showRelationMilestoneModal(payload);
   }
+  if (payload.tts) {
+    attachTtsPlayer(payload.msg_id, payload.audio_zh, payload.audio_ja);
+  }
 }
 
 function connectEvents(sessionId) {
@@ -1373,6 +1376,47 @@ function _showNextAchievement() {
   document.body.appendChild(overlay);
 
   requestAnimationFrame(() => box.classList.add("achievement-box-in"));
+}
+
+// ── TTS 语音播放器 ────────────────────────────────────────────────────────────
+function attachTtsPlayer(msgId, audioZh, audioJa) {
+  const wrap = msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null;
+  const target = wrap || document.querySelector(".bubble-wrap.assistant:last-child");
+  if (!target) return;
+  if (target.querySelector(".tts-player")) return;
+
+  const player = document.createElement("div");
+  player.className = "tts-player";
+
+  let currentAudio = null;
+  const play = (url, btn, otherBtn) => {
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    currentAudio = new Audio(url);
+    currentAudio.play().catch(() => {});
+    btn.classList.add("tts-btn-active");
+    if (otherBtn) otherBtn.classList.remove("tts-btn-active");
+    currentAudio.onended = () => btn.classList.remove("tts-btn-active");
+  };
+
+  const btnZh = document.createElement("button");
+  btnZh.className = "tts-btn";
+  btnZh.textContent = "中";
+  btnZh.title = "中文朗读";
+
+  const btnJa = document.createElement("button");
+  btnJa.className = "tts-btn";
+  btnJa.textContent = "日";
+  btnJa.title = "日语朗读";
+
+  btnZh.addEventListener("click", () => play(audioZh, btnZh, btnJa));
+  btnJa.addEventListener("click", () => play(audioJa, btnJa, btnZh));
+
+  player.appendChild(btnZh);
+  player.appendChild(btnJa);
+  target.appendChild(player);
+
+  // 自动播放中文
+  if (audioZh) play(audioZh, btnZh, btnJa);
 }
 
 // ── 关系阶段升级演出 ──────────────────────────────────────────────────────────
@@ -2196,7 +2240,93 @@ async function loadSoulIntoPanel() {
     set("soul-editor", soulData.soul);
   } catch {}
   await loadCharacterList();
+  await loadVoiceSection("rp");
 }
+
+async function loadVoiceSection(prefix) {
+  try {
+    const data = await api("GET", "/character/voice");
+    const statusEl = document.getElementById(`${prefix === "rp" ? "" : "cm-"}voice-status`);
+    const previewBtn = document.getElementById(`${prefix === "rp" ? "" : "cm-"}voice-preview-btn`);
+    const deleteBtn = document.getElementById(`${prefix === "rp" ? "" : "cm-"}voice-delete-btn`);
+    const toggle = document.getElementById(`${prefix === "rp" ? "" : "cm-"}tts-enabled-toggle`);
+    if (!statusEl) return;
+    if (data?.voice_id) {
+      statusEl.textContent = "已复刻 ✓";
+      statusEl.style.color = "var(--accent, #7c6fcd)";
+      if (previewBtn) previewBtn.style.display = "";
+      if (deleteBtn) deleteBtn.style.display = "";
+    } else {
+      statusEl.textContent = "未设置";
+      statusEl.style.color = "var(--text-dim)";
+      if (previewBtn) previewBtn.style.display = "none";
+      if (deleteBtn) deleteBtn.style.display = "none";
+    }
+    if (toggle) toggle.checked = !!data?.tts_enabled;
+  } catch {}
+}
+
+function setupVoiceSection(prefix) {
+  const uploadInput = document.getElementById(`${prefix}voice-upload`);
+  const uploadBtn = document.getElementById(`${prefix}voice-upload-btn`);
+  const previewBtn = document.getElementById(`${prefix}voice-preview-btn`);
+  const deleteBtn = document.getElementById(`${prefix}voice-delete-btn`);
+  const toggle = document.getElementById(`${prefix}tts-enabled-toggle`);
+  const statusEl = document.getElementById(`${prefix}voice-status`);
+  const rpPrefix = prefix === "" ? "rp" : "cm";
+
+  uploadBtn?.addEventListener("click", () => uploadInput?.click());
+  uploadInput?.addEventListener("change", async () => {
+    const file = uploadInput.files?.[0];
+    if (!file) return;
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "复刻中…";
+    try {
+      await fetch("/character/voice", {
+        method: "POST",
+        headers: { "Content-Type": file.type || "audio/wav" },
+        body: file
+      }).then(async r => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      });
+      await loadVoiceSection(rpPrefix);
+    } catch (err) {
+      if (statusEl) { statusEl.textContent = "复刻失败：" + err.message.slice(0, 60); statusEl.style.color = "#f87171"; }
+    } finally {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = "上传音频复刻";
+      uploadInput.value = "";
+    }
+  });
+
+  previewBtn?.addEventListener("click", async () => {
+    previewBtn.disabled = true;
+    previewBtn.textContent = "生成中…";
+    try {
+      const data = await api("POST", "/character/voice/preview", { text: "你好，我是你的专属伴侣，很高兴认识你。", lang: "zh" });
+      if (data?.audio_url) {
+        const audio = new Audio(data.audio_url);
+        audio.play().catch(() => {});
+      }
+    } catch {}
+    previewBtn.disabled = false;
+    previewBtn.textContent = "试听";
+  });
+
+  deleteBtn?.addEventListener("click", async () => {
+    if (!confirm("确认删除音色？")) return;
+    await api("DELETE", "/character/voice");
+    await loadVoiceSection(rpPrefix);
+  });
+
+  toggle?.addEventListener("change", async () => {
+    await api("PATCH", "/character/voice", { tts_enabled: toggle.checked });
+  });
+}
+
+setupVoiceSection("");
+setupVoiceSection("cm-");
 
 document.getElementById("rp-soul-toggle")?.addEventListener("click", async () => {
   const header = document.getElementById("rp-soul-toggle");
@@ -2316,6 +2446,7 @@ document.getElementById("cm-soul-toggle")?.addEventListener("click", async () =>
         };
       }
     } catch {}
+    await loadVoiceSection("cm");
   }
 });
 

@@ -1819,6 +1819,73 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // GET /character/voice
+  if (method === "GET" && pathname === "/character/voice") {
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0 }); return; }
+    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0 });
+    return;
+  }
+
+  // PATCH /character/voice — 更新 tts_enabled
+  if (method === "PATCH" && pathname === "/character/voice") {
+    const body = await readBody(req);
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 404, { error: "no active character" }); return; }
+    if ("tts_enabled" in body) {
+      await dbRun("UPDATE characters SET tts_enabled = ? WHERE id = ?", [body.tts_enabled ? 1 : 0, char.id]);
+    }
+    send(res, 200, { ok: true });
+    return;
+  }
+
+  // POST /character/voice — 上传音频，复刻音色
+  if (method === "POST" && pathname === "/character/voice") {
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 404, { error: "no active character" }); return; }
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const buf = Buffer.concat(chunks);
+    if (buf.length === 0) { send(res, 400, { error: "empty body" }); return; }
+    const ct = req.headers["content-type"] || "";
+    const extMap = { "audio/wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".mp4", "audio/m4a": ".m4a", "audio/ogg": ".ogg", "audio/webm": ".webm" };
+    const ext = extMap[ct.split(";")[0].trim()] || ".wav";
+    const filename = `voice-sample-${char.id}-${Date.now()}${ext}`;
+    const ossUrl = await uploadToOss(buf, filename);
+    const voiceId = await cloneVoice(ossUrl, char.id);
+    // 若已有旧音色，异步删除
+    if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
+    await dbRun("UPDATE characters SET voice_id = ?, tts_enabled = 1 WHERE id = ?", [voiceId, char.id]);
+    send(res, 200, { voice_id: voiceId });
+    return;
+  }
+
+  // DELETE /character/voice — 删除音色
+  if (method === "DELETE" && pathname === "/character/voice") {
+    const char = await getActiveCharacter(userId);
+    if (!char) { send(res, 404, { error: "no active character" }); return; }
+    if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
+    await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0 WHERE id = ?", [char.id]);
+    send(res, 200, { ok: true });
+    return;
+  }
+
+  // POST /character/voice/preview — 试听
+  if (method === "POST" && pathname === "/character/voice/preview") {
+    const char = await getActiveCharacter(userId);
+    if (!char?.voice_id) { send(res, 400, { error: "no voice" }); return; }
+    const body = await readBody(req);
+    const text = String(body.text || "你好，我是你的专属伴侣，很高兴认识你。").slice(0, 100);
+    const lang = body.lang === "ja" ? "ja" : "zh";
+    try {
+      const audioUrl = await synthesizeSpeech(text, char.voice_id, lang);
+      send(res, 200, { audio_url: audioUrl });
+    } catch (err) {
+      send(res, 500, { error: err.message });
+    }
+    return;
+  }
+
   // GET /characters — 角色列表
   if (method === "GET" && pathname === "/characters") {
     const rows = await dbAll("SELECT id, name, is_active, created_at FROM characters WHERE user_id = ? ORDER BY id ASC", [userId]);
@@ -2196,6 +2263,23 @@ async function handleRequest(req, res) {
     }
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
+
+    // 异步 TTS 合成
+    const ttsChar = await getActiveCharacter(userId);
+    if (ttsChar?.tts_enabled && ttsChar?.voice_id) {
+      (async () => {
+        try {
+          const ttsText = cleanText.slice(0, 300);
+          const [audioZh, audioJa] = await Promise.all([
+            synthesizeSpeech(ttsText, ttsChar.voice_id, "zh"),
+            synthesizeSpeech(ttsText, ttsChar.voice_id, "ja")
+          ]);
+          pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_zh: audioZh, audio_ja: audioJa });
+        } catch (err) {
+          console.error("[tts] 合成失败:", err.message);
+        }
+      })();
+    }
 
     res.end();
     return;
@@ -2806,6 +2890,66 @@ function getRelationStage(affection) {
     if (affection >= s.min) current = s;
   }
   return current;
+}
+
+async function cloneVoice(audioUrl, charId) {
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "voice-enrollment",
+      input: {
+        action: "create_voice",
+        target_model: "cosyvoice-v3.5-plus",
+        prefix: `char${charId}`,
+        url: audioUrl,
+        language_hints: ["zh"],
+        max_prompt_audio_length: 20.0,
+        enable_preprocess: true
+      }
+    })
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`CosyVoice clone ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const voiceId = data.output?.voice_id;
+  if (!voiceId) throw new Error(`CosyVoice clone: no voice_id in response`);
+  return voiceId;
+}
+
+async function deleteVoice(voiceId) {
+  await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "voice-enrollment", input: { action: "delete_voice", voice_id: voiceId } })
+  });
+}
+
+async function synthesizeSpeech(text, voiceId, lang = "zh") {
+  const langMap = { zh: "Chinese", ja: "Japanese" };
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "cosyvoice-v3.5-plus",
+      input: { text, voice: voiceId, language_type: langMap[lang] || "Chinese" }
+    })
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const tempUrl = data.output?.audio?.url;
+  if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url`);
+  // 下载并上传 OSS，避免临时链接过期
+  const dlRes = await fetch(tempUrl);
+  if (!dlRes.ok) throw new Error(`TTS 音频下载失败: ${dlRes.status}`);
+  const buf = Buffer.from(await dlRes.arrayBuffer());
+  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
+  return await uploadToOss(buf, filename);
 }
 
 async function generateRelationVideo(imageUrl, stageName, duration = 3) {

@@ -241,6 +241,8 @@ export async function initDb() {
   await ensureColumn(pool, "user_settings", "llm_provider", "VARCHAR(32) NOT NULL DEFAULT 'deepseek'");
   await ensureColumn(pool, "user_achievements", "notified", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "relationship_milestones", "video_url", "TEXT");
+  await ensureColumn(pool, "characters", "voice_id", "VARCHAR(128)");
+  await ensureColumn(pool, "characters", "tts_enabled", "INT NOT NULL DEFAULT 0");
   // 迁移：将 user_achievements 的唯一键从 (user_id, achievement_id) 改为包含 character_id
   try {
     const [cols] = await pool.execute(

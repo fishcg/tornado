@@ -235,6 +235,20 @@
             <label>其他设定</label>
             <textarea id="soul-editor" rows="8" class="soul-field-input" style="font-family:monospace;font-size:11px" placeholder="说话方式、禁忌、规则等"></textarea>
           </div>
+          <div class="rp-soul-field" id="voice-section">
+            <label>角色声音</label>
+            <div id="voice-status" style="font-size:12px;color:var(--text-dim);margin-bottom:6px">未设置</div>
+            <input type="file" id="voice-upload" accept="audio/*" style="display:none">
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+              <button id="voice-upload-btn" class="rp-card-btn" style="font-size:12px;padding:4px 10px">上传音频复刻</button>
+              <button id="voice-preview-btn" class="rp-card-btn" style="font-size:12px;padding:4px 10px;display:none">试听</button>
+              <button id="voice-delete-btn" class="rp-card-btn" style="font-size:12px;padding:4px 10px;display:none;color:#f87171">删除音色</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+              <label class="toggle"><input type="checkbox" id="tts-enabled-toggle"><span class="toggle-slider"></span></label>
+              <span style="font-size:12px;color:var(--text-dim)">开启语音朗读</span>
+            </div>
+          </div>
           <button id="rp-soul-save" class="rp-ingest-btn" style="margin-top:8px">保存角色设定</button>
         </div>
       </div>
@@ -475,6 +489,20 @@
             <div class="rp-soul-field">
               <label>其他设定</label>
               <textarea id="cm-soul-editor" rows="8" class="soul-field-input" style="font-family:monospace;font-size:11px" placeholder="说话方式、禁忌、规则等"></textarea>
+            </div>
+            <div class="rp-soul-field" id="cm-voice-section">
+              <label>角色声音</label>
+              <div id="cm-voice-status" style="font-size:12px;color:var(--text-dim);margin-bottom:6px">未设置</div>
+              <input type="file" id="cm-voice-upload" accept="audio/*" style="display:none">
+              <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+                <button id="cm-voice-upload-btn" class="rp-card-btn" style="font-size:12px;padding:4px 10px">上传音频复刻</button>
+                <button id="cm-voice-preview-btn" class="rp-card-btn" style="font-size:12px;padding:4px 10px;display:none">试听</button>
+                <button id="cm-voice-delete-btn" class="rp-card-btn" style="font-size:12px;padding:4px 10px;display:none;color:#f87171">删除音色</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+                <label class="toggle"><input type="checkbox" id="cm-tts-enabled-toggle"><span class="toggle-slider"></span></label>
+                <span style="font-size:12px;color:var(--text-dim)">开启语音朗读</span>
+              </div>
             </div>
             <button id="cm-soul-save" class="rp-ingest-btn" style="margin-top:8px">保存角色设定</button>
           </div>
