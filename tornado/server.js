@@ -1544,7 +1544,8 @@ async function handleRequest(req, res) {
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
-        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0")
+        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
+        tts_channel: await getGlobalSetting("tts_channel", "qwen")
       });
       return;
     }
@@ -1570,13 +1571,17 @@ async function handleRequest(req, res) {
       if ("deepseek_thinking" in body) {
         await setGlobalSetting("deepseek_thinking", body.deepseek_thinking ? "1" : "0");
       }
+      if ("tts_channel" in body && ["qwen", "cosyvoice"].includes(body.tts_channel)) {
+        await setGlobalSetting("tts_channel", body.tts_channel);
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
-        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0")
+        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
+        tts_channel: await getGlobalSetting("tts_channel", "qwen")
       });
       return;
     }
@@ -1884,8 +1889,8 @@ async function handleRequest(req, res) {
   // GET /character/voice
   if (method === "GET" && pathname === "/character/voice") {
     const char = await getActiveCharacter(userId);
-    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0 }); return; }
-    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0 });
+    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0, voice_channel: "qwen" }); return; }
+    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0, voice_channel: char.voice_channel || "qwen" });
     return;
   }
 
@@ -1912,13 +1917,19 @@ async function handleRequest(req, res) {
     const ct = req.headers["content-type"] || "";
     const extMap = { "audio/wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".mp4", "audio/m4a": ".m4a", "audio/ogg": ".ogg", "audio/webm": ".webm" };
     const ext = extMap[ct.split(";")[0].trim()] || ".wav";
+    const channel = await getGlobalSetting("tts_channel", "qwen");
     const filename = `voice-sample-${char.id}-${Date.now()}${ext}`;
     const ossUrl = await uploadToOss(buf, filename);
-    const voiceId = await cloneVoice(ossUrl, char.id);
+    const voiceId = channel === "cosyvoice"
+      ? await cloneVoiceCosyVoice(ossUrl, char.id)
+      : await cloneVoice(ossUrl, char.id);
     // 若已有旧音色，异步删除
-    if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
-    await dbRun("UPDATE characters SET voice_id = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, char.id]);
-    send(res, 200, { voice_id: voiceId });
+    if (char.voice_id) {
+      const oldChannel = char.voice_channel || "qwen";
+      (oldChannel === "cosyvoice" ? deleteVoiceCosyVoice : deleteVoice)(char.voice_id).catch(() => {});
+    }
+    await dbRun("UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, channel, char.id]);
+    send(res, 200, { voice_id: voiceId, voice_channel: channel });
     return;
   }
 
@@ -1926,7 +1937,10 @@ async function handleRequest(req, res) {
   if (method === "DELETE" && pathname === "/character/voice") {
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
-    if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
+    if (char.voice_id) {
+      const ch = char.voice_channel || "qwen";
+      (ch === "cosyvoice" ? deleteVoiceCosyVoice : deleteVoice)(char.voice_id).catch(() => {});
+    }
     await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0, voice_preview_url = NULL WHERE id = ?", [char.id]);
     send(res, 200, { ok: true });
     return;
@@ -1945,7 +1959,8 @@ async function handleRequest(req, res) {
     let text = "你好，我是你的专属伴侣，很高兴认识你。";
     if (lang === "ja") text = await translateToJapanese(text);
     try {
-      const { url: audioUrl } = await synthesizeSpeech(text, char.voice_id, lang);
+      const synthFn = (char.voice_channel || "qwen") === "cosyvoice" ? synthesizeSpeechCosyVoice : synthesizeSpeech;
+      const { url: audioUrl } = await synthFn(text, char.voice_id, lang);
       await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
       send(res, 200, { audio_url: audioUrl });
     } catch (err) {
@@ -2355,7 +2370,10 @@ async function handleRequest(req, res) {
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
           console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
-          const { url: audioUrl } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
+          const isQwen = (ttsChar.voice_channel || "qwen") !== "cosyvoice";
+          const { url: audioUrl } = isQwen
+            ? await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang)
+            : await synthesizeSpeechCosyVoice(ttsInput, ttsChar.voice_id, lang, instruction);
           console.log(`[tts] 合成完成 url=${audioUrl}`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
           pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
@@ -2982,6 +3000,64 @@ function getRelationStage(affection) {
     if (affection >= s.min) current = s;
   }
   return current;
+}
+
+async function cloneVoiceCosyVoice(audioUrl, charId) {
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "voice-enrollment",
+      input: {
+        action: "create_voice",
+        target_model: "cosyvoice-v3.5-plus",
+        prefix: `char${charId}`,
+        url: audioUrl,
+        language_hints: ["zh"],
+        max_prompt_audio_length: 20.0,
+        enable_preprocess: true
+      }
+    })
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`CosyVoice clone ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const voiceId = data.output?.voice_id;
+  if (!voiceId) throw new Error(`CosyVoice clone: no voice_id in response`);
+  return voiceId;
+}
+
+async function deleteVoiceCosyVoice(voiceId) {
+  await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "voice-enrollment", input: { action: "delete_voice", voice_id: voiceId } })
+  });
+}
+
+async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", instruction = "") {
+  const input = { text, voice: voiceId, format: "wav", sample_rate: 24000, language_hints: [lang] };
+  if (instruction) input.instruction = instruction;
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "cosyvoice-v3.5-plus", input })
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const tempUrl = data.output?.audio?.url;
+  if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url. ${JSON.stringify(data).slice(0, 200)}`);
+  const dlRes = await fetch(tempUrl);
+  if (!dlRes.ok) throw new Error(`CosyVoice TTS 音频下载失败: ${dlRes.status}`);
+  const buf = Buffer.from(await dlRes.arrayBuffer());
+  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
+  const url = await uploadToOss(buf, filename);
+  return { url, durationMs: 0 };
 }
 
 async function cloneVoice(audioUrl, charId) {
