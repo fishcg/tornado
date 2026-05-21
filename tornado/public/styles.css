@@ -243,8 +243,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .bubble-wrap.user { flex-direction: row-reverse; }
 .tts-player {
   position: absolute;
-  top: -8px;
-  right: -8px;
+  top: 6px;
+  right: 8px;
   display: flex;
   gap: 4px;
   z-index: 1;
@@ -402,7 +402,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   word-break: break-word;
   position: relative;
 }
-.bubble-wrap.assistant .bubble { background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.bubble-wrap.assistant .bubble:has(.tts-player) {
+  padding-right: 34px;
+}
 .bubble-wrap.user .bubble { background: var(--user-bg); border-bottom-right-radius: 4px; }
 
 .bubble .action-text { color: #a89fd8; font-size: 0.9em; font-style: italic; }

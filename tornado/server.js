@@ -3004,7 +3004,7 @@ async function generateTtsInstruction(charName, personality, mood, recentMsgs) {
     messages: [
       {
         role: "system",
-        content: "你是语音合成指令生成助手。根据角色信息和当前对话情绪，生成一段简短的语音合成风格指令（不超过100字），描述语速、语调、情感等，直接输出指令内容，不要任何解释。"
+        content: "你是语音合成指令生成助手。根据角色信息和当前对话情绪，生成一段简短的语音合成风格指令（不超过50字），只描述语速、语调、情感状态等朗读风格，不得包含任何台词、对话内容或引号内的文字，直接输出指令，不要任何解释。示例：语速稍快，语气不耐烦，带轻微鼻音。"
       },
       {
         role: "user",
@@ -3012,7 +3012,7 @@ async function generateTtsInstruction(charName, personality, mood, recentMsgs) {
       }
     ]
   });
-  return (res.choices?.[0]?.message?.content || "").trim().slice(0, 100);
+  return (res.choices?.[0]?.message?.content || "").trim().slice(0, 50);
 }
 
 async function translateToJapanese(text) {

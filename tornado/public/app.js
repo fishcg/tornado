@@ -2849,6 +2849,22 @@ function initSlideshow(enabled, intervalMinutes) {
   }, ms);
 }
 
+// ── 多卡片轮播（每 5 分钟切换一张已有卡片）────────────────────────────────────
+let _carouselTimer = null;
+let _carouselIndex = 0;
+
+async function startCardCarousel() {
+  clearInterval(_carouselTimer);
+  _carouselTimer = setInterval(async () => {
+    try {
+      const cards = await api("GET", "/character/cards");
+      if (!cards || cards.length < 2) return;
+      _carouselIndex = (_carouselIndex + 1) % cards.length;
+      renderCharacterCard(cards[_carouselIndex].image_url);
+    } catch {}
+  }, 5 * 60 * 1000);
+}
+
 // 设置面板中的轮播 toggle
 document.getElementById("slideshow-toggle").addEventListener("click", () => {
   document.getElementById("slideshow-toggle").classList.toggle("on");
