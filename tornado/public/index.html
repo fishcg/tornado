@@ -244,10 +244,6 @@
               <button id="voice-preview-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px;display:none">试听</button>
               <button id="voice-delete-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px;display:none;color:#f87171;border-color:#f87171">删除音色</button>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-              <label class="toggle"><input type="checkbox" id="tts-enabled-toggle"><span class="toggle-slider"></span></label>
-              <span style="font-size:12px;color:var(--text-dim)">开启语音朗读</span>
-            </div>
           </div>
           <button id="rp-soul-save" class="rp-ingest-btn" style="margin-top:8px">保存角色设定</button>
         </div>
@@ -397,6 +393,19 @@
         <div id="image-fallback-toggle" class="rp-toggle"></div>
       </div>
       <p class="settings-hint">关闭聊天插图后，角色不会自动生成图片（[IMG:] 标记仍生效）。备用 API 失败时切换 DashScope 重试。</p>
+      <div class="settings-divider"></div>
+      <div class="settings-row">
+        <label>语音朗读</label>
+        <div id="tts-enabled-setting-toggle" class="rp-toggle"></div>
+      </div>
+      <div class="settings-row">
+        <label>朗读语言</label>
+        <select id="tts-lang-select" style="background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px">
+          <option value="zh">中文</option>
+          <option value="ja">日语</option>
+        </select>
+      </div>
+      <p class="settings-hint">开启后，角色每条回复将自动朗读。需先在角色设定中上传音频完成声音复刻。</p>
       <div class="settings-divider" id="llm-provider-row" style="display:none">
         <div class="settings-row">
           <label>聊天模型</label>
@@ -498,10 +507,6 @@
                 <button id="cm-voice-upload-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px">上传音频复刻</button>
                 <button id="cm-voice-preview-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px;display:none">试听</button>
                 <button id="cm-voice-delete-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px;display:none;color:#f87171;border-color:#f87171">删除音色</button>
-              </div>
-              <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-                <label class="toggle"><input type="checkbox" id="cm-tts-enabled-toggle"><span class="toggle-slider"></span></label>
-                <span style="font-size:12px;color:var(--text-dim)">开启语音朗读</span>
               </div>
             </div>
             <button id="cm-soul-save" class="rp-ingest-btn" style="margin-top:8px">保存角色设定</button>

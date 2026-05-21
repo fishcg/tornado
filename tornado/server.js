@@ -117,11 +117,12 @@ async function dbRun(sql, params = []) {
 
 // ── 用户设置（替代 globalSettings 文件）────────────────────────────────────────
 
-// flags bit layout: bit0=imageFallback, bit1=chatImage, bit2=imageAutoExpand, bit3=collapseAction
+// flags bit layout: bit0=imageFallback, bit1=chatImage, bit2=imageAutoExpand, bit3=collapseAction, bit4=ttsEnabled
 const FLAG_IMAGE_FALLBACK  = 1;
 const FLAG_CHAT_IMAGE      = 2;
 const FLAG_IMAGE_AUTOEXPAND = 4;
 const FLAG_COLLAPSE_ACTION = 8;
+const FLAG_TTS_ENABLED     = 16;
 const FLAGS_DEFAULT        = FLAG_CHAT_IMAGE; // 0b0010 = 2
 
 async function getUserSettings(userId) {
@@ -133,6 +134,8 @@ async function getUserSettings(userId) {
     chatImageEnabled:     !!(flags & FLAG_CHAT_IMAGE),
     imageAutoExpand:      !!(flags & FLAG_IMAGE_AUTOEXPAND),
     collapseAction:       !!(flags & FLAG_COLLAPSE_ACTION),
+    ttsEnabled:           !!(flags & FLAG_TTS_ENABLED),
+    ttsLang:              row?.tts_lang || "zh",
     llmProvider:          row?.llm_provider || "deepseek",
   };
   if (!globalImageEnabled) base.chatImageEnabled = false;
@@ -146,6 +149,7 @@ async function saveUserSettings(userId, patch) {
     chatImageEnabled:     FLAG_CHAT_IMAGE,
     imageAutoExpand:      FLAG_IMAGE_AUTOEXPAND,
     collapseAction:       FLAG_COLLAPSE_ACTION,
+    ttsEnabled:           FLAG_TTS_ENABLED,
   };
   for (const [key, bit] of Object.entries(flagMap)) {
     if (key in patch) {
@@ -158,6 +162,10 @@ async function saveUserSettings(userId, patch) {
   }
   if ("llmProvider" in patch && patch.llmProvider !== undefined) {
     await dbRun("UPDATE user_settings SET llm_provider = ? WHERE user_id = ?", [patch.llmProvider, userId]);
+  }
+  if ("ttsLang" in patch && patch.ttsLang !== undefined) {
+    const lang = ["zh", "ja"].includes(patch.ttsLang) ? patch.ttsLang : "zh";
+    await dbRun("UPDATE user_settings SET tts_lang = ? WHERE user_id = ?", [lang, userId]);
   }
 }
 
@@ -2143,6 +2151,7 @@ async function handleRequest(req, res) {
       if (bgMemory) memoryParts.push(bgMemory);
       if (relMemory && relMemory !== bgMemory) memoryParts.push(relMemory);
       memoryContext = memoryParts.join("\n\n---\n\n") || null;
+      console.log(`[memory] 查询完成，${memoryContext ? "有记忆" : "无记忆"}`);
     }
 
     const soul = await loadSoul(userId);
@@ -2151,7 +2160,6 @@ async function handleRequest(req, res) {
     const char = await getActiveCharacter(userId);
     const affection = char?.affection ?? null;
     const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection);
-    console.log(memoryContext)
     const messages = [
       { role: "system", content: systemPrompt },
       ...recent.map((m) => ({ role: m.role, content: m.content }))
@@ -2266,15 +2274,16 @@ async function handleRequest(req, res) {
 
     // 异步 TTS 合成
     const ttsChar = await getActiveCharacter(userId);
-    if (ttsChar?.tts_enabled && ttsChar?.voice_id) {
+    const ttsSettings = await getUserSettings(userId);
+    if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
       (async () => {
         try {
           const ttsText = cleanText.slice(0, 300);
-          const [audioZh, audioJa] = await Promise.all([
-            synthesizeSpeech(ttsText, ttsChar.voice_id, "zh"),
-            synthesizeSpeech(ttsText, ttsChar.voice_id, "ja")
-          ]);
-          pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_zh: audioZh, audio_ja: audioJa });
+          const lang = ttsSettings.ttsLang || "zh";
+          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsText.length}`);
+          const audioUrl = await synthesizeSpeech(ttsText, ttsChar.voice_id, lang);
+          console.log(`[tts] 合成完成 url=${audioUrl}`);
+          pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl, lang });
         } catch (err) {
           console.error("[tts] 合成失败:", err.message);
         }
@@ -2490,6 +2499,8 @@ async function handleRequest(req, res) {
     if ("chatImageEnabled" in body) patch.chatImageEnabled = !!body.chatImageEnabled;
     if ("imageAutoExpand" in body) patch.imageAutoExpand = !!body.imageAutoExpand;
     if ("collapseAction" in body) patch.collapseAction = !!body.collapseAction;
+    if ("ttsEnabled" in body) patch.ttsEnabled = !!body.ttsEnabled;
+    if ("ttsLang" in body) patch.ttsLang = body.ttsLang;
     if ("llmProvider" in body) {
       const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [userId]);
       if (body.llmProvider === "newapi" && !user?.is_admin) {

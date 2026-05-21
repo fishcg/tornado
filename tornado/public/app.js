@@ -1231,7 +1231,7 @@ function handleWsPayload(payload) {
     showRelationMilestoneModal(payload);
   }
   if (payload.tts) {
-    attachTtsPlayer(payload.msg_id, payload.audio_zh, payload.audio_ja);
+    attachTtsPlayer(payload.msg_id, payload.audio_url);
   }
 }
 
@@ -1379,7 +1379,7 @@ function _showNextAchievement() {
 }
 
 // ── TTS 语音播放器 ────────────────────────────────────────────────────────────
-function attachTtsPlayer(msgId, audioZh, audioJa) {
+function attachTtsPlayer(msgId, audioUrl) {
   const wrap = msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null;
   const target = wrap || document.querySelector(".bubble-wrap.assistant:last-child");
   if (!target) return;
@@ -1388,35 +1388,25 @@ function attachTtsPlayer(msgId, audioZh, audioJa) {
   const player = document.createElement("div");
   player.className = "tts-player";
 
-  let currentAudio = null;
-  const play = (url, btn, otherBtn) => {
-    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    currentAudio = new Audio(url);
-    currentAudio.play().catch(() => {});
+  const btn = document.createElement("button");
+  btn.className = "tts-btn";
+  btn.textContent = "▶";
+  btn.title = "重新播放";
+
+  let audio = null;
+  const play = () => {
+    if (audio) { audio.pause(); audio = null; }
+    audio = new Audio(audioUrl);
+    audio.play().catch(() => {});
     btn.classList.add("tts-btn-active");
-    if (otherBtn) otherBtn.classList.remove("tts-btn-active");
-    currentAudio.onended = () => btn.classList.remove("tts-btn-active");
+    audio.onended = () => btn.classList.remove("tts-btn-active");
   };
 
-  const btnZh = document.createElement("button");
-  btnZh.className = "tts-btn";
-  btnZh.textContent = "中";
-  btnZh.title = "中文朗读";
-
-  const btnJa = document.createElement("button");
-  btnJa.className = "tts-btn";
-  btnJa.textContent = "日";
-  btnJa.title = "日语朗读";
-
-  btnZh.addEventListener("click", () => play(audioZh, btnZh, btnJa));
-  btnJa.addEventListener("click", () => play(audioJa, btnJa, btnZh));
-
-  player.appendChild(btnZh);
-  player.appendChild(btnJa);
+  btn.addEventListener("click", play);
+  player.appendChild(btn);
   target.appendChild(player);
 
-  // 自动播放中文
-  if (audioZh) play(audioZh, btnZh, btnJa);
+  play();
 }
 
 // ── 关系阶段升级演出 ──────────────────────────────────────────────────────────
@@ -2184,6 +2174,10 @@ async function openSettings() {
     window._collapseAction = !!gs.collapseAction;
     const collapseToggle = document.getElementById("collapse-action-toggle");
     if (collapseToggle) collapseToggle.classList.toggle("on", !!gs.collapseAction);
+    const ttsToggle = document.getElementById("tts-enabled-setting-toggle");
+    if (ttsToggle) ttsToggle.classList.toggle("on", !!gs.ttsEnabled);
+    const ttsLangSelect = document.getElementById("tts-lang-select");
+    if (ttsLangSelect) ttsLangSelect.value = gs.ttsLang || "zh";
     // LLM 提供商（仅 admin）
     const providerRow = document.getElementById("llm-provider-row");
     const providerSelect = document.getElementById("llm-provider-select");
@@ -2210,11 +2204,14 @@ document.getElementById("settings-save").addEventListener("click", async () => {
   const imageFallbackEnabled = document.getElementById("image-fallback-toggle").classList.contains("on");
   const imageAutoExpand = document.getElementById("image-auto-expand-toggle").classList.contains("on");
   const collapseAction = document.getElementById("collapse-action-toggle").classList.contains("on");
+  const ttsEnabled = document.getElementById("tts-enabled-setting-toggle")?.classList.contains("on") ?? false;
+  const ttsLangSelect = document.getElementById("tts-lang-select");
+  const ttsLang = ttsLangSelect ? ttsLangSelect.value : "zh";
   const providerSelect = document.getElementById("llm-provider-select");
   const llmProvider = providerSelect ? providerSelect.value : "deepseek";
   const tasks = [
     api("PATCH", "/character/slideshow", { enabled: slideshowEnabled, interval_minutes: slideshowInterval }),
-    api("PATCH", "/settings", { chatImageEnabled, imageFallbackEnabled, imageAutoExpand, collapseAction, llmProvider })
+    api("PATCH", "/settings", { chatImageEnabled, imageFallbackEnabled, imageAutoExpand, collapseAction, ttsEnabled, ttsLang, llmProvider })
   ];
   if (currentSessionId) {
     tasks.push(api("PATCH", `/sessions/${currentSessionId}/settings`, { dnd_start: dndStart, dnd_end: dndEnd, proactive_idle_minutes: proactiveIdleMinutes }));
@@ -2249,7 +2246,6 @@ async function loadVoiceSection(prefix) {
     const statusEl = document.getElementById(`${prefix === "rp" ? "" : "cm-"}voice-status`);
     const previewBtn = document.getElementById(`${prefix === "rp" ? "" : "cm-"}voice-preview-btn`);
     const deleteBtn = document.getElementById(`${prefix === "rp" ? "" : "cm-"}voice-delete-btn`);
-    const toggle = document.getElementById(`${prefix === "rp" ? "" : "cm-"}tts-enabled-toggle`);
     if (!statusEl) return;
     if (data?.voice_id) {
       statusEl.textContent = "已复刻 ✓";
@@ -2262,7 +2258,6 @@ async function loadVoiceSection(prefix) {
       if (previewBtn) previewBtn.style.display = "none";
       if (deleteBtn) deleteBtn.style.display = "none";
     }
-    if (toggle) toggle.checked = !!data?.tts_enabled;
   } catch {}
 }
 
@@ -2271,7 +2266,6 @@ function setupVoiceSection(prefix) {
   const uploadBtn = document.getElementById(`${prefix}voice-upload-btn`);
   const previewBtn = document.getElementById(`${prefix}voice-preview-btn`);
   const deleteBtn = document.getElementById(`${prefix}voice-delete-btn`);
-  const toggle = document.getElementById(`${prefix}tts-enabled-toggle`);
   const statusEl = document.getElementById(`${prefix}voice-status`);
   const rpPrefix = prefix === "" ? "rp" : "cm";
 
@@ -2319,10 +2313,6 @@ function setupVoiceSection(prefix) {
     if (!confirm("确认删除音色？")) return;
     await api("DELETE", "/character/voice");
     await loadVoiceSection(rpPrefix);
-  });
-
-  toggle?.addEventListener("change", async () => {
-    await api("PATCH", "/character/voice", { tts_enabled: toggle.checked });
   });
 }
 
@@ -2828,6 +2818,10 @@ document.getElementById("image-fallback-toggle").addEventListener("click", () =>
 });
 document.getElementById("collapse-action-toggle").addEventListener("click", () => {
   document.getElementById("collapse-action-toggle").classList.toggle("on");
+});
+
+document.getElementById("tts-enabled-setting-toggle")?.addEventListener("click", () => {
+  document.getElementById("tts-enabled-setting-toggle").classList.toggle("on");
 });
 
 // ── 公告弹窗 ──────────────────────────────────────────────────────────────────

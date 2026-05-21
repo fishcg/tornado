@@ -239,6 +239,7 @@ export async function initDb() {
   await ensureColumn(pool, "user_settings", "scene_image_date", "VARCHAR(16)");
   await ensureColumn(pool, "user_settings", "scene_image_count", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "user_settings", "llm_provider", "VARCHAR(32) NOT NULL DEFAULT 'deepseek'");
+  await ensureColumn(pool, "user_settings", "tts_lang", "VARCHAR(4) NOT NULL DEFAULT 'zh'");
   await ensureColumn(pool, "user_achievements", "notified", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "relationship_milestones", "video_url", "TEXT");
   await ensureColumn(pool, "characters", "voice_id", "VARCHAR(128)");
