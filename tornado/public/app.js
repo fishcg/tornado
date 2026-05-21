@@ -834,12 +834,12 @@ async function doStream(sessionId, text, replyBubble) {
           replyBubble.classList.remove("thinking");
           const dots = replyBubble.querySelector(".typing-dots");
           if (dots) dots.remove();
-          if (payload.audio_url && payload.audio_duration_ms > 0) {
+          if (payload.audio_url) {
             try {
+              replyBubble.innerHTML = renderBubbleText(fullText);
+              scrollToBottom();
               const audio = new Audio(payload.audio_url);
               audio.play().catch(() => {});
-              const cappedDuration = Math.min(payload.audio_duration_ms, 30000);
-              await typeOutText(replyBubble, fullText, cappedDuration);
               const wrap = replyBubble.closest(".bubble-wrap");
               if (wrap) attachTtsPlayer(payload.msg_id, payload.audio_url, false, wrap);
             } catch {

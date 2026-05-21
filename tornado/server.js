@@ -3076,7 +3076,7 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
 }
 
 async function generateRelationVideo(imageUrl, stageName, duration = 3) {
-  const prompt = `结合图片场景，让人物动起来，超高帧数，把"${stageName}"字符自然的融入到画面中，但是要重点突出`;
+  const prompt = `结合图片场景，让人物自然地动起来，超高帧数，流畅真实`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 600_000);
   try {
