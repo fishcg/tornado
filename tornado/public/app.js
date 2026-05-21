@@ -836,6 +836,12 @@ async function doStream(sessionId, text, replyBubble) {
           if (dots) dots.remove();
           if (payload.audio_url && payload.audio_duration_ms > 0) {
             const audio = new Audio(payload.audio_url);
+            audio.preload = "auto";
+            await new Promise(resolve => {
+              audio.addEventListener("canplay", resolve, { once: true });
+              audio.addEventListener("error", resolve, { once: true });
+              setTimeout(resolve, 5000); // 最多等 5s
+            });
             audio.play().catch(() => {});
             await typeOutText(replyBubble, fullText, payload.audio_duration_ms);
             const wrap = replyBubble.closest(".bubble-wrap");
