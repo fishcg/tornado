@@ -1572,7 +1572,7 @@ async function handleRequest(req, res) {
       if ("deepseek_thinking" in body) {
         await setGlobalSetting("deepseek_thinking", body.deepseek_thinking ? "1" : "0");
       }
-      if ("tts_channel" in body && ["qwen", "cosyvoice"].includes(body.tts_channel)) {
+      if ("tts_channel" in body && ["qwen", "qwen-omni", "cosyvoice"].includes(body.tts_channel)) {
         await setGlobalSetting("tts_channel", body.tts_channel);
       }
       send(res, 200, {
@@ -1923,11 +1923,13 @@ async function handleRequest(req, res) {
     const ossUrl = await uploadToOss(buf, filename);
     const voiceId = channel === "cosyvoice"
       ? await cloneVoiceCosyVoice(ossUrl, char.id)
-      : await cloneVoice(ossUrl, char.id);
+      : channel === "qwen-omni"
+        ? await cloneVoiceQwenOmni(ossUrl, char.id)
+        : await cloneVoice(ossUrl, char.id);
     // 若已有旧音色，异步删除
     if (char.voice_id) {
       const oldChannel = char.voice_channel || "qwen";
-      (oldChannel === "cosyvoice" ? deleteVoiceCosyVoice : deleteVoice)(char.voice_id).catch(() => {});
+      (oldChannel === "cosyvoice" ? deleteVoiceCosyVoice : oldChannel === "qwen-omni" ? deleteVoiceQwenOmni : deleteVoice)(char.voice_id).catch(() => {});
     }
     await dbRun("UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, channel, char.id]);
     send(res, 200, { voice_id: voiceId, voice_channel: channel });
@@ -1940,7 +1942,7 @@ async function handleRequest(req, res) {
     if (!char) { send(res, 404, { error: "no active character" }); return; }
     if (char.voice_id) {
       const ch = char.voice_channel || "qwen";
-      (ch === "cosyvoice" ? deleteVoiceCosyVoice : deleteVoice)(char.voice_id).catch(() => {});
+      (ch === "cosyvoice" ? deleteVoiceCosyVoice : ch === "qwen-omni" ? deleteVoiceQwenOmni : deleteVoice)(char.voice_id).catch(() => {});
     }
     await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0, voice_preview_url = NULL WHERE id = ?", [char.id]);
     send(res, 200, { ok: true });
@@ -1960,7 +1962,7 @@ async function handleRequest(req, res) {
     let text = "你好，我是你的专属伴侣，很高兴认识你。";
     if (lang === "ja") text = await translateToJapanese(text);
     try {
-      const synthFn = (char.voice_channel || "qwen") === "cosyvoice" ? synthesizeSpeechCosyVoice : synthesizeSpeech;
+      const synthFn = (char.voice_channel || "qwen") === "cosyvoice" ? synthesizeSpeechCosyVoice : (char.voice_channel || "qwen") === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
       const { url: audioUrl } = await synthFn(text, char.voice_id, lang);
       await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
       send(res, 200, { audio_url: audioUrl });
@@ -2371,10 +2373,12 @@ async function handleRequest(req, res) {
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
           console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
-          const isQwen = (ttsChar.voice_channel || "qwen") !== "cosyvoice";
-          const { url: audioUrl } = isQwen
-            ? await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang)
-            : await synthesizeSpeechCosyVoice(ttsInput, ttsChar.voice_id, lang, instruction);
+          const ch = ttsChar.voice_channel || "qwen";
+          const { url: audioUrl } = ch === "cosyvoice"
+            ? await synthesizeSpeechCosyVoice(ttsInput, ttsChar.voice_id, lang, instruction)
+            : ch === "qwen-omni"
+              ? await synthesizeSpeechQwenOmni(ttsInput, ttsChar.voice_id, lang, instruction)
+              : await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
           console.log(`[tts] 合成完成 url=${audioUrl}`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
           pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
@@ -3183,6 +3187,83 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
   const buf = Buffer.from(await dlRes.arrayBuffer());
   const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
   const url = await uploadToOss(buf, filename);
+  return { url, durationMs: 0 };
+}
+
+async function cloneVoiceQwenOmni(audioUrl, charId) {
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "qwen-voice-enrollment",
+      input: {
+        action: "create",
+        target_model: "qwen3.5-omni-plus-realtime",
+        preferred_name: `char${charId}`,
+        audio: { data: audioUrl }
+      }
+    })
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`QwenOmni clone ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  const voice = data.output?.voice;
+  if (!voice) throw new Error(`QwenOmni clone: no voice in response. ${JSON.stringify(data).slice(0, 200)}`);
+  return voice;
+}
+
+async function deleteVoiceQwenOmni(voiceId) {
+  await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "qwen-voice-enrollment", input: { action: "delete", voice: voiceId } })
+  });
+}
+
+async function synthesizeSpeechQwenOmni(text, voiceId, lang = "zh", instruction = "") {
+  const audioChunks = await new Promise((resolve, reject) => {
+    const ws = new WebSocket(
+      "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime",
+      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` } }
+    );
+    const chunks = [];
+    let settled = false;
+    const finish = (err, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      err ? reject(err) : resolve(result);
+    };
+    const timer = setTimeout(() => { ws.terminate(); finish(new Error("QwenOmni TTS timeout")); }, 60000);
+    ws.on("message", (data) => {
+      let msg;
+      try { msg = JSON.parse(data.toString()); } catch { return; }
+      if (msg.type === "session.created") {
+        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, output_audio_format: "pcm16" } }));
+      } else if (msg.type === "session.updated") {
+        ws.send(JSON.stringify({
+          type: "conversation.item.create",
+          item: { type: "message", role: "user", content: [{ type: "input_text", text }] }
+        }));
+        ws.send(JSON.stringify({ type: "response.create" }));
+      } else if (msg.type === "response.audio.delta") {
+        chunks.push(Buffer.from(msg.delta, "base64"));
+      } else if (msg.type === "response.done") {
+        ws.close();
+        finish(null, chunks);
+      } else if (msg.type === "error") {
+        finish(new Error(`QwenOmni TTS error: ${msg.error?.message || JSON.stringify(msg)}`));
+      }
+    });
+    ws.on("error", (err) => finish(err));
+    ws.on("close", () => finish(chunks.length ? null : new Error("QwenOmni TTS: no audio received"), chunks));
+  });
+  const pcm = Buffer.concat(audioChunks);
+  const wav = pcm16ToWav(pcm, 24000, 1, 16);
+  const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
+  const url = await uploadToOss(wav, filename, "audio/wav");
   return { url, durationMs: 0 };
 }
 
