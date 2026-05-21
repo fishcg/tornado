@@ -2017,7 +2017,7 @@ async function handleRequest(req, res) {
     }
 
     const settings = await getUserSettings(userId);
-    const imageFallbackEnabled = !!(settings.flags & 1);
+    const imageFallbackEnabled = settings.imageFallbackEnabled;
     // 找最近一条 assistant 消息作为场景依据
     const lastAssist = await dbGet("SELECT id, content FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", [sessionId]);
     if (!lastAssist) { send(res, 400, { error: "no assistant message" }); return; }
@@ -2180,6 +2180,7 @@ async function handleRequest(req, res) {
     let fullReply = "";
     try {
       const userSettings = await getUserSettings(userId);
+      console.log(`[chat] 开始 LLM 请求 provider=${userSettings.llmProvider}`);
       const { stream, t0 } = await llmChatStream(messages, userSettings.llmProvider);
       let firstContent = false;
       for await (const chunk of stream) {
@@ -2192,12 +2193,14 @@ async function handleRequest(req, res) {
         if (text) {
           if (!firstContent) {
             firstContent = true;
+            console.log(`[chat] 首包延迟 ${Date.now() - t0}ms`);
           }
           fullReply += text;
           res.write(`data: ${JSON.stringify({ text })}\n\n`);
         }
       }
     } catch (err) {
+      console.error(`[chat] LLM 请求失败: ${err.message}`);
       res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
       res.end();
       return;
@@ -2334,7 +2337,7 @@ async function handleRequest(req, res) {
     if (!msg) { send(res, 404, { error: "message not found" }); return; }
     const sessionId = msg.session_id;
     const settings = await getUserSettings(userId);
-    const imageFallbackEnabled = !!(settings.flags & 1);
+    const imageFallbackEnabled = settings.imageFallbackEnabled;
     // 清除旧图
     await dbRun("UPDATE messages SET image_url = NULL WHERE id = ?", [msgId]);
     // 用已有 prompt 或重新生成
