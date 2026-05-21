@@ -3092,7 +3092,7 @@ async function cloneVoice(audioUrl, charId) {
       model: "qwen-voice-enrollment",
       input: {
         action: "create",
-        target_model: "qwen3-tts-vc-2026-01-22",
+        target_model: "qwen-voice-enrollment",
         preferred_name: `char${charId}`,
         audio: { data: audioUrl }
       }
@@ -3173,7 +3173,7 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
   const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "qwen3-tts-vc-2026-01-22", input, parameters })
+    body: JSON.stringify({ model: "qwen3-tts-instruct-flash", input, parameters })
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
