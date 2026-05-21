@@ -3161,12 +3161,16 @@ async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
       let msg;
       try { msg = JSON.parse(data.toString()); } catch { return; }
       if (msg.type === "session.created") {
-        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, response_format: "mp3", sample_rate: 24000 } }));
-        ws.send(JSON.stringify({ type: "input_text_buffer.append", text }));
-        ws.send(JSON.stringify({ type: "input_text_buffer.commit" }));
+        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, output_audio_format: "mp3" } }));
+      } else if (msg.type === "session.updated") {
+        ws.send(JSON.stringify({
+          type: "conversation.item.create",
+          item: { type: "message", role: "user", content: [{ type: "input_text", text }] }
+        }));
+        ws.send(JSON.stringify({ type: "response.create" }));
       } else if (msg.type === "response.audio.delta") {
         chunks.push(Buffer.from(msg.delta, "base64"));
-      } else if (msg.type === "response.audio.done") {
+      } else if (msg.type === "response.done") {
         ws.send(JSON.stringify({ type: "session.finish" }));
       } else if (msg.type === "session.finished") {
         ws.close();
