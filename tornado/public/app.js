@@ -2199,6 +2199,7 @@ async function loadCharacterList() {
       await loadCharacter();
       showToast("已切换角色");
     };
+  } catch {}
   document.getElementById("settings-modal").classList.remove("hidden");
   // 同步滑块显示值
   const bgSlider = document.getElementById("bg-opacity");
