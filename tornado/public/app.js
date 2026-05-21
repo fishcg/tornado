@@ -828,29 +828,6 @@ async function doStream(sessionId, text, replyBubble) {
         scrollToBottom();
       }
       if (payload.done) {
-        // TTS 模式：done 事件携带完整文字和音频
-        if (payload.text) {
-          fullText = payload.text;
-          replyBubble.classList.remove("thinking");
-          const dots = replyBubble.querySelector(".typing-dots");
-          if (dots) dots.remove();
-          if (payload.audio_url) {
-            try {
-              replyBubble.innerHTML = renderBubbleText(fullText);
-              scrollToBottom();
-              const audio = new Audio(payload.audio_url);
-              audio.play().catch(() => {});
-              const wrap = replyBubble.closest(".bubble-wrap");
-              if (wrap) attachTtsPlayer(payload.msg_id, payload.audio_url, false, wrap);
-            } catch {
-              replyBubble.innerHTML = renderBubbleText(fullText);
-              scrollToBottom();
-            }
-          } else {
-            replyBubble.innerHTML = renderBubbleText(fullText);
-            scrollToBottom();
-          }
-        }
         if (payload.msg_id) {
           const wrap = replyBubble.closest(".bubble-wrap");
           if (wrap && !wrap.dataset.msgId) {

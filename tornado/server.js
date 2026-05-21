@@ -2194,7 +2194,6 @@ async function handleRequest(req, res) {
     let fullReply = "";
     const ttsChar = await getActiveCharacter(userId);
     const ttsSettings = await getUserSettings(userId);
-    const ttsMode = ttsSettings.ttsEnabled && !!ttsChar?.voice_id;
     try {
       console.log(`[chat] 开始 LLM 请求 provider=${ttsSettings.llmProvider}`);
       const { stream, t0 } = await llmChatStream(messages, ttsSettings.llmProvider);
@@ -2212,10 +2211,7 @@ async function handleRequest(req, res) {
             console.log(`[chat] 首包延迟 ${Date.now() - t0}ms`);
           }
           fullReply += text;
-          // TTS 模式下缓冲全文，不流式输出
-          if (!ttsMode) {
-            res.write(`data: ${JSON.stringify({ text })}\n\n`);
-          }
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
         }
       }
     } catch (err) {
@@ -2277,37 +2273,6 @@ async function handleRequest(req, res) {
       }
     }
 
-    // TTS 模式：合成完再发送文字，客户端同步播放
-    if (ttsMode) {
-      const stripped = cleanText
-        .replace(/[（(][^）)]{0,80}[）)]/g, "")
-        .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
-        .replace(/\*[^*]{0,80}\*/g, "")
-        .replace(/\s{2,}/g, " ")
-        .trim()
-        .slice(0, 300);
-      if (stripped) {
-        try {
-          const lang = ttsSettings.ttsLang || "zh";
-          let ttsInput = stripped;
-          if (lang === "ja") ttsInput = await translateToJapanese(stripped);
-          const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
-          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
-          const { url: audioUrl, durationMs } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
-          console.log(`[tts] 合成完成 url=${audioUrl} duration=${durationMs}ms`);
-          await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
-          donePayload.text = cleanText;
-          donePayload.audio_url = audioUrl;
-          donePayload.audio_duration_ms = durationMs;
-        } catch (err) {
-          console.error("[tts] 合成失败:", err.message);
-          donePayload.text = cleanText;
-        }
-      } else {
-        donePayload.text = cleanText;
-      }
-    }
-
     res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
 
     if (imgPrompt && quotaAllowed) {
@@ -2329,6 +2294,33 @@ async function handleRequest(req, res) {
     }
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
+
+    // 异步 TTS 合成，合成完通过 WS 推送播放
+    if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
+      (async () => {
+        try {
+          const stripped = cleanText
+            .replace(/[（(][^）)]{0,80}[）)]/g, "")
+            .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+            .replace(/\*[^*]{0,80}\*/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim()
+            .slice(0, 300);
+          if (!stripped) return;
+          const lang = ttsSettings.ttsLang || "zh";
+          let ttsInput = stripped;
+          if (lang === "ja") ttsInput = await translateToJapanese(stripped);
+          const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
+          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length}`);
+          const { url: audioUrl } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
+          console.log(`[tts] 合成完成 url=${audioUrl}`);
+          await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
+          pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
+        } catch (err) {
+          console.error("[tts] 合成失败:", err.message);
+        }
+      })();
+    }
 
     res.end();
     } catch (sseErr) {
