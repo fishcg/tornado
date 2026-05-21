@@ -3088,7 +3088,7 @@ async function cloneVoice(audioUrl, charId) {
       model: "qwen-voice-enrollment",
       input: {
         action: "create",
-        target_model: "qwen3.5-omni-plus-realtime",
+        target_model: "qwen3-tts-instruct-flash",
         preferred_name: `char${charId}`,
         audio: { data: audioUrl }
       }
@@ -3162,49 +3162,27 @@ async function translateToJapanese(text) {
 }
 
 async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
-  const audioChunks = await new Promise((resolve, reject) => {
-    const ws = new WebSocket(
-      "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?model=qwen3.5-omni-plus-realtime",
-      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}` } }
-    );
-    const chunks = [];
-    let settled = false;
-    const finish = (err, result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      err ? reject(err) : resolve(result);
-    };
-    const timer = setTimeout(() => { ws.terminate(); finish(new Error("QwenTTS timeout")); }, 60000);
-
-    ws.on("message", (data) => {
-      let msg;
-      try { msg = JSON.parse(data.toString()); } catch { return; }
-      if (msg.type === "session.created") {
-        ws.send(JSON.stringify({ type: "session.update", session: { voice: voiceId, output_audio_format: "pcm16" } }));
-      } else if (msg.type === "session.updated") {
-        ws.send(JSON.stringify({
-          type: "conversation.item.create",
-          item: { type: "message", role: "user", content: [{ type: "input_text", text }] }
-        }));
-        ws.send(JSON.stringify({ type: "response.create" }));
-      } else if (msg.type === "response.audio.delta") {
-        chunks.push(Buffer.from(msg.delta, "base64"));
-      } else if (msg.type === "response.done") {
-        ws.close();
-        finish(null, chunks);
-      } else if (msg.type === "error") {
-        finish(new Error(`QwenTTS error: ${msg.error?.message || JSON.stringify(msg)}`));
-      }
-    });
-    ws.on("error", (err) => finish(err));
-    ws.on("close", () => finish(chunks.length ? null : new Error("QwenTTS: no audio received"), chunks));
+  const langType = lang === "ja" ? "Japanese" : "Chinese";
+  const input = { text, voice: voiceId, language_type: langType };
+  const parameters = {};
+  if (instruction) { parameters.instructions = instruction; parameters.optimize_instructions = false; }
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "qwen3-tts-instruct-flash", input, parameters })
   });
-
-  const pcm = Buffer.concat(audioChunks);
-  const wav = pcm16ToWav(pcm, 24000, 1, 16);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`QwenTTS ${res.status}: ${body.slice(0, 300)}`);
+  }
+  const data = await res.json();
+  const tempUrl = data.output?.choices?.[0]?.message?.content?.[0]?.audio?.url;
+  if (!tempUrl) throw new Error(`QwenTTS: no audio url. ${JSON.stringify(data).slice(0, 200)}`);
+  const dlRes = await fetch(tempUrl);
+  if (!dlRes.ok) throw new Error(`QwenTTS 音频下载失败: ${dlRes.status}`);
+  const buf = Buffer.from(await dlRes.arrayBuffer());
   const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
-  const url = await uploadToOss(wav, filename, "audio/wav");
+  const url = await uploadToOss(buf, filename);
   return { url, durationMs: 0 };
 }
 
