@@ -1411,8 +1411,9 @@ function typeOutText(bubble, text, durationMs) {
 }
 
 function attachTtsPlayer(msgId, audioUrl, autoPlay = true, targetWrap = null) {
-  const target = targetWrap || (msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null) || document.querySelector(".bubble-wrap.assistant:last-child");
-  if (!target) return;
+  const wrap = targetWrap || (msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null) || document.querySelector(".bubble-wrap.assistant:last-child");
+  if (!wrap) return;
+  const target = wrap.querySelector(".bubble") || wrap;
   if (target.querySelector(".tts-player")) return;
 
   const player = document.createElement("div");
