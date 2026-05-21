@@ -180,7 +180,25 @@
     .msg { padding: 8px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
     .msg-ok { background: rgba(39,174,96,0.15); color: #2ecc71; }
     .msg-err { background: rgba(192,57,43,0.15); color: #e74c3c; }
-    .ach-toggle-btn {
+    .chart-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .chart-card {
+      background: var(--surface, #16161a);
+      border: 1px solid var(--border, #2a2a35);
+      border-radius: 10px;
+      padding: 16px 20px 12px;
+    }
+    .chart-card h3 {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-dim, #888);
+      margin: 0 0 12px;
+    }
+    .chart-card canvas { display: block; width: 100%; }
       padding: 3px 10px;
       border-radius: 10px;
       border: none;
@@ -258,6 +276,12 @@
         <div class="admin-stat-card"><div class="num" id="stat-messages">—</div><div class="label">消息</div></div>
         <div class="admin-stat-card"><div class="num" id="stat-announcements">—</div><div class="label">公告</div></div>
         <div class="admin-stat-card"><div class="num" id="stat-invite-codes">—</div><div class="label">邀请码</div></div>
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card"><h3>每日新增用户</h3><canvas id="chart-new-users" height="120"></canvas></div>
+        <div class="chart-card"><h3>每日活跃用户</h3><canvas id="chart-active-users" height="120"></canvas></div>
+        <div class="chart-card"><h3>每日新增会话</h3><canvas id="chart-sessions" height="120"></canvas></div>
+        <div class="chart-card"><h3>每日消息量</h3><canvas id="chart-messages" height="120"></canvas></div>
       </div>
     </section>
 
@@ -416,13 +440,103 @@ function loadSection(name) {
 
 // ── 仪表盘 ────────────────────────────────────────────────────────────────────
 async function loadStats() {
-  const data = await api("/admin/stats");
+  const [data, chartData] = await Promise.all([
+    api("/admin/stats"),
+    api("/admin/charts")
+  ]);
   if (!data) return;
   document.getElementById("stat-users").textContent = data.users;
   document.getElementById("stat-sessions").textContent = data.sessions;
   document.getElementById("stat-messages").textContent = data.messages;
   document.getElementById("stat-announcements").textContent = data.announcements;
   document.getElementById("stat-invite-codes").textContent = data.invite_codes;
+  if (chartData) {
+    drawChart("chart-new-users", chartData, "new_users", "#7c6fcd");
+    drawChart("chart-active-users", chartData, "active_users", "#4ea8de");
+    drawChart("chart-sessions", chartData, "new_sessions", "#56c596");
+    drawChart("chart-messages", chartData, "new_messages", "#e07b54");
+  }
+}
+
+function drawChart(canvasId, rows, key, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth || canvas.parentElement.clientWidth - 40;
+  const H = 120;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  const values = rows.map((r) => r[key]);
+  const maxVal = Math.max(...values, 1);
+  const pad = { top: 10, right: 12, bottom: 28, left: 32 };
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+  const n = rows.length;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // grid lines
+  const gridCount = 4;
+  ctx.strokeStyle = "rgba(255,255,255,0.06)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= gridCount; i++) {
+    const y = pad.top + ch - (i / gridCount) * ch;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cw, y); ctx.stroke();
+    const label = Math.round((i / gridCount) * maxVal);
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.font = "10px system-ui";
+    ctx.textAlign = "right";
+    ctx.fillText(label, pad.left - 4, y + 3.5);
+  }
+
+  // area fill
+  const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + ch);
+  grad.addColorStop(0, color + "44");
+  grad.addColorStop(1, color + "00");
+  ctx.beginPath();
+  rows.forEach((r, i) => {
+    const x = pad.left + (i / (n - 1)) * cw;
+    const y = pad.top + ch - (r[key] / maxVal) * ch;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.lineTo(pad.left + cw, pad.top + ch);
+  ctx.lineTo(pad.left, pad.top + ch);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // line
+  ctx.beginPath();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = "round";
+  rows.forEach((r, i) => {
+    const x = pad.left + (i / (n - 1)) * cw;
+    const y = pad.top + ch - (r[key] / maxVal) * ch;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  // dots + x labels (every other day)
+  rows.forEach((r, i) => {
+    const x = pad.left + (i / (n - 1)) * cw;
+    const y = pad.top + ch - (r[key] / maxVal) * ch;
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    if (i % 2 === 0 || i === n - 1) {
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.font = "10px system-ui";
+      ctx.textAlign = "center";
+      ctx.fillText(r.date.slice(5), x, H - 6);
+    }
+  });
 }
 
 // ── 用户管理 ──────────────────────────────────────────────────────────────────

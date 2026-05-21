@@ -1420,6 +1420,25 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (method === "GET" && pathname === "/admin/charts") {
+      const days = 14;
+      const rows = [];
+      for (let i = days - 1; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const date = d.toISOString().slice(0, 10);
+        const [newUsers, activeUsers, newSessions, newMessages] = await Promise.all([
+          dbGet("SELECT COUNT(*) as n FROM users WHERE created_at LIKE ?", [`${date}%`]),
+          dbGet("SELECT COUNT(DISTINCT user_id) as n FROM messages WHERE created_at LIKE ?", [`${date}%`]),
+          dbGet("SELECT COUNT(*) as n FROM sessions WHERE created_at LIKE ?", [`${date}%`]),
+          dbGet("SELECT COUNT(*) as n FROM messages WHERE created_at LIKE ?", [`${date}%`]),
+        ]);
+        rows.push({ date, new_users: newUsers.n, active_users: activeUsers.n, new_sessions: newSessions.n, new_messages: newMessages.n });
+      }
+      send(res, 200, rows);
+      return;
+    }
+
     if (method === "GET" && pathname === "/admin/users") {
       const rows = await dbAll("SELECT id, username, is_admin, created_at FROM users ORDER BY id ASC", []);
       send(res, 200, rows);
