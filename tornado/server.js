@@ -166,6 +166,8 @@ async function saveUserSettings(userId, patch) {
   if ("ttsLang" in patch && patch.ttsLang !== undefined) {
     const lang = ["zh", "ja"].includes(patch.ttsLang) ? patch.ttsLang : "zh";
     await dbRun("UPDATE user_settings SET tts_lang = ? WHERE user_id = ?", [lang, userId]);
+    // 语言变了，清除缓存的试听音频
+    await dbRun("UPDATE characters SET voice_preview_url = NULL WHERE user_id = ?", [userId]);
   }
 }
 
@@ -361,6 +363,11 @@ async function llmChatStream(messages, provider = "deepseek") {
     max_tokens: 600
   };
   if (provider === "newapi") createOpts.enable_nsfw = true;
+  if (provider === "deepseek") {
+    const thinkingEnabled = (await getGlobalSetting("deepseek_thinking", "0")) === "1";
+    createOpts.enable_thinking = thinkingEnabled;
+    if (thinkingEnabled) createOpts.thinking_budget = 1000;
+  }
   const stream = await client.chat.completions.create(createOpts);
   return { stream, t0 };
 }
@@ -1494,7 +1501,8 @@ async function handleRequest(req, res) {
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
-        milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3")
+        milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
+        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0")
       });
       return;
     }
@@ -1517,12 +1525,16 @@ async function handleRequest(req, res) {
         const n = Math.max(3, Math.min(10, Math.floor(Number(body.milestone_video_duration) || 3)));
         await setGlobalSetting("milestone_video_duration", String(n));
       }
+      if ("deepseek_thinking" in body) {
+        await setGlobalSetting("deepseek_thinking", body.deepseek_thinking ? "1" : "0");
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
-        milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3")
+        milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
+        deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0")
       });
       return;
     }
@@ -1886,9 +1898,10 @@ async function handleRequest(req, res) {
       send(res, 200, { audio_url: char.voice_preview_url });
       return;
     }
-    const body = await readBody(req);
-    const text = String(body.text || "你好，我是你的专属伴侣，很高兴认识你。").slice(0, 100);
-    const lang = body.lang === "ja" ? "ja" : "zh";
+    const userSettings = await getUserSettings(userId);
+    const lang = userSettings.ttsLang || "zh";
+    let text = "你好，我是你的专属伴侣，很高兴认识你。";
+    if (lang === "ja") text = await translateToJapanese(text);
     try {
       const audioUrl = await synthesizeSpeech(text, char.voice_id, lang);
       await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
@@ -2295,8 +2308,14 @@ async function handleRequest(req, res) {
             .trim()
             .slice(0, 300);
           const lang = ttsSettings.ttsLang || "zh";
-          console.log(`[tts] 开始合成 lang=${lang} chars=${stripped.length}`);
-          const audioUrl = await synthesizeSpeech(stripped, ttsChar.voice_id, lang);
+          let ttsInput = stripped;
+          if (lang === "ja") {
+            console.log(`[tts] 翻译为日语...`);
+            ttsInput = await translateToJapanese(stripped);
+            console.log(`[tts] 翻译完成 chars=${ttsInput.length}`);
+          }
+          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length}`);
+          const audioUrl = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang);
           console.log(`[tts] 合成完成 url=${audioUrl}`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
           pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl, lang });
@@ -2952,6 +2971,18 @@ async function deleteVoice(voiceId) {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: "voice-enrollment", input: { action: "delete_voice", voice_id: voiceId } })
   });
+}
+
+async function translateToJapanese(text) {
+  const res = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    enable_thinking: false,
+    messages: [
+      { role: "system", content: "你是翻译助手。将用户输入的中文翻译成自然流畅的日语，只输出日语译文，不要任何解释。" },
+      { role: "user", content: text }
+    ]
+  });
+  return (res.choices?.[0]?.message?.content || text).trim();
 }
 
 async function synthesizeSpeech(text, voiceId, lang = "zh") {

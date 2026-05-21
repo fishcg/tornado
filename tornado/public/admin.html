@@ -348,6 +348,14 @@
           <input type="number" id="milestoneVideoDuration" min="3" max="10" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
           <span style="color:var(--text-dim);font-size:13px">3~10，默认 3</span>
         </div>
+        <h3 style="margin-top:16px">DeepSeek 思考模式</h3>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="deepseekThinkingToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="deepseekThinkingToggle">开启后主聊天使用 DeepSeek 深度思考（更慢但更准）</label>
+        </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
       <div class="admin-form">
@@ -525,6 +533,7 @@ async function loadSystem() {
     document.getElementById("milestoneMode").value = settings.milestone_mode ?? "comic";
     document.getElementById("milestoneVideoDuration").value = settings.milestone_video_duration ?? "3";
     document.getElementById("videoDurationRow").style.display = settings.milestone_mode === "video" ? "flex" : "none";
+    document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
   }
   if (soulData) {
     document.getElementById("soulEditor").value = soulData.soul || "";
@@ -541,7 +550,8 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const affectionInterval = Number(document.getElementById("affectionInterval").value) || 3;
   const milestoneMode = document.getElementById("milestoneMode").value;
   const milestoneVideoDuration = Number(document.getElementById("milestoneVideoDuration").value) || 3;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration }) });
+  const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking }) });
   if (data) showMsg("已保存");
 });
 
