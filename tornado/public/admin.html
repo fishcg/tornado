@@ -199,6 +199,34 @@
       margin: 0 0 12px;
     }
     .chart-card canvas { display: block; width: 100%; }
+    .ci-layout { display: flex; gap: 20px; align-items: flex-start; }
+    .ci-sidebar { width: 260px; flex-shrink: 0; }
+    .ci-main { flex: 1; min-width: 0; }
+    .ci-search { display: flex; gap: 8px; margin-bottom: 16px; }
+    .ci-search input { flex: 1; padding: 7px 10px; background: var(--surface2,#1a1a1e); border: 1px solid var(--border,#2a2a35); border-radius: 6px; color: var(--text,#e8e8f0); font-size: 13px; }
+    .ci-search input:focus { outline: none; border-color: var(--accent,#7c6fcd); }
+    .ci-char-item {
+      padding: 8px 12px; border-radius: 6px; font-size: 13px;
+      background: var(--surface,#16161a); border: 1px solid var(--border,#2a2a35);
+      margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;
+    }
+    .ci-char-item .ci-char-name { font-weight: 500; }
+    .ci-char-item .ci-char-meta { font-size: 11px; color: var(--text-dim,#888); }
+    .ci-session-item {
+      padding: 10px 12px; border-radius: 6px; font-size: 13px;
+      background: var(--surface,#16161a); border: 1px solid var(--border,#2a2a35);
+      margin-bottom: 6px; cursor: pointer; transition: border-color .15s;
+    }
+    .ci-session-item:hover, .ci-session-item.active { border-color: var(--accent,#7c6fcd); }
+    .ci-session-item .ci-session-title { font-weight: 500; margin-bottom: 3px; }
+    .ci-session-item .ci-session-meta { font-size: 11px; color: var(--text-dim,#888); }
+    .ci-session-item .ci-session-preview { font-size: 12px; color: var(--text-dim,#888); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ci-messages { display: flex; flex-direction: column; gap: 10px; }
+    .ci-msg { padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.6; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+    .ci-msg.user { background: rgba(61,47,110,0.5); align-self: flex-end; }
+    .ci-msg.assistant { background: var(--surface,#16161a); border: 1px solid var(--border,#2a2a35); align-self: flex-start; }
+    .ci-msg-meta { font-size: 11px; color: var(--text-dim,#888); margin-bottom: 4px; }
+    .ci-empty { color: var(--text-dim,#888); font-size: 13px; padding: 20px 0; }
       padding: 3px 10px;
       border-radius: 10px;
       border: none;
@@ -258,6 +286,7 @@
     <div class="admin-nav-items">
       <button class="admin-nav-item active" data-section="dashboard">仪表盘</button>
       <button class="admin-nav-item" data-section="users">用户管理</button>
+      <button class="admin-nav-item" data-section="chat-inspect">聊天管理</button>
       <button class="admin-nav-item" data-section="invite-codes">邀请码</button>
       <button class="admin-nav-item" data-section="announcements">公告管理</button>
       <button class="admin-nav-item" data-section="achievements">成就管理</button>
@@ -293,6 +322,31 @@
         </thead>
         <tbody id="usersBody"></tbody>
       </table>
+    </section>
+
+    <section id="section-chat-inspect" class="admin-section">
+      <h2>聊天管理</h2>
+      <div class="ci-search">
+        <input id="ci-uid-input" type="number" placeholder="输入用户 ID" min="1">
+        <button class="btn-sm btn-primary" id="ci-search-btn">查询</button>
+      </div>
+      <div class="ci-layout">
+        <div class="ci-sidebar">
+          <div id="ci-char-section" style="display:none">
+            <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;font-weight:500">角色</div>
+            <div id="ci-char-list"></div>
+          </div>
+          <div id="ci-session-section" style="display:none">
+            <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;font-weight:500">会话（最近50条）</div>
+            <div id="ci-session-list"></div>
+          </div>
+        </div>
+        <div class="ci-main">
+          <div id="ci-messages-wrap">
+            <div class="ci-empty">输入用户 ID 后点击查询</div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section id="section-invite-codes" class="admin-section">
@@ -432,6 +486,7 @@ document.querySelectorAll(".admin-nav-item").forEach((btn) => {
 function loadSection(name) {
   if (name === "dashboard") loadStats();
   else if (name === "users") loadUsers();
+  else if (name === "chat-inspect") initChatInspect();
   else if (name === "invite-codes") loadCodes();
   else if (name === "announcements") loadAnnouncements();
   else if (name === "achievements") loadAchievements();
@@ -774,6 +829,79 @@ document.getElementById("addAchBtn").addEventListener("click", async () => {
     showMsg("成就已添加");
   }
 });
+
+// ── 聊天管理 ──────────────────────────────────────────────────────────────────
+let _ciInited = false;
+
+function initChatInspect() {
+  if (_ciInited) return;
+  _ciInited = true;
+  document.getElementById("ci-search-btn").addEventListener("click", runCiSearch);
+  document.getElementById("ci-uid-input").addEventListener("keydown", (e) => { if (e.key === "Enter") runCiSearch(); });
+}
+
+async function runCiSearch() {
+  const uid = document.getElementById("ci-uid-input").value.trim();
+  if (!uid) return;
+  const charSection = document.getElementById("ci-char-section");
+  const sessionSection = document.getElementById("ci-session-section");
+  const charList = document.getElementById("ci-char-list");
+  const sessionList = document.getElementById("ci-session-list");
+  const msgWrap = document.getElementById("ci-messages-wrap");
+
+  charList.innerHTML = '<div class="ci-empty">加载中…</div>';
+  sessionList.innerHTML = "";
+  msgWrap.innerHTML = '<div class="ci-empty">选择左侧会话查看消息</div>';
+  charSection.style.display = "block";
+  sessionSection.style.display = "block";
+
+  const data = await api(`/admin/chat-inspect?user_id=${uid}`);
+  if (!data) { charList.innerHTML = '<div class="ci-empty">查询失败</div>'; return; }
+
+  if (!data.characters.length) {
+    charList.innerHTML = '<div class="ci-empty">无角色</div>';
+  } else {
+    charList.innerHTML = data.characters.map((c) => `
+      <div class="ci-char-item">
+        <span class="ci-char-name">${c.name}${c.is_active ? ' <span style="color:var(--accent);font-size:11px">●</span>' : ''}</span>
+        <span class="ci-char-meta">❤ ${c.affection}</span>
+      </div>
+    `).join("");
+  }
+
+  if (!data.sessions.length) {
+    sessionList.innerHTML = '<div class="ci-empty">无会话</div>';
+  } else {
+    sessionList.innerHTML = data.sessions.map((s) => `
+      <div class="ci-session-item" data-sid="${s.id}">
+        <div class="ci-session-title">${s.title || "无标题"}${s.archived ? ' <span style="color:var(--text-dim);font-size:10px">[归档]</span>' : ''}</div>
+        <div class="ci-session-meta">${fmtDate(s.updated_at)} · ${s.msg_count} 条消息</div>
+        ${s.last_msg ? `<div class="ci-session-preview">${s.last_msg.slice(0, 60)}</div>` : ''}
+      </div>
+    `).join("");
+    sessionList.querySelectorAll(".ci-session-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        sessionList.querySelectorAll(".ci-session-item").forEach((i) => i.classList.remove("active"));
+        item.classList.add("active");
+        loadCiMessages(Number(item.dataset.sid));
+      });
+    });
+  }
+}
+
+async function loadCiMessages(sid) {
+  const wrap = document.getElementById("ci-messages-wrap");
+  wrap.innerHTML = '<div class="ci-empty">加载中…</div>';
+  const msgs = await api(`/admin/chat-inspect/messages?session_id=${sid}`);
+  if (!msgs) { wrap.innerHTML = '<div class="ci-empty">加载失败</div>'; return; }
+  if (!msgs.length) { wrap.innerHTML = '<div class="ci-empty">暂无消息</div>'; return; }
+  wrap.innerHTML = `<div class="ci-messages">${msgs.map((m) => `
+    <div>
+      <div class="ci-msg-meta">${m.role === "user" ? "用户" : "角色"} · ${fmtDate(m.created_at)}</div>
+      <div class="ci-msg ${m.role}">${m.content.slice(0, 1000)}${m.content.length > 1000 ? "…" : ""}${m.image_url ? `<br><img src="${m.image_url}" style="max-width:200px;border-radius:6px;margin-top:6px">` : ""}</div>
+    </div>
+  `).join("")}</div>`;
+}
 
 // ── 初始化 ────────────────────────────────────────────────────────────────────
 (async () => {

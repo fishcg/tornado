@@ -1445,6 +1445,28 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (method === "GET" && pathname === "/admin/chat-inspect") {
+      const uid = Number(url.searchParams.get("user_id"));
+      if (!uid) { send(res, 400, { error: "user_id required" }); return; }
+      const [characters, sessions] = await Promise.all([
+        dbAll("SELECT id, name, is_active, affection, created_at FROM characters WHERE user_id = ? ORDER BY id DESC", [uid]),
+        dbAll(`SELECT s.id, s.title, s.updated_at, s.archived,
+          (SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_msg,
+          (SELECT COUNT(*) FROM messages WHERE session_id = s.id AND role != 'system') as msg_count
+          FROM sessions s WHERE s.user_id = ? ORDER BY s.updated_at DESC LIMIT 50`, [uid]),
+      ]);
+      send(res, 200, { characters, sessions });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/admin/chat-inspect/messages") {
+      const sid = Number(url.searchParams.get("session_id"));
+      if (!sid) { send(res, 400, { error: "session_id required" }); return; }
+      const msgs = await dbAll("SELECT id, role, content, created_at, image_url FROM messages WHERE session_id = ? AND role != 'system' ORDER BY id ASC", [sid]);
+      send(res, 200, msgs);
+      return;
+    }
+
     const adminUserMatch = pathname.match(/^\/admin\/users\/(\d+)$/);
     if (method === "PATCH" && adminUserMatch) {
       const uid = Number(adminUserMatch[1]);

@@ -402,6 +402,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   word-break: break-word;
   position: relative;
 }
+.bubble-wrap.assistant .bubble { background: var(--assistant-bg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .bubble-wrap.assistant .bubble:has(.tts-player) {
   padding-right: 34px;
 }
