@@ -2870,7 +2870,7 @@ async function generateAchievementInnerVoice(charName, affection, achievementNam
   }
 }
 
-async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext, { imageFallbackEnabled = true } = {}) {
+async function generateAchievementSelfie(userId, achievementName, achType, achThreshold, personality, description, recentContext, plotSummary, { imageFallbackEnabled = true } = {}) {
   const appearance = (await getCharacterAppearance(userId)).slice(0, 200);
 
   const typeHint = {
@@ -2881,6 +2881,7 @@ async function generateAchievementSelfie(userId, achievementName, achType, achTh
 
   const personalityHint = personality ? `角色性格：${personality}。` : "";
   const descriptionHint = description ? `角色背景：${description}。` : "";
+  const plotHint = plotSummary ? `当前剧情：${plotSummary}。` : "";
 
   const sceneRes = await openai.chat.completions.create({
     model: OPENAI_MODEL,
@@ -2890,9 +2891,9 @@ async function generateAchievementSelfie(userId, achievementName, achType, achTh
       {
         role: "system",
         content: `你是一个图片描述生成助手。根据成就信息和最近对话，为角色生成一段自然生活照或自拍的场景描述，用于生成图片。
-${personalityHint}${descriptionHint}
+${personalityHint}${descriptionHint}${plotHint}
 要求：
-- 场景要与成就"${achievementName}"（类型：${typeHint}）在情感上匹配，并结合最近对话的氛围
+- 场景要与成就"${achievementName}"（类型：${typeHint}）在情感上匹配，并结合当前剧情氛围
 - 自然真实，像生活照或随手自拍，不要摆拍感
 - 只描述场景、动作、氛围、光线，不要描述外貌
 - 60字以内，中文，直接输出描述，不加任何前缀`
@@ -2975,6 +2976,24 @@ async function deleteVoice(voiceId) {
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model: "voice-enrollment", input: { action: "delete_voice", voice_id: voiceId } })
   });
+}
+
+async function summarizePlot(msgs) {
+  if (!msgs || msgs.length === 0) return "";
+  const context = msgs.map((m) => `${m.role === "user" ? "用户" : "角色"}：${m.content.slice(0, 120)}`).join("\n");
+  const res = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    enable_thinking: false,
+    max_tokens: 150,
+    messages: [
+      {
+        role: "system",
+        content: "你是剧情总结助手。根据对话记录，用100字以内总结当前两人之间发生的主要剧情、情感走向和关键事件，直接输出总结，不加任何前缀。"
+      },
+      { role: "user", content: context }
+    ]
+  });
+  return (res.choices?.[0]?.message?.content || "").trim().slice(0, 150);
 }
 
 async function generateTtsInstruction(charName, personality, mood, recentMsgs) {
@@ -3108,10 +3127,11 @@ async function generateRelationVideo(imageUrl, stageName, duration = 3) {
   }
 }
 
-async function generateRelationComic(charName, stageName, affection, personality, description, recentContext, { imageFallbackEnabled = true } = {}) {
+async function generateRelationComic(charName, stageName, affection, personality, description, recentContext, plotSummary, { imageFallbackEnabled = true } = {}) {
   const appearance = (await getCharacterAppearance(null)).slice(0, 200);
   const personalityHint = personality ? `角色性格：${personality}。` : "";
   const descHint = description ? `角色背景：${description}。` : "";
+  const plotHint = plotSummary ? `当前剧情：${plotSummary}。` : "";
 
   const scriptRes = await openai.chat.completions.create({
     model: OPENAI_MODEL,
@@ -3121,10 +3141,10 @@ async function generateRelationComic(charName, stageName, affection, personality
       {
         role: "system",
         content: `你是一个漫画分镜脚本生成助手。根据角色信息和最近对话，为"关系升级到${stageName}"这一时刻生成两组漫画分镜描述。
-${personalityHint}${descHint}
+${personalityHint}${descHint}${plotHint}
 要求：
 - 每组描述6格连续分镜，格与格之间有时间/情绪递进
-- 第一组：回顾与角色相处的6个温馨瞬间，从初见到熟悉
+- 第一组：回顾与角色相处的6个温馨瞬间，从初见到熟悉，结合当前剧情中的真实场景
 - 第二组：关系升级这一刻的情感爆发，共6格，情绪层层递进到高潮
 - 画面中只出现该角色一人，不出现其他任何人物
 - 每格描述场景、动作、光线、氛围，不描述外貌，40字以内
@@ -3207,12 +3227,15 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
   // 异步生成漫画或视频
   (async () => {
     let recentContext = "";
+    let plotSummary = "";
     if (sessionId) {
       const msgs = await dbAll(
-        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 5",
+        "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 50",
         [sessionId]
       );
-      recentContext = msgs.reverse().map(m => `${m.role === "user" ? "用户" : "角色"}：${m.content.slice(0, 100)}`).join("\n");
+      msgs.reverse();
+      recentContext = msgs.slice(-5).map(m => `${m.role === "user" ? "用户" : "角色"}：${m.content.slice(0, 100)}`).join("\n");
+      plotSummary = await summarizePlot(msgs).catch(() => "");
     }
 
     const milestoneMode = await getGlobalSetting("milestone_mode", "comic");
@@ -3224,7 +3247,7 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
         const appearance = (await getCharacterAppearance(null)).slice(0, 150);
         const personalityHint = char.personality ? `${char.personality.slice(0, 50)}，` : "";
         const descHint = char.description ? `${char.description.slice(0, 50)}，` : "";
-        const imgPrompt = `${appearance}，${personalityHint}${descHint}关系升级到"${newStage.name}"的情感高潮瞬间，只有该角色一人，动漫风格，电影感光线`;
+        const imgPrompt = `${appearance}，${personalityHint}${descHint}${plotSummary ? `剧情背景：${plotSummary.slice(0, 60)}，` : ""}关系升级到"${newStage.name}"的情感高潮瞬间，只有该角色一人，动漫风格，电影感光线`;
         console.log(`[milestone] 首帧 prompt 长度=${imgPrompt.length}`);
         let frameUrl = null;
         for (let attempt = 1; attempt <= 3; attempt++) {
@@ -3255,7 +3278,7 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
     } else {
       let url1 = null, url2 = null;
       try {
-        ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext, { imageFallbackEnabled }));
+        ({ url1, url2 } = await generateRelationComic(char.name, newStage.name, newAffection, char.personality, char.description, recentContext, plotSummary, { imageFallbackEnabled }));
       } catch (err) {
         console.error(`[milestone] 漫画生成失败:`, err.message);
       }
@@ -3290,14 +3313,17 @@ async function checkAndUnlockAchievements(userId, sessionId, { imageFallbackEnab
 
   const currentValues = { message_count: msgCount, affection, streak_days: streakDays };
 
-  // 获取最近 30 条消息作为上下文
+  // 获取最近 50 条消息作为上下文，并生成剧情摘要
   let recentContext = "";
+  let plotSummary = "";
   if (sessionId) {
     const recentMsgs = await dbAll(
-      "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 5",
+      "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 50",
       [sessionId]
     );
-    recentContext = recentMsgs.reverse().map(m => `${m.role === 'user' ? '用户' : '角色'}：${m.content.slice(0, 100)}`).join("\n");
+    recentMsgs.reverse();
+    recentContext = recentMsgs.slice(-5).map(m => `${m.role === 'user' ? '用户' : '角色'}：${m.content.slice(0, 100)}`).join("\n");
+    plotSummary = await summarizePlot(recentMsgs).catch(() => "");
   }
 
   for (const ach of achievements) {
@@ -3333,7 +3359,7 @@ async function checkAndUnlockAchievements(userId, sessionId, { imageFallbackEnab
       try {
         [innerVoice, selfieUrl] = await Promise.all([
           generateAchievementInnerVoice(char.name, affection, ach.name, char.personality, recentContext),
-          generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext, { imageFallbackEnabled })
+          generateAchievementSelfie(userId, ach.name, ach.type, ach.threshold, char.personality, char.description, recentContext, plotSummary, { imageFallbackEnabled })
         ]);
       } catch (err) {
         console.error(`[achievements] 生成内容失败：${ach.name}`, err.message);
