@@ -3,7 +3,7 @@ import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 import OpenAI from "../node_modules/openai/index.js";
 import OSS from "../node_modules/ali-oss/lib/client.js";
 import { getDb, closeDb, initDb } from "./db.js";
