@@ -2284,6 +2284,7 @@ function setupVoiceSection(prefix) {
     try {
       await fetch("/character/voice", {
         method: "POST",
+        credentials: "include",
         headers: { "Content-Type": file.type || "audio/wav" },
         body: file
       }).then(async r => {

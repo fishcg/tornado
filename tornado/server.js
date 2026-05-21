@@ -2929,12 +2929,20 @@ async function deleteVoice(voiceId) {
 
 async function synthesizeSpeech(text, voiceId, lang = "zh") {
   const langMap = { zh: "Chinese", ja: "Japanese" };
-  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization", {
+  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "cosyvoice-v3.5-plus",
-      input: { text, voice: voiceId, language_type: langMap[lang] || "Chinese" }
+      input: {
+        messages: [
+          { role: "user", content: [{ type: "text", text }] }
+        ]
+      },
+      parameters: {
+        voice: voiceId,
+        language_type: langMap[lang] || "Chinese"
+      }
     })
   });
   if (!res.ok) {
@@ -2942,8 +2950,8 @@ async function synthesizeSpeech(text, voiceId, lang = "zh") {
     throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 200)}`);
   }
   const data = await res.json();
-  const tempUrl = data.output?.audio?.url;
-  if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url`);
+  const tempUrl = data.output?.audio?.url || data.output?.choices?.[0]?.message?.audio?.url;
+  if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url. response: ${JSON.stringify(data).slice(0, 300)}`);
   // 下载并上传 OSS，避免临时链接过期
   const dlRes = await fetch(tempUrl);
   if (!dlRes.ok) throw new Error(`TTS 音频下载失败: ${dlRes.status}`);
