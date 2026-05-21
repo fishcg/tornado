@@ -2290,8 +2290,9 @@ async function handleRequest(req, res) {
           const lang = ttsSettings.ttsLang || "zh";
           let ttsInput = stripped;
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
-          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length}`);
-          const { url: audioUrl, durationMs } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang);
+          const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
+          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
+          const { url: audioUrl, durationMs } = await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
           console.log(`[tts] 合成完成 url=${audioUrl} duration=${durationMs}ms`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
           donePayload.text = cleanText;
@@ -2976,6 +2977,25 @@ async function deleteVoice(voiceId) {
   });
 }
 
+async function generateTtsInstruction(charName, personality, mood, recentMsgs) {
+  const context = recentMsgs.slice(-4).map((m) => `${m.role === "user" ? "用户" : charName}: ${m.content.slice(0, 60)}`).join("\n");
+  const res = await openai.chat.completions.create({
+    model: OPENAI_MODEL,
+    enable_thinking: false,
+    messages: [
+      {
+        role: "system",
+        content: "你是语音合成指令生成助手。根据角色信息和当前对话情绪，生成一段简短的语音合成风格指令（不超过100字），描述语速、语调、情感等，直接输出指令内容，不要任何解释。"
+      },
+      {
+        role: "user",
+        content: `角色名：${charName}\n性格：${(personality || "").slice(0, 100)}\n当前情绪：${mood || "平静"}\n近期对话：\n${context}`
+      }
+    ]
+  });
+  return (res.choices?.[0]?.message?.content || "").trim().slice(0, 100);
+}
+
 async function translateToJapanese(text) {
   const res = await openai.chat.completions.create({
     model: OPENAI_MODEL,
@@ -2988,7 +3008,9 @@ async function translateToJapanese(text) {
   return (res.choices?.[0]?.message?.content || text).trim();
 }
 
-async function synthesizeSpeech(text, voiceId, lang = "zh") {
+async function synthesizeSpeech(text, voiceId, lang = "zh", instruction = "") {
+  const input = { text, voice: voiceId, format: "wav", sample_rate: 24000, language_hints: [lang] };
+  if (instruction) input.instruction = instruction;
   const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", {
     method: "POST",
     headers: {
@@ -2997,7 +3019,7 @@ async function synthesizeSpeech(text, voiceId, lang = "zh") {
     },
     body: JSON.stringify({
       model: "cosyvoice-v3.5-plus",
-      input: { text, voice: voiceId, format: "wav", sample_rate: 24000, language_hints: [lang] }
+      input
     })
   });
   if (!res.ok) {
