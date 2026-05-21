@@ -641,7 +641,7 @@ async function loadMessages(sessionId) {
   }
   for (const m of allMessages.slice(start)) {
     const text = m.content === "[图片]" ? "" : m.content;
-    appendBubble(m.role, text, "", m.image_url || null, m.id, m.created_at);
+    appendBubble(m.role, text, "", m.image_url || null, m.id, m.created_at, m.tts_audio_url || null);
   }
   // 用最近一张图片作为背景
   const lastImg = [...allMessages].reverse().find((m) => m.image_url);
@@ -669,7 +669,7 @@ function loadOlderMessages(loadMoreEl) {
   }
 }
 
-function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = null, createdAt = null) {
+function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = null, createdAt = null, audioUrl = null) {
   const empty = messages.querySelector(".empty-hint");
   if (empty) empty.remove();
 
@@ -706,6 +706,10 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
 
   // 所有消息加删除按钮
   if (msgId) addDelBtn(wrap, msgId);
+
+  if (audioUrl && role === "assistant") {
+    attachTtsPlayer(msgId, audioUrl, false);
+  }
 
   messages.appendChild(wrap);
   return bubble;
@@ -1379,7 +1383,7 @@ function _showNextAchievement() {
 }
 
 // ── TTS 语音播放器 ────────────────────────────────────────────────────────────
-function attachTtsPlayer(msgId, audioUrl) {
+function attachTtsPlayer(msgId, audioUrl, autoPlay = true) {
   const wrap = msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null;
   const target = wrap || document.querySelector(".bubble-wrap.assistant:last-child");
   if (!target) return;
@@ -1390,8 +1394,8 @@ function attachTtsPlayer(msgId, audioUrl) {
 
   const btn = document.createElement("button");
   btn.className = "tts-btn";
-  btn.textContent = "▶";
-  btn.title = "重新播放";
+  btn.title = "播放语音";
+  btn.innerHTML = `<svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor"><polygon points="2,1 9,5 2,9"/></svg>`;
 
   let audio = null;
   const play = () => {
@@ -1406,7 +1410,7 @@ function attachTtsPlayer(msgId, audioUrl) {
   player.appendChild(btn);
   target.appendChild(player);
 
-  play();
+  if (autoPlay) play();
 }
 
 // ── 关系阶段升级演出 ──────────────────────────────────────────────────────────

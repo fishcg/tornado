@@ -1863,7 +1863,7 @@ async function handleRequest(req, res) {
     const voiceId = await cloneVoice(ossUrl, char.id);
     // 若已有旧音色，异步删除
     if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
-    await dbRun("UPDATE characters SET voice_id = ?, tts_enabled = 1 WHERE id = ?", [voiceId, char.id]);
+    await dbRun("UPDATE characters SET voice_id = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, char.id]);
     send(res, 200, { voice_id: voiceId });
     return;
   }
@@ -1873,7 +1873,7 @@ async function handleRequest(req, res) {
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
     if (char.voice_id) deleteVoice(char.voice_id).catch(() => {});
-    await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0 WHERE id = ?", [char.id]);
+    await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0, voice_preview_url = NULL WHERE id = ?", [char.id]);
     send(res, 200, { ok: true });
     return;
   }
@@ -1882,11 +1882,16 @@ async function handleRequest(req, res) {
   if (method === "POST" && pathname === "/character/voice/preview") {
     const char = await getActiveCharacter(userId);
     if (!char?.voice_id) { send(res, 400, { error: "no voice" }); return; }
+    if (char.voice_preview_url) {
+      send(res, 200, { audio_url: char.voice_preview_url });
+      return;
+    }
     const body = await readBody(req);
     const text = String(body.text || "你好，我是你的专属伴侣，很高兴认识你。").slice(0, 100);
     const lang = body.lang === "ja" ? "ja" : "zh";
     try {
       const audioUrl = await synthesizeSpeech(text, char.voice_id, lang);
+      await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
       send(res, 200, { audio_url: audioUrl });
     } catch (err) {
       send(res, 500, { error: err.message });
@@ -2278,11 +2283,19 @@ async function handleRequest(req, res) {
     if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
       (async () => {
         try {
-          const ttsText = cleanText.slice(0, 300);
+          // 去掉括号内的动作/情绪描述
+          const stripped = cleanText
+            .replace(/[（(][^）)]{0,80}[）)]/g, "")
+            .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+            .replace(/\*[^*]{0,80}\*/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim()
+            .slice(0, 300);
           const lang = ttsSettings.ttsLang || "zh";
-          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsText.length}`);
-          const audioUrl = await synthesizeSpeech(ttsText, ttsChar.voice_id, lang);
+          console.log(`[tts] 开始合成 lang=${lang} chars=${stripped.length}`);
+          const audioUrl = await synthesizeSpeech(stripped, ttsChar.voice_id, lang);
           console.log(`[tts] 合成完成 url=${audioUrl}`);
+          await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
           pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl, lang });
         } catch (err) {
           console.error("[tts] 合成失败:", err.message);
@@ -2947,7 +2960,7 @@ async function synthesizeSpeech(text, voiceId, lang = "zh") {
     },
     body: JSON.stringify({
       model: "cosyvoice-v3.5-plus",
-      input: { text, voice: voiceId, format: "wav", sample_rate: 24000 }
+      input: { text, voice: voiceId, format: "wav", sample_rate: 24000, language_hints: [lang] }
     })
   });
   if (!res.ok) {
