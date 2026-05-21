@@ -3092,7 +3092,7 @@ async function cloneVoice(audioUrl, charId) {
       model: "qwen-voice-enrollment",
       input: {
         action: "create",
-        target_model: "qwen3-tts-instruct-flash",
+        target_model: "qwen3-tts-flash",
         preferred_name: `char${charId}`,
         audio: { data: audioUrl }
       }
