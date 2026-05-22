@@ -2123,16 +2123,21 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   position: absolute;
   inset: 0;
   z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .rm-video-wrap video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   display: block;
 }
 .rm-overlay.rm-video-mode {
   padding: 0;
   cursor: pointer;
+  height: 100dvh;
+  height: 100svh;
 }
 .rm-overlay.rm-video-mode .rm-header {
   position: absolute;
