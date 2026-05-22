@@ -1526,6 +1526,14 @@ function showIncomingCall(data) {
     ring.onended = null;
     if (callAudio) { callAudio.pause(); callAudio = null; }
     overlay.remove();
+    // 通话结束后追加气泡（若当前会话匹配）
+    if (data.session_id === currentSessionId && data.script && data.msg_id) {
+      const existing = document.querySelector(`.bubble-wrap[data-msg-id="${data.msg_id}"]`);
+      if (!existing) {
+        appendBubble("assistant", `📞 ${data.script}`, "", null, data.msg_id, new Date().toISOString(), data.audio_url || null);
+        scrollToBottom();
+      }
+    }
   }
 
   declineBtn.addEventListener("click", close);

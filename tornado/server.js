@@ -1264,10 +1264,11 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
     "INSERT INTO call_logs (user_id, session_id, char_name, script, audio_url, answered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
     [userId, sessionId, char.name, script, audioUrl || null, nowIso()]
   );
-  await appendMessage(sessionId, "assistant", `📞 ${script}`, char.name, userId);
+  const msgId = await appendMessage(sessionId, "assistant", `📞 ${script}`, char.name, userId);
   pushToUser(userId, {
     incoming_call: true,
     call_log_id: callLogResult.insertId,
+    msg_id: msgId,
     session_id: sessionId,
     char_name: char.name,
     script,
@@ -3104,11 +3105,12 @@ setInterval(async () => {
       const callLogId = callLogResult.insertId;
 
       // 写入对话记录（标识为来电）
-      await appendMessage(session.id, "assistant", `📞 ${script}`, char.name, userId);
+      const callMsgId = await appendMessage(session.id, "assistant", `📞 ${script}`, char.name, userId);
 
       pushToUser(userId, {
         incoming_call: true,
         call_log_id: callLogId,
+        msg_id: callMsgId,
         session_id: session.id,
         char_name: char.name,
         script,
