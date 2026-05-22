@@ -2694,6 +2694,8 @@ setInterval(async () => {
       ? session.proactive_idle_minutes * 60 * 1000
       : PROACTIVE_IDLE_MS;
     if (idleMs < sessionIdleMs) continue;
+    // 用户没有在上次主动消息之后回复过，不再重复发
+    if (session.last_proactive_at && session.last_user_at <= session.last_proactive_at) continue;
     // 勿扰时段检查
     if (session.dnd_start && session.dnd_end) {
       const inDnd = session.dnd_start <= session.dnd_end
@@ -2705,8 +2707,8 @@ setInterval(async () => {
     const clients = sessionClients.get(session.id);
     if (!clients || clients.size === 0) continue;
     console.log(`主动发消息 [session ${session.id}]，已空闲 ${Math.round(idleMs / 60000)} 分钟`);
-    // 更新 last_user_at 防止重复触发
-    await dbRun("UPDATE sessions SET last_user_at = ? WHERE id = ?", [nowIso(), session.id]);
+    // 记录本次主动发消息时间，防止用户未回复时重复触发
+    await dbRun("UPDATE sessions SET last_proactive_at = ? WHERE id = ?", [nowIso(), session.id]);
     const sessionUserId = session.user_id ?? null;
     const text = await generateProactiveMessage(session.id, sessionUserId).catch(() => null);
     if (!text) continue;
