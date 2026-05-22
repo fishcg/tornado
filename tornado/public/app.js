@@ -2748,11 +2748,6 @@ document.getElementById("archived-close").addEventListener("click", () => {
 });
 
 // ── 聊天区更多按钮 ────────────────────────────────────────────────────────────
-document.getElementById("btn-events").addEventListener("click", () => {
-  if (!currentSessionId) return;
-  window.open(`/sessions/${currentSessionId}/events`, "_blank");
-});
-
 // ── 全屏 ──────────────────────────────────────────────────────────────────────
 // ── 沉浸模式 ──────────────────────────────────────────────────────────────────
 let immersiveMode = false;
