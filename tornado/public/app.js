@@ -2947,9 +2947,8 @@ document.getElementById("sc-search").addEventListener("click", focusSearch);
 document.getElementById("sc-export").addEventListener("click", exportSession);
 document.getElementById("sc-gallery").addEventListener("click", openGallery);
 document.getElementById("sc-archive").addEventListener("click", openArchivedSessions);
-document.getElementById("sc-call-logs").addEventListener("click", openCallLogs);
-document.getElementById("sc-call-logs-settings")?.addEventListener("click", () => {
-  document.getElementById("settings-modal").classList.add("hidden");
+document.getElementById("sc-call-logs").addEventListener("click", () => {
+  closeSidebar();
   openCallLogs();
 });
 document.getElementById("sc-logout").addEventListener("click", async () => {
