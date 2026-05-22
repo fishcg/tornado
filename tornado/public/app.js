@@ -1416,15 +1416,25 @@ function showIncomingCall(data) {
   signal.className = "call-signal";
   for (let i = 0; i < 4; i++) signal.appendChild(document.createElement("span"));
 
+  const battKey = `call_batt_${currentSessionId}`;
+  const lastCallTs = parseInt(localStorage.getItem(battKey) || "0", 10);
+  const minutesElapsed = lastCallTs ? Math.floor((Date.now() - lastCallTs) / 60000) : 0;
+  // 每分钟随机下降 1~2%，最低 20%
+  const seed = (currentSessionId || 0) % 7;
+  const drain = minutesElapsed * (1 + (seed % 2));
+  const battPctVal = Math.max(20, 96 - drain);
+  localStorage.setItem(battKey, String(Date.now()));
+
   const battery = document.createElement("div");
   battery.className = "call-battery";
   const battIcon = document.createElement("div");
   battIcon.className = "call-battery-icon";
   const battFill = document.createElement("div");
   battFill.className = "call-battery-fill";
+  battFill.style.width = `${battPctVal}%`;
   battIcon.appendChild(battFill);
   const battPct = document.createElement("span");
-  battPct.textContent = " 96%";
+  battPct.textContent = `${battPctVal}%`;
   battery.appendChild(battIcon);
   battery.appendChild(battPct);
 
