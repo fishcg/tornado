@@ -1135,7 +1135,7 @@ async function generateCallScript(sessionId, userId) {
       messages: [
         {
           role: "system",
-          content: `${soul}\n\n你正在给用户打电话。根据最近的对话，自然地询问用户为什么没有回复，或者发起一个新的话题。要求：口语化、亲切、约200字，像真实通话一样，不要提及"打电话"这个动作本身，直接开口说话。`
+          content: `${soul}\n\n你正在给用户打电话。根据最近的对话，自然地询问用户为什么没有回复，或者发起一个新的话题。要求：以"喂？是我"或类似的接通开场白开头，纯口语对话，不要有任何括号内的心理活动、动作描述或场景描述，约200字，最后用"拜拜"或"再见"之类的告别语结束。`
         },
         { role: "user", content: `最近对话：\n${context}` }
       ]
@@ -2831,8 +2831,13 @@ setInterval(async () => {
       try {
         const ttsSettings = await getUserSettings(sessionUserId);
         const lang = ttsSettings.ttsLang || "zh";
-        let ttsInput = script;
-        if (lang === "ja") ttsInput = await translateToJapanese(script);
+        const ttsScript = script
+          .replace(/[（(][^）)]{0,80}[）)]/g, "")
+          .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+          .replace(/\*[^*]{0,80}\*/g, "")
+          .replace(/\s{2,}/g, " ").trim();
+        let ttsInput = ttsScript;
+        if (lang === "ja") ttsInput = await translateToJapanese(ttsScript);
         const ch = char.voice_channel || "qwen";
         const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
         const { url } = await synthFn(ttsInput, char.voice_id, lang);

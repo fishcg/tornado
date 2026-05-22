@@ -1357,7 +1357,14 @@ function showIncomingCall(data) {
 
   const avatar = document.createElement("div");
   avatar.className = "call-avatar";
-  avatar.textContent = (data.char_name || "?")[0];
+  const avatarSrc = getAvatar("assistant", currentMood);
+  if (avatarSrc) {
+    const img = document.createElement("img");
+    img.src = avatarSrc;
+    avatar.appendChild(img);
+  } else {
+    avatar.textContent = (data.char_name || "?")[0];
+  }
 
   const charName = document.createElement("div");
   charName.className = "call-char-name";
@@ -1374,18 +1381,30 @@ function showIncomingCall(data) {
   const actions = document.createElement("div");
   actions.className = "call-actions";
 
+  const declineWrap = document.createElement("div");
+  declineWrap.className = "call-btn-wrap";
   const declineBtn = document.createElement("button");
   declineBtn.className = "call-btn call-btn-decline";
-  declineBtn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 3.53 4.4z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>`;
-  declineBtn.title = "挂断";
+  declineBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 3.53 4.4z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>`;
+  const declineLabel = document.createElement("span");
+  declineLabel.className = "call-btn-label";
+  declineLabel.textContent = "挂断";
+  declineWrap.appendChild(declineBtn);
+  declineWrap.appendChild(declineLabel);
 
+  const acceptWrap = document.createElement("div");
+  acceptWrap.className = "call-btn-wrap";
   const acceptBtn = document.createElement("button");
   acceptBtn.className = "call-btn call-btn-accept";
-  acceptBtn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.13 19.13 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 6.61 6.61l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
-  acceptBtn.title = "接听";
+  acceptBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.13 19.13 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 6.61 6.61l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
+  const acceptLabel = document.createElement("span");
+  acceptLabel.className = "call-btn-label";
+  acceptLabel.textContent = "接听";
+  acceptWrap.appendChild(acceptBtn);
+  acceptWrap.appendChild(acceptLabel);
 
-  actions.appendChild(declineBtn);
-  actions.appendChild(acceptBtn);
+  actions.appendChild(declineWrap);
+  actions.appendChild(acceptWrap);
   phone.appendChild(avatar);
   phone.appendChild(charName);
   phone.appendChild(status);
@@ -1395,7 +1414,7 @@ function showIncomingCall(data) {
   document.body.appendChild(overlay);
 
   // 铃声，最多响 10 次
-  const ring = new Audio("/audio/ring.mp3");
+  const ring = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring.mp3");
   let ringCount = 0;
   ring.play().catch(() => {});
   ring.onended = () => {
@@ -1422,9 +1441,13 @@ function showIncomingCall(data) {
     actions.style.display = "none";
     if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/answer`).catch(() => {});
 
-    // 显示字幕（日语模式下显示中文原文）
-    if (data.tts_lang === "ja" && data.script) {
-      subtitle.textContent = data.script;
+    // 显示字幕（日语模式或重播时显示中文原文，去除括号内容）
+    const cleanScript = (data.script || "")
+      .replace(/[（(][^）)]{0,80}[）)]/g, "")
+      .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+      .replace(/\s{2,}/g, " ").trim();
+    if ((data.tts_lang === "ja" || data.show_subtitle) && cleanScript) {
+      subtitle.textContent = cleanScript;
       subtitle.style.display = "block";
     }
 
@@ -1434,12 +1457,11 @@ function showIncomingCall(data) {
       audio.onended = () => {
         status.textContent = "通话结束";
         subtitle.style.display = "none";
-        setTimeout(close, 1500);
+        setTimeout(close, 3000);
       };
     } else {
-      // 无音频时直接显示文字
-      if (data.script) {
-        subtitle.textContent = data.script;
+      if (cleanScript) {
+        subtitle.textContent = cleanScript;
         subtitle.style.display = "block";
       }
       setTimeout(close, 6000);
@@ -2900,18 +2922,19 @@ async function openCallLogs() {
     item.appendChild(top);
     item.appendChild(script);
 
-    if (log.audio_url) {
-      const playBtn = document.createElement("button");
-      playBtn.className = "archived-restore-btn";
-      playBtn.textContent = "▶ 播放";
-      playBtn.addEventListener("click", () => {
-        const audio = new Audio(log.audio_url);
-        audio.play().catch(() => {});
-        playBtn.textContent = "播放中…";
-        audio.onended = () => { playBtn.textContent = "▶ 播放"; };
+    const replayBtn = document.createElement("button");
+    replayBtn.className = "archived-restore-btn";
+    replayBtn.textContent = "重播来电";
+    replayBtn.addEventListener("click", () => {
+      document.getElementById("call-logs-modal").classList.add("hidden");
+      showIncomingCall({
+        char_name: log.char_name,
+        script: log.script,
+        audio_url: log.audio_url || null,
+        show_subtitle: true
       });
-      item.appendChild(playBtn);
-    }
+    });
+    item.appendChild(replayBtn);
 
     list.appendChild(item);
   }

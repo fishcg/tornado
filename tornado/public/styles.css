@@ -2338,7 +2338,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .call-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.7);
   z-index: 10001;
   display: flex;
   align-items: center;
@@ -2346,65 +2345,82 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   animation: rm-fade-in 0.3s ease both;
 }
 .call-phone {
-  background: #1a1a2e;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 32px;
-  padding: 40px 32px 36px;
-  width: min(320px, 88vw);
+  background: linear-gradient(180deg, #1c3040 0%, #0d1f2d 55%, #0a1520 100%);
+  border-radius: 0;
+  padding: 0;
+  width: min(360px, 100vw);
+  height: min(640px, 100vh);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+  box-shadow: 0 0 80px rgba(0,0,0,0.9);
+  position: relative;
+  overflow: hidden;
 }
 .call-avatar {
-  width: 80px;
-  height: 80px;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent, #7c6fcd), #4ea8de);
+  background: rgba(255,255,255,0.15);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 32px;
+  font-size: 36px;
   font-weight: 700;
   color: #fff;
-  margin-bottom: 4px;
-  animation: call-pulse 1.5s ease-in-out infinite;
+  margin-top: 120px;
+  overflow: hidden;
+  flex-shrink: 0;
+  animation: call-pulse 1.8s ease-in-out infinite;
+}
+.call-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
 }
 @keyframes call-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(124,111,205,0.5); }
-  50% { box-shadow: 0 0 0 16px rgba(124,111,205,0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.2); }
+  50% { box-shadow: 0 0 0 18px rgba(255,255,255,0); }
 }
 .call-char-name {
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 500;
   color: #fff;
+  margin-top: 20px;
+  letter-spacing: 0.02em;
 }
 .call-status {
   font-size: 13px;
-  color: rgba(255,255,255,0.45);
+  color: rgba(255,255,255,0.5);
+  margin-top: 8px;
   letter-spacing: 0.05em;
 }
 .call-subtitle {
   font-size: 13px;
-  color: rgba(255,255,255,0.6);
-  line-height: 1.6;
+  color: rgba(255,255,255,0.65);
+  line-height: 1.7;
   text-align: center;
-  max-height: 120px;
+  max-height: 140px;
   overflow-y: auto;
-  padding: 8px 4px;
-  border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 12px 28px;
+  margin-top: 16px;
   width: 100%;
-  margin-top: 4px;
+  box-sizing: border-box;
 }
 .call-actions {
   display: flex;
-  gap: 40px;
-  margin-top: 20px;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0 56px;
+  box-sizing: border-box;
+  position: absolute;
+  bottom: 60px;
 }
 .call-btn {
-  width: 60px;
-  height: 60px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   border: none;
   cursor: pointer;
@@ -2417,3 +2433,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .call-btn:active { transform: scale(0.95); opacity: 0.8; }
 .call-btn-decline { background: #e05252; color: #fff; }
 .call-btn-accept { background: #3dba6e; color: #fff; }
+.call-btn-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.call-btn-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  letter-spacing: 0.03em;
+}
