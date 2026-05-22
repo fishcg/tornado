@@ -2783,9 +2783,8 @@ setInterval(async () => {
   }
 }, PROACTIVE_CHECK_MS);
 
-// ── 角色来电检测（每 1 分钟）────────────────────────────────────────────────
+// ── 角色来电检测（每 1 分钟，按角色维度）────────────────────────────────────
 setInterval(async () => {
-  const sessions = await listAllActiveSessions();
   const now = Date.now();
   const nowHHMM = new Date().toTimeString().slice(0, 5);
   const callMinMessages = Number(await getGlobalSetting("call_min_messages", "20"));
@@ -2793,75 +2792,105 @@ setInterval(async () => {
   const callIdleMs = callIdleMinutes * 60 * 1000;
   const today = new Date().toISOString().slice(0, 10);
 
-  for (const session of sessions) {
-    if (!session.last_user_at) continue;
-    const idleMs = now - new Date(session.last_user_at).getTime();
-    if (idleMs < callIdleMs) continue;
-    // 来电后用户未回复则不再重复触发
-    if (session.last_call_at && session.last_user_at <= session.last_call_at) continue;
-    // 勿扰时段
-    if (session.dnd_start && session.dnd_end) {
-      const inDnd = session.dnd_start <= session.dnd_end
-        ? nowHHMM >= session.dnd_start && nowHHMM < session.dnd_end
-        : nowHHMM >= session.dnd_start || nowHHMM < session.dnd_end;
+  // 只处理有活跃 WS 连接的用户
+  const activeUserIds = [...userClients.entries()]
+    .filter(([, set]) => set.size > 0)
+    .map(([uid]) => uid);
+  if (activeUserIds.length === 0) return;
+
+  for (const userId of activeUserIds) {
+    // 获取该用户所有角色
+    const chars = await dbAll(
+      "SELECT * FROM characters WHERE user_id = ? ORDER BY id ASC",
+      [userId]
+    );
+
+    // 勿扰时段（取用户任意一个 session 的 dnd 配置，通常全局一致）
+    const anySession = await dbGet(
+      "SELECT dnd_start, dnd_end FROM sessions WHERE user_id = ? AND archived = 0 LIMIT 1",
+      [userId]
+    );
+    if (anySession?.dnd_start && anySession?.dnd_end) {
+      const { dnd_start, dnd_end } = anySession;
+      const inDnd = dnd_start <= dnd_end
+        ? nowHHMM >= dnd_start && nowHHMM < dnd_end
+        : nowHHMM >= dnd_start || nowHHMM < dnd_end;
       if (inDnd) continue;
     }
-    // 只推给有活跃连接的 session
-    const clients = sessionClients.get(session.id);
-    if (!clients || clients.size === 0) continue;
-    // 今日用户消息数
-    const sessionUserId = session.user_id ?? null;
-    const todayMsgs = await dbGet(
-      "SELECT COUNT(*) as n FROM messages WHERE session_id = ? AND role = 'user' AND created_at LIKE ?",
-      [session.id, `${today}%`]
-    );
-    if ((todayMsgs?.n || 0) < callMinMessages) continue;
 
-    console.log(`[来电] session=${session.id} 触发，今日消息=${todayMsgs.n}，空闲=${Math.round(idleMs / 60000)}分钟`);
-    await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
+    for (const char of chars) {
+      // 找该角色最近的 session（有用户消息的）
+      const session = await dbGet(`
+        SELECT s.*, MAX(m.created_at) as last_user_at_char
+        FROM sessions s
+        JOIN messages m ON m.session_id = s.id AND m.role = 'user'
+        WHERE s.user_id = ? AND s.archived = 0
+          AND EXISTS (SELECT 1 FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name = ?)
+        ORDER BY s.updated_at DESC LIMIT 1
+      `, [userId, char.name]);
+      if (!session?.last_user_at_char) continue;
 
-    const script = await generateCallScript(session.id, sessionUserId).catch(() => null);
-    if (!script) continue;
+      const idleMs = now - new Date(session.last_user_at_char).getTime();
+      if (idleMs < callIdleMs) continue;
 
-    const char = await getActiveCharacter(sessionUserId);
-    const charName = char?.name || await getCharacterName(sessionUserId);
-    let audioUrl = null;
+      // 来电后用户未回复则不再重复触发（用 session.last_call_at 按 session 去重）
+      if (session.last_call_at && session.last_user_at_char <= session.last_call_at) continue;
 
-    if (char?.voice_id && char?.tts_enabled) {
-      try {
-        const ttsSettings = await getUserSettings(sessionUserId);
-        const lang = ttsSettings.ttsLang || "zh";
-        const ttsScript = script
-          .replace(/[（(][^）)]{0,80}[）)]/g, "")
-          .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
-          .replace(/\*[^*]{0,80}\*/g, "")
-          .replace(/\s{2,}/g, " ").trim();
-        let ttsInput = ttsScript;
-        if (lang === "ja") ttsInput = await translateToJapanese(ttsScript);
-        const ch = char.voice_channel || "qwen";
-        const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
-        const { url } = await synthFn(ttsInput, char.voice_id, lang);
-        audioUrl = url;
-      } catch (err) {
-        console.error("[来电] TTS 合成失败:", err.message);
+      // 今日该角色对话中的用户消息数
+      const todayMsgs = await dbGet(`
+        SELECT COUNT(*) as n FROM messages m
+        JOIN sessions s ON s.id = m.session_id
+        WHERE s.user_id = ? AND m.role = 'user' AND m.created_at LIKE ?
+          AND EXISTS (SELECT 1 FROM messages WHERE session_id = m.session_id AND role = 'assistant' AND character_name = ?)
+      `, [userId, `${today}%`, char.name]);
+      if ((todayMsgs?.n || 0) < callMinMessages) continue;
+
+      console.log(`[来电] user=${userId} char=${char.name} session=${session.id} 今日消息=${todayMsgs.n} 空闲=${Math.round(idleMs / 60000)}分钟`);
+      await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
+
+      const script = await generateCallScript(session.id, userId).catch(() => null);
+      if (!script) continue;
+
+      let audioUrl = null;
+      const ttsSettings = await getUserSettings(userId);
+      const lang = ttsSettings.ttsLang || "zh";
+
+      if (char.voice_id && char.tts_enabled) {
+        try {
+          const ttsScript = script
+            .replace(/[（(][^）)]{0,80}[）)]/g, "")
+            .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+            .replace(/\*[^*]{0,80}\*/g, "")
+            .replace(/\s{2,}/g, " ").trim();
+          let ttsInput = ttsScript;
+          if (lang === "ja") ttsInput = await translateToJapanese(ttsScript);
+          const ch = char.voice_channel || "qwen";
+          const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
+          const { url } = await synthFn(ttsInput, char.voice_id, lang);
+          audioUrl = url;
+        } catch (err) {
+          console.error("[来电] TTS 合成失败:", err.message);
+        }
       }
+
+      const callLogResult = await dbRun(
+        "INSERT INTO call_logs (user_id, session_id, char_name, script, audio_url, answered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+        [userId, session.id, char.name, script, audioUrl || null, nowIso()]
+      );
+      const callLogId = callLogResult.insertId;
+
+      // 写入对话记录（标识为来电）
+      await appendMessage(session.id, "assistant", `📞 ${script}`, char.name, userId);
+
+      pushToUser(userId, {
+        incoming_call: true,
+        call_log_id: callLogId,
+        char_name: char.name,
+        script,
+        audio_url: audioUrl,
+        tts_lang: lang
+      });
     }
-
-    const ttsLang = (await getUserSettings(sessionUserId)).ttsLang || "zh";
-    const callLogResult = await dbRun(
-      "INSERT INTO call_logs (user_id, session_id, char_name, script, audio_url, answered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
-      [sessionUserId, session.id, charName, script, audioUrl || null, nowIso()]
-    );
-    const callLogId = callLogResult.insertId;
-
-    pushToSession(session.id, {
-      incoming_call: true,
-      call_log_id: callLogId,
-      char_name: charName,
-      script,
-      audio_url: audioUrl,
-      tts_lang: ttsLang
-    });
   }
 }, 60 * 1000);
 

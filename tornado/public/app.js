@@ -1387,7 +1387,7 @@ function showIncomingCall(data) {
   battFill.className = "call-battery-fill";
   battIcon.appendChild(battFill);
   const battPct = document.createElement("span");
-  battPct.textContent = "96%";
+  battPct.textContent = " 96%";
   battery.appendChild(battIcon);
   battery.appendChild(battPct);
 
@@ -1489,6 +1489,15 @@ function showIncomingCall(data) {
     actions.classList.add("in-call");
     if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/answer`).catch(() => {});
 
+    // 通话计时
+    let callSeconds = 0;
+    const callTimer = setInterval(() => {
+      callSeconds++;
+      const m = String(Math.floor(callSeconds / 60)).padStart(2, "0");
+      const s = String(callSeconds % 60).padStart(2, "0");
+      status.textContent = `${m}:${s}`;
+    }, 1000);
+
     // 显示字幕（日语模式或重播时显示中文原文，去除括号内容）
     const cleanScript = (data.script || "")
       .replace(/[（(][^）)]{0,80}[）)]/g, "")
@@ -1499,10 +1508,17 @@ function showIncomingCall(data) {
       subtitle.style.display = "block";
     }
 
+    const origClose = close;
+    // 覆盖 close，确保计时器也被清除
+    close = () => { clearInterval(callTimer); origClose(); };
+    declineBtn.removeEventListener("click", origClose);
+    declineBtn.addEventListener("click", close);
+
     if (data.audio_url) {
       callAudio = new Audio(data.audio_url);
       callAudio.play().catch(() => {});
       callAudio.onended = () => {
+        clearInterval(callTimer);
         status.textContent = "通话结束";
         subtitle.style.display = "none";
         setTimeout(close, 3000);
