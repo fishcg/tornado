@@ -444,6 +444,32 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .bubble.thinking { color: var(--text-dim); font-style: italic; }
 
+.bubble-call {
+  background: linear-gradient(135deg, #1a2a3a 0%, #0f1e2c 100%) !important;
+  border: 1px solid rgba(100,160,220,0.25) !important;
+  padding: 0 !important;
+  overflow: hidden;
+  min-width: 200px;
+}
+.call-msg-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px 6px;
+  border-bottom: 1px solid rgba(100,160,220,0.15);
+  font-size: 0.8em;
+  color: rgba(150,200,255,0.7);
+  letter-spacing: 0.04em;
+}
+.call-msg-icon { font-size: 1em; }
+.call-msg-label { font-weight: 500; text-transform: uppercase; }
+.call-msg-body {
+  padding: 10px 14px;
+  color: rgba(220,235,255,0.9);
+}
+.bubble-call-voicemail .call-msg-header { color: rgba(180,150,255,0.7); border-color: rgba(180,150,255,0.15); }
+.bubble-call-voicemail { background: linear-gradient(135deg, #1e1a2e 0%, #130f20 100%) !important; border-color: rgba(180,150,255,0.2) !important; }
+
 /* ── 重新生成按钮 ── */
 .btn-regen {
   opacity: 0;
@@ -2349,7 +2375,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 .call-phone {
   background: linear-gradient(180deg, #1c3040 0%, #0d1f2d 55%, #0a1520 100%);
-  border-radius: 0;
+  border-radius: 12px;
   padding: 0;
   width: min(360px, 100vw);
   height: min(640px, 100vh);

@@ -777,6 +777,9 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
   const empty = messages.querySelector(".empty-hint");
   if (empty) empty.remove();
 
+  const isCallMsg = role === "assistant" && (content.startsWith("📞 ") || content.startsWith("📱 "));
+  const callType = content.startsWith("📞 ") ? "call" : content.startsWith("📱 ") ? "voicemail" : null;
+
   const wrap = document.createElement("div");
   wrap.className = `bubble-wrap ${role}`;
   if (msgId) wrap.dataset.msgId = msgId;
@@ -788,8 +791,16 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
   avatar.addEventListener("click", () => openAvatarModal(role));
 
   const bubble = document.createElement("div");
-  bubble.className = `bubble ${extraClass}`;
-  bubble.innerHTML = renderBubbleText(content);
+  if (isCallMsg) {
+    bubble.className = `bubble bubble-call bubble-call-${callType} ${extraClass}`;
+    const icon = callType === "call" ? "📞" : "📱";
+    const label = callType === "call" ? "来电" : "语音留言";
+    const bodyText = content.slice(3); // strip emoji + space
+    bubble.innerHTML = `<div class="call-msg-header"><span class="call-msg-icon">${icon}</span><span class="call-msg-label">${label}</span></div><div class="call-msg-body">${renderBubbleText(bodyText)}</div>`;
+  } else {
+    bubble.className = `bubble ${extraClass}`;
+    bubble.innerHTML = renderBubbleText(content);
+  }
 
   if (imageUrl) {
     appendImageToBubble(bubble, imageUrl);
@@ -932,6 +943,11 @@ async function doStream(sessionId, text, replyBubble) {
         scrollToBottom();
       }
       if (payload.done) {
+        if (payload.skip_reply) {
+          // 情绪来电：跳过回复，移除思考气泡
+          replyBubble.closest(".bubble-wrap")?.remove();
+          return;
+        }
         if (payload.msg_id) {
           const wrap = replyBubble.closest(".bubble-wrap");
           if (wrap && !wrap.dataset.msgId) {

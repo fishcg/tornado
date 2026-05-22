@@ -2484,6 +2484,30 @@ async function handleRequest(req, res) {
     const { mood, topic_summary: topicSummary } = await getSession(sessionId, userId);
     const char = await getActiveCharacter(userId);
     const affection = char?.affection ?? null;
+
+    // 情绪低落检测：好感度 > 60 时，先判断是否触发来电，若触发则跳过 LLM 回复
+    if ((affection ?? 0) > 60) {
+      const emotionCooldownMs = Number(await getGlobalSetting("call_emotion_cooldown_minutes", "120")) * 60000;
+      const sessionForEmotion = await getSession(sessionId);
+      const lastEmotionCallAt = sessionForEmotion?.last_emotion_call_at;
+      const cooldownOk = !lastEmotionCallAt || Date.now() - new Date(lastEmotionCallAt).getTime() >= emotionCooldownMs;
+      if (cooldownOk) {
+        const isLow = await detectLowMood(userText);
+        console.log(`[情绪来电] user=${userId} affection=${affection} 情绪检测=${isLow ? "低落" : "正常"}`);
+        if (isLow) {
+          await dbRun("UPDATE sessions SET last_emotion_call_at = ? WHERE id = ?", [nowIso(), sessionId]);
+          // 跳过 LLM 回复，直接触发来电
+          res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+          res.write(`data: ${JSON.stringify({ done: true, msg_id: null, user_msg_id: Number(userMsgId), skip_reply: true })}\n\n`);
+          res.end();
+          triggerSpecialCall(sessionId, userId, "emotion", null, { skipSessionCooldown: true }).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
+          return;
+        }
+      } else {
+        console.log(`[情绪来电] user=${userId} 冷却中（上次=${lastEmotionCallAt}），跳过`);
+      }
+    }
+
     const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection);
     const messages = [
       { role: "system", content: systemPrompt },
@@ -2601,28 +2625,6 @@ async function handleRequest(req, res) {
     }
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
-    // 情绪低落触发来电：好感度 > 60 时，LLM 检测用户情绪
-    if ((char?.affection ?? 0) > 60) {
-      (async () => {
-        try {
-          const emotionCooldownMs = Number(await getGlobalSetting("call_emotion_cooldown_minutes", "120")) * 60000;
-          const session = await getSession(sessionId);
-          const lastEmotionCallAt = session?.last_emotion_call_at;
-          if (lastEmotionCallAt && Date.now() - new Date(lastEmotionCallAt).getTime() < emotionCooldownMs) {
-            console.log(`[情绪来电] user=${userId} 冷却中（上次=${lastEmotionCallAt}），跳过`);
-            return;
-          }
-          const isLow = await detectLowMood(userText);
-          console.log(`[情绪来电] user=${userId} affection=${char?.affection} 情绪检测=${isLow ? "低落" : "正常"}`);
-          if (!isLow) return;
-          await dbRun("UPDATE sessions SET last_emotion_call_at = ? WHERE id = ?", [nowIso(), sessionId]);
-          triggerSpecialCall(sessionId, userId, "emotion", null, { skipSessionCooldown: true }).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
-        } catch (e) {
-          console.error("[情绪来电] 检测失败:", e.message);
-        }
-      })();
-    }
-
     // 异步 TTS 合成，合成完通过 WS 推送播放
     console.log(`[tts] 检查条件 ttsEnabled=${ttsSettings.ttsEnabled} voice_id=${ttsChar?.voice_id || "无"}`);
     if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
