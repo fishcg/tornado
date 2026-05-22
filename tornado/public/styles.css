@@ -2343,12 +2343,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   align-items: center;
   justify-content: center;
   animation: rm-fade-in 0.3s ease both;
-  backdrop-filter: blur(12px) brightness(0.75);
-  -webkit-backdrop-filter: blur(12px) brightness(0.75);
-  background: rgba(0,0,0,0.15);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.1);
 }
 .call-phone {
-  background: linear-gradient(180deg, #1c3040 0%, #0d1f2d 55%, #0a1520 100%);
+  background: rgba(15, 25, 40, 0.55);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
   border-radius: 0;
   padding: 0;
   width: min(360px, 100vw);
@@ -2356,7 +2358,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   display: flex;
   flex-direction: column;
   align-items: center;
-  box-shadow: 0 0 80px rgba(0,0,0,0.9);
+  box-shadow: 0 0 80px rgba(0,0,0,0.6);
   position: relative;
   overflow: hidden;
 }
