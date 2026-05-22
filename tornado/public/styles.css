@@ -445,7 +445,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .bubble.thinking { color: var(--text-dim); font-style: italic; }
 
 .bubble-call {
-  background: #f46ea4 !important;
+  background: rgba(244, 110, 164, 0.92) !important;
   border: 1px solid rgba(255,150,180,0.18) !important;
   padding: 0 !important;
   overflow: hidden;
@@ -2383,8 +2383,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   align-items: center;
   justify-content: center;
   animation: rm-fade-in 0.3s ease both;
-  backdrop-filter: blur(6px) brightness(0.88);
-  -webkit-backdrop-filter: blur(6px) brightness(0.88);
+  backdrop-filter: blur(6px) brightness(0.7);
+  -webkit-backdrop-filter: blur(6px) brightness(0.7);
   background: rgba(0,0,0,0.08);
 }
 .call-phone {
