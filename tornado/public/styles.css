@@ -1502,6 +1502,48 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #session-list li:hover .del-btn { display: block; }
 #session-list li .del-btn:hover { color: #e05; }
 
+/* ── 角色分组 ── */
+.char-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 5px;
+  cursor: pointer;
+  user-select: none;
+  border-left: 2px solid transparent;
+}
+.char-group-header:hover { background: rgba(255,255,255,.03); }
+.char-group-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.char-group-count {
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: .6;
+}
+.char-group-arrow {
+  color: var(--text-dim);
+  opacity: .5;
+  transition: transform .2s;
+  flex-shrink: 0;
+}
+.char-group-header.collapsed .char-group-arrow { transform: rotate(-90deg); }
+.char-group-sessions {
+  overflow: hidden;
+  max-height: 2000px;
+  transition: max-height .25s ease;
+}
+.char-group-sessions.collapsed { max-height: 0; }
+.char-group-sessions li { padding-left: 20px; }
+
 /* ── 归档会话列表 ── */
 .archived-list {
   padding: 8px 0;

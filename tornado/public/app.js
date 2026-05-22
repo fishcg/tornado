@@ -538,64 +538,143 @@ function showToast(msg, isHtml = false, duration = 3000) {
 }
 
 async function loadSessions() {
-  const sessions = await api("GET", "/sessions");
-  renderSessionList(sessions);
+  const [sessions, charInfo] = await Promise.all([
+    api("GET", "/sessions"),
+    api("GET", "/character").catch(() => ({}))
+  ]);
+  renderSessionList(sessions, charInfo?.name || "");
   if (sessions.length > 0 && !currentSessionId) {
     await selectSession(sessions[0].id);
   }
 }
 
-function renderSessionList(sessions) {
+function renderSessionList(sessions, activeCharName = "") {
   sessionList.innerHTML = "";
+
+  // 读取折叠状态
+  let expandedChars;
+  try { expandedChars = new Set(JSON.parse(localStorage.getItem("charGroupExpanded") || "[]")); }
+  catch { expandedChars = new Set(); }
+
+  // 确定当前会话所在角色
+  const currentSession = sessions.find((s) => s.id === currentSessionId);
+  const currentChar = currentSession?.character_name || activeCharName || "";
+
+  // 按角色分组
+  const groups = new Map(); // charName -> sessions[]
   for (const s of sessions) {
-    const li = document.createElement("li");
-    li.dataset.id = s.id;
-    if (s.id === currentSessionId) li.classList.add("active");
+    const key = s.character_name || activeCharName || "未知角色";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
 
-    const title = document.createElement("div");
-    title.className = "sl-title";
-    title.textContent = s.title || "新对话";
+  // 分组排序：当前角色排第一，其余按最新会话时间
+  const sortedGroups = [...groups.entries()].sort(([a], [b]) => {
+    if (a === currentChar) return -1;
+    if (b === currentChar) return 1;
+    return 0;
+  });
 
-    const preview = document.createElement("div");
-    preview.className = "sl-preview";
-    preview.textContent = s.last_message || "";
+  for (const [charName, charSessions] of sortedGroups) {
+    const isCurrentGroup = charName === currentChar;
+    const isExpanded = isCurrentGroup || expandedChars.has(charName);
 
-    const del = document.createElement("button");
-    del.className = "del-btn";
-    del.textContent = "×";
-    del.title = "删除";
-    del.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const save = await showConfirm("归档前，要把这段对话存入记忆库吗？");
-      if (save) await api("POST", `/sessions/${s.id}/ingest`);
-      await api("DELETE", `/sessions/${s.id}`);
-      if (currentSessionId === s.id) {
-        currentSessionId = null;
-        messages.innerHTML = "";
-      }
-      await loadSessions();
+    // 分组标题
+    const header = document.createElement("li");
+    header.className = "char-group-header" + (isExpanded ? "" : " collapsed");
+    header.dataset.char = charName;
+    header.innerHTML = `
+      <span class="char-group-name">${charName}</span>
+      <span class="char-group-count">${charSessions.length}</span>
+      <svg class="char-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+    `;
+    header.addEventListener("click", () => {
+      const collapsed = header.classList.toggle("collapsed");
+      subList.classList.toggle("collapsed", collapsed);
+      // 更新 localStorage
+      try {
+        const set = new Set(JSON.parse(localStorage.getItem("charGroupExpanded") || "[]"));
+        if (collapsed) set.delete(charName); else set.add(charName);
+        localStorage.setItem("charGroupExpanded", JSON.stringify([...set]));
+      } catch {}
     });
 
-    li.appendChild(title);
-    li.appendChild(preview);
-    li.appendChild(del);
-    li.addEventListener("click", (e) => {
-      if (e.target.closest(".del-btn")) return;
-      selectSession(s.id);
-    });
-    li.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      showContextMenu(e.clientX, e.clientY, s.id);
-    });
-    sessionList.appendChild(li);
+    // 子会话列表
+    const subList = document.createElement("ul");
+    subList.className = "char-group-sessions" + (isExpanded ? "" : " collapsed");
+
+    for (const s of charSessions) {
+      const li = document.createElement("li");
+      li.dataset.id = s.id;
+      if (s.id === currentSessionId) li.classList.add("active");
+
+      const title = document.createElement("div");
+      title.className = "sl-title";
+      title.textContent = s.title || "新对话";
+
+      const preview = document.createElement("div");
+      preview.className = "sl-preview";
+      preview.textContent = s.last_message || "";
+
+      const del = document.createElement("button");
+      del.className = "del-btn";
+      del.textContent = "×";
+      del.title = "删除";
+      del.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const save = await showConfirm("归档前，要把这段对话存入记忆库吗？");
+        if (save) await api("POST", `/sessions/${s.id}/ingest`);
+        await api("DELETE", `/sessions/${s.id}`);
+        if (currentSessionId === s.id) {
+          currentSessionId = null;
+          messages.innerHTML = "";
+        }
+        await loadSessions();
+      });
+
+      li.appendChild(title);
+      li.appendChild(preview);
+      li.appendChild(del);
+      li.addEventListener("click", (e) => {
+        if (e.target.closest(".del-btn")) return;
+        selectSession(s.id);
+      });
+      li.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY, s.id);
+      });
+      subList.appendChild(li);
+    }
+
+    sessionList.appendChild(header);
+    sessionList.appendChild(subList);
   }
 }
 
 async function selectSession(id) {
   currentSessionId = id;
   document.querySelectorAll("#session-list li").forEach((li) => {
+    if (!li.dataset.id) return;
     li.classList.toggle("active", Number(li.dataset.id) === id);
   });
+  // 确保目标会话所在分组展开
+  const targetLi = document.querySelector(`#session-list li[data-id="${id}"]`);
+  if (targetLi) {
+    const subList = targetLi.closest(".char-group-sessions");
+    if (subList && subList.classList.contains("collapsed")) {
+      subList.classList.remove("collapsed");
+      const header = subList.previousElementSibling;
+      if (header) {
+        header.classList.remove("collapsed");
+        const charName = header.dataset.char;
+        try {
+          const set = new Set(JSON.parse(localStorage.getItem("charGroupExpanded") || "[]"));
+          set.add(charName);
+          localStorage.setItem("charGroupExpanded", JSON.stringify([...set]));
+        } catch {}
+      }
+    }
+  }
   if (isMobile()) {
     closeSidebar();
     closeRightPanel();

@@ -1186,7 +1186,8 @@ async function listAllActiveSessions() {
 async function listSessions(userId) {
   return dbAll(`
     SELECT s.*,
-      (SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_message
+      (SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_message,
+      (SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) as character_name
     FROM sessions s WHERE s.archived = 0 AND s.user_id = ? ORDER BY updated_at DESC
   `, [userId]);
 }
