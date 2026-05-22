@@ -549,7 +549,7 @@ async function loadSessions() {
   renderSessionList(sessions, charInfo?.name || "");
   if (sessions.length > 0) {
     const restoredExists = currentSessionId && sessions.some((s) => s.id === currentSessionId);
-    const needsLoad = !document.querySelector("#messages .message, #messages .empty-hint");
+    const needsLoad = !document.querySelector("#messages .bubble-wrap, #messages .empty-hint");
     if (restoredExists && needsLoad) {
       await selectSession(currentSessionId);
     } else if (!restoredExists) {
@@ -966,6 +966,10 @@ async function doStream(sessionId, text, replyBubble) {
         if (payload.skip_reply) {
           // 情绪来电：保留气泡显示打字动画，等 incoming_call 到达后移除
           _pendingCallBubble = replyBubble;
+          // 兜底：30秒后若来电未到，自动移除
+          setTimeout(() => {
+            if (_pendingCallBubble) { _pendingCallBubble.closest(".bubble-wrap")?.remove(); _pendingCallBubble = null; }
+          }, 30000);
           return;
         }
         if (payload.msg_id) {
