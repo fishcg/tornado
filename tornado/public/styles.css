@@ -2357,6 +2357,94 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   position: relative;
   overflow: hidden;
 }
+/* 状态栏 */
+.call-statusbar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 0;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.call-statusbar-carrier {
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.call-statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.call-statusbar-time {
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+}
+/* 信号格：4 格 CSS */
+.call-signal {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+}
+.call-signal span {
+  width: 3px;
+  background: rgba(255,255,255,0.75);
+  border-radius: 1px;
+}
+.call-signal span:nth-child(1) { height: 3px; }
+.call-signal span:nth-child(2) { height: 5px; }
+.call-signal span:nth-child(3) { height: 8px; }
+.call-signal span:nth-child(4) { height: 11px; }
+/* WiFi 图标 */
+.call-wifi {
+  width: 14px;
+  height: 10px;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+/* 电池图标 */
+.call-battery {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: rgba(255,255,255,0.75);
+}
+.call-battery-icon {
+  width: 20px;
+  height: 10px;
+  border: 1.5px solid rgba(255,255,255,0.7);
+  border-radius: 2px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 1.5px;
+  box-sizing: border-box;
+}
+.call-battery-icon::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 5px;
+  background: rgba(255,255,255,0.7);
+  border-radius: 0 1px 1px 0;
+}
+.call-battery-fill {
+  height: 100%;
+  width: 90%;
+  background: rgba(255,255,255,0.8);
+  border-radius: 1px;
+}
 .call-avatar {
   width: 96px;
   height: 96px;
@@ -2368,7 +2456,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   font-size: 36px;
   font-weight: 700;
   color: #fff;
-  margin-top: 120px;
+  margin-top: 80px;
   overflow: hidden;
   flex-shrink: 0;
   animation: call-pulse 1.8s ease-in-out infinite;
@@ -2417,6 +2505,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   box-sizing: border-box;
   position: absolute;
   bottom: 60px;
+  transition: all 0.25s ease;
+}
+.call-actions.in-call {
+  justify-content: center;
 }
 .call-btn {
   width: 64px;

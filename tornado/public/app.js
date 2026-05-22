@@ -1355,6 +1355,48 @@ function showIncomingCall(data) {
   const phone = document.createElement("div");
   phone.className = "call-phone";
 
+  // 状态栏
+  const statusbar = document.createElement("div");
+  statusbar.className = "call-statusbar";
+
+  const carrier = document.createElement("div");
+  carrier.className = "call-statusbar-carrier";
+  carrier.textContent = "中国移动";
+
+  const sbRight = document.createElement("div");
+  sbRight.className = "call-statusbar-right";
+
+  const timeEl = document.createElement("div");
+  timeEl.className = "call-statusbar-time";
+  function updateTime() {
+    const now = new Date();
+    timeEl.textContent = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  }
+  updateTime();
+  const timeTick = setInterval(updateTime, 10000);
+
+  const signal = document.createElement("div");
+  signal.className = "call-signal";
+  for (let i = 0; i < 4; i++) signal.appendChild(document.createElement("span"));
+
+  const battery = document.createElement("div");
+  battery.className = "call-battery";
+  const battIcon = document.createElement("div");
+  battIcon.className = "call-battery-icon";
+  const battFill = document.createElement("div");
+  battFill.className = "call-battery-fill";
+  battIcon.appendChild(battFill);
+  const battPct = document.createElement("span");
+  battPct.textContent = "96%";
+  battery.appendChild(battIcon);
+  battery.appendChild(battPct);
+
+  sbRight.appendChild(timeEl);
+  sbRight.appendChild(signal);
+  sbRight.appendChild(battery);
+  statusbar.appendChild(carrier);
+  statusbar.appendChild(sbRight);
+
   const avatar = document.createElement("div");
   avatar.className = "call-avatar";
   const avatarSrc = getAvatar("assistant", currentMood);
@@ -1405,6 +1447,7 @@ function showIncomingCall(data) {
 
   actions.appendChild(declineWrap);
   actions.appendChild(acceptWrap);
+  phone.appendChild(statusbar);
   phone.appendChild(avatar);
   phone.appendChild(charName);
   phone.appendChild(status);
@@ -1429,6 +1472,7 @@ function showIncomingCall(data) {
   let callAudio = null;
 
   function close() {
+    clearInterval(timeTick);
     ring.pause();
     ring.onended = null;
     if (callAudio) { callAudio.pause(); callAudio = null; }
@@ -1442,6 +1486,7 @@ function showIncomingCall(data) {
     ring.onended = null;
     status.textContent = "通话中…";
     acceptWrap.style.display = "none";
+    actions.classList.add("in-call");
     if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/answer`).catch(() => {});
 
     // 显示字幕（日语模式或重播时显示中文原文，去除括号内容）
