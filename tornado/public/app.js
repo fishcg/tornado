@@ -1414,7 +1414,7 @@ function showIncomingCall(data) {
   document.body.appendChild(overlay);
 
   // 铃声，最多响 10 次
-  const ring = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring.mp3");
+  const ring = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
   let ringCount = 0;
   ring.play().catch(() => {});
   ring.onended = () => {
@@ -1426,9 +1426,12 @@ function showIncomingCall(data) {
     }
   };
 
+  let callAudio = null;
+
   function close() {
     ring.pause();
     ring.onended = null;
+    if (callAudio) { callAudio.pause(); callAudio = null; }
     overlay.remove();
   }
 
@@ -1438,7 +1441,7 @@ function showIncomingCall(data) {
     ring.pause();
     ring.onended = null;
     status.textContent = "通话中…";
-    actions.style.display = "none";
+    acceptWrap.style.display = "none";
     if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/answer`).catch(() => {});
 
     // 显示字幕（日语模式或重播时显示中文原文，去除括号内容）
@@ -1452,9 +1455,9 @@ function showIncomingCall(data) {
     }
 
     if (data.audio_url) {
-      const audio = new Audio(data.audio_url);
-      audio.play().catch(() => {});
-      audio.onended = () => {
+      callAudio = new Audio(data.audio_url);
+      callAudio.play().catch(() => {});
+      callAudio.onended = () => {
         status.textContent = "通话结束";
         subtitle.style.display = "none";
         setTimeout(close, 3000);
