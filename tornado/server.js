@@ -1210,13 +1210,18 @@ async function generateSpecialCallScript(sessionId, userId, type, value) {
   }
 }
 
-async function triggerSpecialCall(sessionId, userId, type, value) {
+async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionCooldown = false } = {}) {
   const char = await getActiveCharacter(userId);
   if (!char) return;
   const session = await getSession(sessionId);
   if (!session) return;
-  const cooldownMs = Number(await getGlobalSetting("call_cooldown_minutes", "60")) * 60000;
-  if (session.last_call_at && Date.now() - new Date(session.last_call_at).getTime() < cooldownMs) return;
+  if (!skipSessionCooldown) {
+    const cooldownMs = Number(await getGlobalSetting("call_cooldown_minutes", "60")) * 60000;
+    if (session.last_call_at && Date.now() - new Date(session.last_call_at).getTime() < cooldownMs) {
+      console.log(`[特殊来电] user=${userId} type=${type} 被 call_cooldown 拦截，跳过`);
+      return;
+    }
+  }
 
   const script = await generateSpecialCallScript(sessionId, userId, type, value).catch(() => null);
   if (!script) return;
@@ -2600,16 +2605,17 @@ async function handleRequest(req, res) {
       (async () => {
         try {
           const emotionCooldownMs = Number(await getGlobalSetting("call_emotion_cooldown_minutes", "120")) * 60000;
-          const lastEmotionCall = await getGlobalSetting(`emotion_call_last_${userId}`, "0");
-          if (Date.now() - Number(lastEmotionCall) < emotionCooldownMs) {
-            console.log(`[情绪来电] user=${userId} 冷却中，跳过`);
+          const session = await getSession(sessionId);
+          const lastEmotionCallAt = session?.last_emotion_call_at;
+          if (lastEmotionCallAt && Date.now() - new Date(lastEmotionCallAt).getTime() < emotionCooldownMs) {
+            console.log(`[情绪来电] user=${userId} 冷却中（上次=${lastEmotionCallAt}），跳过`);
             return;
           }
           const isLow = await detectLowMood(userText);
           console.log(`[情绪来电] user=${userId} affection=${char?.affection} 情绪检测=${isLow ? "低落" : "正常"}`);
           if (!isLow) return;
-          await setGlobalSetting(`emotion_call_last_${userId}`, String(Date.now()));
-          triggerSpecialCall(sessionId, userId, "emotion", null).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
+          await dbRun("UPDATE sessions SET last_emotion_call_at = ? WHERE id = ?", [nowIso(), sessionId]);
+          triggerSpecialCall(sessionId, userId, "emotion", null, { skipSessionCooldown: true }).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
         } catch (e) {
           console.error("[情绪来电] 检测失败:", e.message);
         }
