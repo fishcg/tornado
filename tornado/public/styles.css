@@ -463,6 +463,14 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 .call-msg-icon { font-size: 1em; }
 .call-msg-label { font-weight: 500; text-transform: uppercase; }
+.call-msg-status {
+  font-size: 0.85em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+.call-msg-status.answered { background: rgba(255,255,255,0.15); color: rgba(255,255,255,0.9); }
+.call-msg-status.missed { background: rgba(0,0,0,0.15); color: rgba(255,255,255,0.6); }
 .call-msg-replay {
   margin-left: auto;
   background: none;

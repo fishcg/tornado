@@ -1264,8 +1264,9 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
     "INSERT INTO call_logs (user_id, session_id, char_name, script, audio_url, answered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
     [userId, sessionId, char.name, script, audioUrl || null, nowIso()]
   );
-  const msgId = await appendMessage(sessionId, "assistant", `📞 ${script}`, char.name, userId);
+  const msgId = await appendMessage(sessionId, "assistant", `📞 [未接听] ${script}`, char.name, userId);
   if (audioUrl) await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
+  await dbRun("UPDATE call_logs SET msg_id = ? WHERE id = ?", [msgId, callLogResult.insertId]);
   pushToUser(userId, {
     incoming_call: true,
     call_log_id: callLogResult.insertId,
@@ -2327,7 +2328,11 @@ async function handleRequest(req, res) {
   const callLogAnswerMatch = pathname.match(/^\/call-logs\/(\d+)\/answer$/);
   if (method === "POST" && callLogAnswerMatch) {
     const logId = Number(callLogAnswerMatch[1]);
+    const log = await dbGet("SELECT msg_id, script FROM call_logs WHERE id = ? AND user_id = ?", [logId, userId]);
     await dbRun("UPDATE call_logs SET answered = 1 WHERE id = ? AND user_id = ?", [logId, userId]);
+    if (log?.msg_id && log?.script) {
+      await dbRun("UPDATE messages SET content = ? WHERE id = ?", [`📞 [已接听] ${log.script}`, log.msg_id]);
+    }
     send(res, 200, { ok: true });
     return;
   }
@@ -2357,6 +2362,7 @@ async function handleRequest(req, res) {
         await dbRun("UPDATE call_logs SET missed = 1 WHERE id = ?", [logId]);
         console.log(`[未接来电] user=${userId} call_log=${logId} 留言生成失败，仅标记 missed`);
       }
+      // 消息内容已初始化为 [未接听]，无需再更新
     }
     send(res, 200, { ok: true });
     return;
@@ -3106,8 +3112,9 @@ setInterval(async () => {
       const callLogId = callLogResult.insertId;
 
       // 写入对话记录（标识为来电）
-      const callMsgId = await appendMessage(session.id, "assistant", `📞 ${script}`, char.name, userId);
+      const callMsgId = await appendMessage(session.id, "assistant", `📞 [未接听] ${script}`, char.name, userId);
       if (audioUrl) await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, callMsgId]);
+      await dbRun("UPDATE call_logs SET msg_id = ? WHERE id = ?", [callMsgId, callLogId]);
 
       pushToUser(userId, {
         incoming_call: true,

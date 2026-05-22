@@ -797,9 +797,17 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
     bubble.className = `bubble bubble-call bubble-call-${callType} ${extraClass}`;
     const icon = callType === "call" ? "📞" : "📱";
     const label = callType === "call" ? "来电" : "语音留言";
-    const bodyText = content.slice(3); // strip emoji + space
+    // 解析接听状态前缀：[已接听] / [未接听]
+    let statusTag = "";
+    let bodyText = content.slice(3);
+    const statusMatch = bodyText.match(/^\[(已接听|未接听)\] /);
+    if (statusMatch) {
+      const answered = statusMatch[1] === "已接听";
+      statusTag = `<span class="call-msg-status ${answered ? "answered" : "missed"}">${statusMatch[1]}</span>`;
+      bodyText = bodyText.slice(statusMatch[0].length);
+    }
     const replayBtn = audioUrl ? `<button class="call-msg-replay" title="重播">▶</button>` : "";
-    bubble.innerHTML = `<div class="call-msg-header"><span class="call-msg-icon">${icon}</span><span class="call-msg-label">${label}</span>${replayBtn}</div><div class="call-msg-body">${renderBubbleText(bodyText)}</div>`;
+    bubble.innerHTML = `<div class="call-msg-header"><span class="call-msg-icon">${icon}</span><span class="call-msg-label">${label}</span>${statusTag}${replayBtn}</div><div class="call-msg-body">${renderBubbleText(bodyText)}</div>`;
     if (audioUrl) {
       bubble.querySelector(".call-msg-replay").addEventListener("click", () => {
         if (_currentTtsAudio) { _currentTtsAudio.pause(); _currentTtsAudio = null; }
@@ -1520,6 +1528,22 @@ function showIncomingCall(data) {
 
   let callAudio = null;
 
+  function updateBubbleStatus(answered) {
+    if (!data.msg_id) return;
+    const wrap = document.querySelector(`.bubble-wrap[data-msg-id="${data.msg_id}"]`);
+    if (!wrap) return;
+    const header = wrap.querySelector(".call-msg-header");
+    if (!header) return;
+    let tag = header.querySelector(".call-msg-status");
+    if (!tag) {
+      tag = document.createElement("span");
+      const replay = header.querySelector(".call-msg-replay");
+      header.insertBefore(tag, replay || null);
+    }
+    tag.className = `call-msg-status ${answered ? "answered" : "missed"}`;
+    tag.textContent = answered ? "已接听" : "未接听";
+  }
+
   function close() {
     clearInterval(timeTick);
     ring.pause();
@@ -1530,8 +1554,10 @@ function showIncomingCall(data) {
     if (data.session_id === currentSessionId && data.script && data.msg_id) {
       const existing = document.querySelector(`.bubble-wrap[data-msg-id="${data.msg_id}"]`);
       if (!existing) {
-        appendBubble("assistant", `📞 ${data.script}`, "", null, data.msg_id, new Date().toISOString(), data.audio_url || null);
+        appendBubble("assistant", `📞 [未接听] ${data.script}`, "", null, data.msg_id, new Date().toISOString(), data.audio_url || null);
         scrollToBottom();
+      } else {
+        updateBubbleStatus(false);
       }
     }
   }
@@ -1545,6 +1571,7 @@ function showIncomingCall(data) {
     acceptWrap.style.display = "none";
     actions.classList.add("in-call");
     if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/answer`).catch(() => {});
+    updateBubbleStatus(true);
 
     // 通话计时
     let callSeconds = 0;
