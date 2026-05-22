@@ -1463,6 +1463,8 @@ function showIncomingCall(data) {
   ring.onended = () => {
     ringCount++;
     if (ringCount >= 10) {
+      // 未接听 → 通知后端留语音留言
+      if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/missed`).catch(() => {});
       close();
     } else {
       ring.play().catch(() => {});
@@ -1516,7 +1518,8 @@ function showIncomingCall(data) {
 
     if (data.audio_url) {
       callAudio = new Audio(data.audio_url);
-      callAudio.play().catch(() => {});
+      // 接通后等 1s 再播放，模拟真实通话接通延迟
+      setTimeout(() => { callAudio?.play().catch(() => {}); }, 1000);
       callAudio.onended = () => {
         clearInterval(callTimer);
         status.textContent = "通话结束";
@@ -1531,6 +1534,20 @@ function showIncomingCall(data) {
       setTimeout(close, 6000);
     }
   });
+}
+
+async function checkVoicemail() {
+  try {
+    const res = await api("GET", "/call-logs/unread-voicemail");
+    if (!res || res.count === 0) return;
+    const log = res.logs[0];
+    const msg = `📱 ${log.char_name} 给你留了语音留言`;
+    showToast(msg, false, 7000);
+    // 标记已读
+    for (const l of res.logs) {
+      api("POST", `/call-logs/${l.id}/voicemail-read`).catch(() => {});
+    }
+  } catch {}
 }
 
 function connectEvents(sessionId) {
@@ -3339,6 +3356,7 @@ function showAnnouncementModal(list, index) {
   initChatTitleEdit();
   loadSessions();
   checkAnnouncements();
+  checkVoicemail();
 
   // 新用户引导：打开右侧状态面板并展开角色设定
   if (localStorage.getItem("show_onboarding") === "1") {

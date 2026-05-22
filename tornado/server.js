@@ -989,6 +989,10 @@ ${personality}当前心动值：${current}/100，${relationStage}。
       const settings = await getUserSettings(userId);
       checkAndUnlockAchievements(userId, sessionId, settings).catch((e) => console.error("[achievements] 调用失败:", e.message));
       checkRelationshipMilestone(userId, sessionId, current, newVal, settings).catch((e) => console.error("[milestone] 调用失败:", e.message));
+      // 好感度整20档触发特殊来电
+      if (Math.floor(newVal / 20) > Math.floor(current / 20) && newVal > 0) {
+        triggerSpecialCall(sessionId, userId, "affection", newVal).catch((e) => console.error("[特殊来电] affection 触发失败:", e.message));
+      }
     }
   } catch (err) {
     console.error("[affection] 更新失败:", err.message);
@@ -1144,6 +1148,117 @@ async function generateCallScript(sessionId, userId) {
   } catch {
     return null;
   }
+}
+
+async function generateVoicemail(sessionId, userId, charName) {
+  const msgs = await getMessages(sessionId);
+  const soul = await loadSoul(userId);
+  const context = msgs.slice(-6).map((m) =>
+    `${m.role === "user" ? "用户" : charName}：${m.content}`
+  ).join("\n");
+  try {
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      enable_thinking: false,
+      max_tokens: 120,
+      messages: [
+        {
+          role: "system",
+          content: `${soul}\n\n你刚才给用户打电话，但对方没有接听，现在留一段语音留言。要求：以"喂，你不在啊"开头，口语化，约50字，结尾说"拜拜"，不要有括号内的心理活动或场景描述。`
+        },
+        { role: "user", content: context ? `最近对话：\n${context}` : "（暂无对话记录）" }
+      ]
+    });
+    return (res.choices?.[0]?.message?.content || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+const SPECIAL_CALL_PROMPTS = {
+  affection: (val) => `用户和你的好感度刚刚达到了 ${val} 点，你很开心，打电话来表达感情加深的喜悦，聊聊你们的关系。`,
+  streak: (val) => `你们已经连续聊天 ${val} 天了，你打电话来庆祝这个小里程碑，表达陪伴的感动。`,
+  "holiday_02-14": () => "今天是情人节，你打电话来送上节日祝福，表达心意。",
+  "holiday_05-20": () => "今天是520，你打电话来告白或表达爱意，真诚而温柔。",
+  "holiday_07-07": () => "今天是七夕，你打电话来聊聊这个浪漫的节日，表达思念。",
+  "holiday_12-25": () => "今天是圣诞节，你打电话来送上圣诞祝福，轻松愉快。",
+  "holiday_01-01": () => "今天是元旦，你打电话来送上新年祝福，展望新的一年。",
+};
+
+async function generateSpecialCallScript(sessionId, userId, type, value) {
+  const msgs = await getMessages(sessionId);
+  const charName = await getCharacterName(userId);
+  const soul = await loadSoul(userId);
+  const context = msgs.slice(-6).map((m) =>
+    `${m.role === "user" ? "用户" : charName}：${m.content}`
+  ).join("\n");
+  const promptFn = SPECIAL_CALL_PROMPTS[type] || SPECIAL_CALL_PROMPTS[`${type}_${value}`];
+  const occasion = promptFn ? promptFn(value) : `今天是特别的日子，你打电话来表达心意。`;
+  try {
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      enable_thinking: false,
+      messages: [
+        {
+          role: "system",
+          content: `${soul}\n\n${occasion}\n\n要求：以"喂？是我"开头，纯口语对话，不要有括号内的心理活动或场景描述，约150字，最后用"拜拜"或"再见"结束。`
+        },
+        { role: "user", content: context ? `最近对话：\n${context}` : "（暂无对话记录）" }
+      ]
+    });
+    return (res.choices?.[0]?.message?.content || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function triggerSpecialCall(sessionId, userId, type, value) {
+  const char = await getActiveCharacter(userId);
+  if (!char) return;
+  const session = await getSession(sessionId);
+  if (!session) return;
+  const cooldownMs = Number(await getGlobalSetting("call_cooldown_minutes", "60")) * 60000;
+  if (session.last_call_at && Date.now() - new Date(session.last_call_at).getTime() < cooldownMs) return;
+
+  const script = await generateSpecialCallScript(sessionId, userId, type, value).catch(() => null);
+  if (!script) return;
+
+  await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), sessionId]);
+
+  const ttsSettings = await getUserSettings(userId);
+  const lang = ttsSettings.ttsLang || "zh";
+  let audioUrl = null;
+  if (char.voice_id && char.tts_enabled) {
+    try {
+      const ttsScript = script
+        .replace(/[（(][^）)]{0,80}[）)]/g, "")
+        .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
+        .replace(/\*[^*]{0,80}\*/g, "")
+        .replace(/\s{2,}/g, " ").trim();
+      const ttsInput = lang === "ja" ? await translateToJapanese(ttsScript) : ttsScript;
+      const ch = char.voice_channel || "qwen";
+      const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
+      const { url } = await synthFn(ttsInput, char.voice_id, lang);
+      audioUrl = url;
+    } catch (err) {
+      console.error("[特殊来电] TTS 失败:", err.message);
+    }
+  }
+
+  const callLogResult = await dbRun(
+    "INSERT INTO call_logs (user_id, session_id, char_name, script, audio_url, answered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+    [userId, sessionId, char.name, script, audioUrl || null, nowIso()]
+  );
+  await appendMessage(sessionId, "assistant", `📞 ${script}`, char.name, userId);
+  pushToUser(userId, {
+    incoming_call: true,
+    call_log_id: callLogResult.insertId,
+    char_name: char.name,
+    script,
+    audio_url: audioUrl,
+    tts_lang: lang
+  });
+  console.log(`[特殊来电] user=${userId} type=${type} value=${value}`);
 }
 
 async function generateAutoUserMessage(sessionId) {
@@ -2175,6 +2290,41 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (method === "GET" && pathname === "/call-logs/unread-voicemail") {
+    const activeChar = await getActiveCharacter(userId);
+    const logs = await dbAll(
+      "SELECT id, session_id, char_name, voicemail, created_at FROM call_logs WHERE user_id = ? AND char_name = ? AND missed = 1 AND voicemail_read = 0 ORDER BY id DESC",
+      [userId, activeChar?.name || ""]
+    );
+    send(res, 200, { count: logs.length, logs });
+    return;
+  }
+
+  const callLogMissedMatch = pathname.match(/^\/call-logs\/(\d+)\/missed$/);
+  if (method === "POST" && callLogMissedMatch) {
+    const logId = Number(callLogMissedMatch[1]);
+    const log = await dbGet("SELECT * FROM call_logs WHERE id = ? AND user_id = ?", [logId, userId]);
+    if (log && !log.answered && !log.missed) {
+      const voicemail = await generateVoicemail(log.session_id, userId, log.char_name).catch(() => null);
+      if (voicemail) {
+        await appendMessage(log.session_id, "assistant", `📱 ${voicemail}`, log.char_name, userId);
+        await dbRun("UPDATE call_logs SET missed = 1, voicemail = ? WHERE id = ?", [voicemail, logId]);
+      } else {
+        await dbRun("UPDATE call_logs SET missed = 1 WHERE id = ?", [logId]);
+      }
+    }
+    send(res, 200, { ok: true });
+    return;
+  }
+
+  const callLogVoicemailReadMatch = pathname.match(/^\/call-logs\/(\d+)\/voicemail-read$/);
+  if (method === "POST" && callLogVoicemailReadMatch) {
+    const logId = Number(callLogVoicemailReadMatch[1]);
+    await dbRun("UPDATE call_logs SET voicemail_read = 1 WHERE id = ? AND user_id = ?", [logId, userId]);
+    send(res, 200, { ok: true });
+    return;
+  }
+
   if (method === "GET" && pathname === "/sessions") {
     send(res, 200, await listSessions(userId));
     return;
@@ -2907,6 +3057,20 @@ setInterval(async () => {
         tts_lang: lang
       });
     }
+
+    // 节日来电检查（每年每节日触发一次，对所有在线用户）
+    const HOLIDAYS = { "02-14": "情人节", "05-20": "520", "07-07": "七夕", "12-25": "圣诞节", "01-01": "元旦" };
+    const todayMMDD = today.slice(5);
+    if (HOLIDAYS[todayMMDD]) {
+      const holidayKey = `holiday_call_${today.slice(0, 4)}_${todayMMDD}`;
+      if (await getGlobalSetting(holidayKey, "0") === "0") {
+        await setGlobalSetting(holidayKey, "1");
+        for (const uid of activeUserIds) {
+          const s = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [uid]);
+          if (s) triggerSpecialCall(s.id, uid, `holiday_${todayMMDD}`, HOLIDAYS[todayMMDD]).catch((e) => console.error("[节日来电] 失败:", e.message));
+        }
+      }
+    }
   }
 }, 60 * 1000);
 
@@ -3097,6 +3261,11 @@ async function updateStreakDays(userId) {
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   const newStreak = char.last_chat_date === yesterday ? (char.streak_days || 0) + 1 : 1;
   await dbRun("UPDATE characters SET streak_days = ?, last_chat_date = ? WHERE id = ?", [newStreak, today, char.id]);
+  // streak 里程碑触发特殊来电
+  if ([3, 7, 14, 30].includes(newStreak)) {
+    const s = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [userId]);
+    if (s) triggerSpecialCall(s.id, userId, "streak", newStreak).catch((e) => console.error("[特殊来电] streak 触发失败:", e.message));
+  }
 }
 
 async function generateAchievementInnerVoice(charName, affection, achievementName, personality, recentContext) {

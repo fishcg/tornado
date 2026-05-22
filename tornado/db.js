@@ -261,6 +261,9 @@ export async function initDb() {
   await ensureColumn(pool, "characters", "voice_preview_url", "TEXT");
   await ensureColumn(pool, "characters", "voice_channel", "VARCHAR(32) NOT NULL DEFAULT 'qwen'");
   await ensureColumn(pool, "messages", "tts_audio_url", "TEXT");
+  await ensureColumn(pool, "call_logs", "voicemail", "TEXT");
+  await ensureColumn(pool, "call_logs", "missed", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "call_logs", "voicemail_read", "INT NOT NULL DEFAULT 0");
   // 清除旧的 PCM-as-mp3 缓存预览 URL，重新生成为 WAV
   await pool.execute("UPDATE characters SET voice_preview_url = NULL WHERE voice_preview_url LIKE '%.mp3'");
   // 迁移：将 user_achievements 的唯一键从 (user_id, achievement_id) 改为包含 character_id
