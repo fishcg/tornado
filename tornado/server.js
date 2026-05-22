@@ -1256,7 +1256,7 @@ async function triggerSpecialCall(sessionId, userId, type, value) {
     audio_url: audioUrl,
     tts_lang: lang
   });
-  console.log(`[特殊来电] user=${userId} type=${type} value=${value}`);
+  console.log(`[特殊来电] user=${userId} char=${char.name} session=${sessionId} type=${type} value=${value ?? "-"} tts=${audioUrl ? "ok" : "no"}`);
 }
 
 async function detectLowMood(text) {
@@ -2327,12 +2327,15 @@ async function handleRequest(req, res) {
     const logId = Number(callLogMissedMatch[1]);
     const log = await dbGet("SELECT * FROM call_logs WHERE id = ? AND user_id = ?", [logId, userId]);
     if (log && !log.answered && !log.missed) {
+      console.log(`[未接来电] user=${userId} call_log=${logId} char=${log.char_name} 生成留言中`);
       const voicemail = await generateVoicemail(log.session_id, userId, log.char_name).catch(() => null);
       if (voicemail) {
         await appendMessage(log.session_id, "assistant", `📱 ${voicemail}`, log.char_name, userId);
         await dbRun("UPDATE call_logs SET missed = 1, voicemail = ? WHERE id = ?", [voicemail, logId]);
+        console.log(`[未接来电] user=${userId} call_log=${logId} 留言已写入`);
       } else {
         await dbRun("UPDATE call_logs SET missed = 1 WHERE id = ?", [logId]);
+        console.log(`[未接来电] user=${userId} call_log=${logId} 留言生成失败，仅标记 missed`);
       }
     }
     send(res, 200, { ok: true });
@@ -2598,8 +2601,12 @@ async function handleRequest(req, res) {
         try {
           const emotionCooldownMs = Number(await getGlobalSetting("call_emotion_cooldown_minutes", "120")) * 60000;
           const lastEmotionCall = await getGlobalSetting(`emotion_call_last_${userId}`, "0");
-          if (Date.now() - Number(lastEmotionCall) < emotionCooldownMs) return;
+          if (Date.now() - Number(lastEmotionCall) < emotionCooldownMs) {
+            console.log(`[情绪来电] user=${userId} 冷却中，跳过`);
+            return;
+          }
           const isLow = await detectLowMood(userText);
+          console.log(`[情绪来电] user=${userId} affection=${char?.affection} 情绪检测=${isLow ? "低落" : "正常"}`);
           if (!isLow) return;
           await setGlobalSetting(`emotion_call_last_${userId}`, String(Date.now()));
           triggerSpecialCall(sessionId, userId, "emotion", null).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
@@ -3049,7 +3056,7 @@ setInterval(async () => {
       `, [userId, `${today}%`, char.name]);
       if ((todayMsgs?.n || 0) < callMinMessages) continue;
 
-      console.log(`[来电] user=${userId} char=${char.name} session=${session.id} 今日消息=${todayMsgs.n} 空闲=${Math.round(idleMs / 60000)}分钟`);
+      console.log(`[来电] user=${userId} char=${char.name} session=${session.id} reason=空闲 今日消息=${todayMsgs.n} 空闲=${Math.round(idleMs / 60000)}分钟 tts=${char.tts_enabled ? "on" : "off"}`);
       await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
 
       const script = await generateCallScript(session.id, userId).catch(() => null);
@@ -3103,6 +3110,7 @@ setInterval(async () => {
       const holidayKey = `holiday_call_${today.slice(0, 4)}_${todayMMDD}`;
       if (await getGlobalSetting(holidayKey, "0") === "0") {
         await setGlobalSetting(holidayKey, "1");
+        console.log(`[节日来电] 触发 ${HOLIDAYS[todayMMDD]}（${todayMMDD}），在线用户数=${activeUserIds.length}`);
         for (const uid of activeUserIds) {
           const s = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [uid]);
           if (s) triggerSpecialCall(s.id, uid, `holiday_${todayMMDD}`, HOLIDAYS[todayMMDD]).catch((e) => console.error("[节日来电] 失败:", e.message));
@@ -3301,6 +3309,7 @@ async function updateStreakDays(userId) {
   await dbRun("UPDATE characters SET streak_days = ?, last_chat_date = ? WHERE id = ?", [newStreak, today, char.id]);
   // streak 里程碑触发特殊来电
   if ([3, 7, 14, 30].includes(newStreak)) {
+    console.log(`[streak来电] user=${userId} char=${char.name} streak=${newStreak}天`);
     const s = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [userId]);
     if (s) triggerSpecialCall(s.id, userId, "streak", newStreak).catch((e) => console.error("[特殊来电] streak 触发失败:", e.message));
   }
