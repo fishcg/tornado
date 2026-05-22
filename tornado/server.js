@@ -1654,7 +1654,7 @@ async function handleRequest(req, res) {
     const cardUrl = row?.image_url || null;
     if (!cardUrl) {
       generateCharacterCard(false, userId).then((url) => {
-        if (url) broadcastCardUpdate(url);
+        if (url) pushToUser(userId, { card_update: true, card_url: url });
       });
     }
     send(res, 200, {
@@ -1702,7 +1702,7 @@ async function handleRequest(req, res) {
   if (method === "POST" && pathname === "/character/cards/generate") {
     send(res, 202, { ok: true, message: "生成中" });
     generateCharacterCard(true, userId).then((url) => {
-      if (url) broadcastCardUpdate(url);
+      if (url) pushToUser(userId, { card_update: true, card_url: url });
     });
     return;
   }
@@ -1715,7 +1715,7 @@ async function handleRequest(req, res) {
     if (!card) { send(res, 404, { error: "not found" }); return; }
     await dbRun("UPDATE character_cards SET is_active = 0 WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [card.character, userId]);
     await dbRun("UPDATE character_cards SET is_active = 1 WHERE id = ?", [id]);
-    broadcastCardUpdate(card.image_url);
+    pushToUser(userId, { card_update: true, card_url: card.image_url });
     send(res, 200, { ok: true, card_url: card.image_url });
     return;
   }
@@ -2657,17 +2657,6 @@ function pushToSession(sessionId, payload) {
   for (const ws of clients) {
     if (ws.readyState === ws.OPEN) {
       try { ws.send(data); } catch {}
-    }
-  }
-}
-
-function broadcastCardUpdate(cardUrl) {
-  const data = JSON.stringify({ card_update: true, card_url: cardUrl });
-  for (const [, clients] of sessionClients) {
-    for (const ws of clients) {
-      if (ws.readyState === ws.OPEN) {
-        try { ws.send(data); } catch {}
-      }
     }
   }
 }
