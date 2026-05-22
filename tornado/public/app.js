@@ -23,6 +23,7 @@ let currentSessionId = (() => { try { return Number(localStorage.getItem("lastSe
 let sending = false;
 let allMessages = [];
 let _currentTtsAudio = null; // 全局追踪当前播放的 TTS，切换时自动停止
+let _pendingCallBubble = null; // 情绪来电等待期间的占位气泡
 let autoModeEnabled = false;
 let autoModeTimer = null;
 const _sessionsMap = new Map(); // id -> session object
@@ -963,8 +964,10 @@ async function doStream(sessionId, text, replyBubble) {
       }
       if (payload.done) {
         if (payload.skip_reply) {
-          // 情绪来电：跳过回复，移除思考气泡
-          replyBubble.closest(".bubble-wrap")?.remove();
+          // 情绪来电：保留气泡显示"来电中…"，等 incoming_call 到达后移除
+          replyBubble.classList.remove("thinking");
+          replyBubble.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`;
+          _pendingCallBubble = replyBubble.closest(".bubble-wrap");
           return;
         }
         if (payload.msg_id) {
@@ -1386,6 +1389,7 @@ function handleWsPayload(payload) {
   }
   if (payload.incoming_call) {
     if (payload.session_id && payload.session_id !== currentSessionId) return;
+    if (_pendingCallBubble) { _pendingCallBubble.remove(); _pendingCallBubble = null; }
     showIncomingCall(payload);
   }
 }
@@ -1482,7 +1486,7 @@ function showIncomingCall(data) {
   declineWrap.className = "call-btn-wrap";
   const declineBtn = document.createElement("button");
   declineBtn.className = "call-btn call-btn-decline";
-  declineBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transform:scale(-1,-1)"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.13 19.13 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 6.61 6.61l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
+  declineBtn.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transform:rotate(135deg)"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.13 19.13 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 6.61 6.61l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
   const declineLabel = document.createElement("span");
   declineLabel.className = "call-btn-label";
   declineLabel.textContent = "挂断";
