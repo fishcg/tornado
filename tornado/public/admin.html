@@ -449,7 +449,9 @@
           <input type="number" id="callMinMessages" min="1" max="999" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
           <span style="color:var(--text-dim);font-size:13px">句，且用户沉默超过</span>
           <input type="number" id="callIdleMinutes" min="1" max="1440" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
-          <span style="color:var(--text-dim);font-size:13px">分钟，角色来电</span>
+          <span style="color:var(--text-dim);font-size:13px">分钟，角色来电；每</span>
+          <input type="number" id="callCooldownMinutes" min="1" max="10080" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <span style="color:var(--text-dim);font-size:13px">分钟内同一角色最多来电 1 次</span>
         </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
@@ -726,6 +728,7 @@ async function loadSystem() {
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "qwen";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
+    document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
   }
   if (soulData) {
     document.getElementById("soulEditor").value = soulData.soul || "";
@@ -746,7 +749,8 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const ttsChannel = document.getElementById("ttsChannel").value;
   const callMinMessages = Number(document.getElementById("callMinMessages").value) || 20;
   const callIdleMinutes = Number(document.getElementById("callIdleMinutes").value) || 5;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, tts_channel: ttsChannel, call_min_messages: callMinMessages, call_idle_minutes: callIdleMinutes }) });
+  const callCooldownMinutes = Number(document.getElementById("callCooldownMinutes").value) || 60;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, tts_channel: ttsChannel, call_min_messages: callMinMessages, call_idle_minutes: callIdleMinutes, call_cooldown_minutes: callCooldownMinutes }) });
   if (data) showMsg("已保存");
 });
 

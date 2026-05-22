@@ -1581,7 +1581,8 @@ async function handleRequest(req, res) {
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
         tts_channel: await getGlobalSetting("tts_channel", "qwen"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
-        call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5")
+        call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
+        call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60")
       });
       return;
     }
@@ -1616,6 +1617,9 @@ async function handleRequest(req, res) {
       if ("call_idle_minutes" in body) {
         await setGlobalSetting("call_idle_minutes", String(Math.max(1, Number(body.call_idle_minutes) || 5)));
       }
+      if ("call_cooldown_minutes" in body) {
+        await setGlobalSetting("call_cooldown_minutes", String(Math.max(1, Number(body.call_cooldown_minutes) || 60)));
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
@@ -1625,7 +1629,8 @@ async function handleRequest(req, res) {
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
         tts_channel: await getGlobalSetting("tts_channel", "qwen"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
-        call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5")
+        call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
+        call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60")
       });
       return;
     }
@@ -2153,9 +2158,10 @@ async function handleRequest(req, res) {
     return;
   }
   if (method === "GET" && pathname === "/call-logs") {
+    const activeChar = await getActiveCharacter(userId);
     const rows = await dbAll(
-      "SELECT id, session_id, char_name, script, audio_url, answered, created_at FROM call_logs WHERE user_id = ? ORDER BY id DESC LIMIT 50",
-      [userId]
+      "SELECT id, session_id, char_name, script, audio_url, answered, created_at FROM call_logs WHERE user_id = ? AND char_name = ? ORDER BY id DESC LIMIT 50",
+      [userId, activeChar?.name || ""]
     );
     send(res, 200, rows);
     return;
@@ -2790,6 +2796,7 @@ setInterval(async () => {
   const callMinMessages = Number(await getGlobalSetting("call_min_messages", "20"));
   const callIdleMinutes = Number(await getGlobalSetting("call_idle_minutes", "5"));
   const callIdleMs = callIdleMinutes * 60 * 1000;
+  const callCooldownMs = Number(await getGlobalSetting("call_cooldown_minutes", "60")) * 60 * 1000;
   const today = new Date().toISOString().slice(0, 10);
 
   // 只处理有活跃 WS 连接的用户
@@ -2819,22 +2826,31 @@ setInterval(async () => {
     }
 
     for (const char of chars) {
-      // 找该角色最近的 session（有用户消息的）
+      // 找该角色最近的 session
       const session = await dbGet(`
-        SELECT s.*, MAX(m.created_at) as last_user_at_char
-        FROM sessions s
-        JOIN messages m ON m.session_id = s.id AND m.role = 'user'
+        SELECT s.* FROM sessions s
         WHERE s.user_id = ? AND s.archived = 0
           AND EXISTS (SELECT 1 FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name = ?)
         ORDER BY s.updated_at DESC LIMIT 1
       `, [userId, char.name]);
-      if (!session?.last_user_at_char) continue;
+      if (!session) continue;
 
-      const idleMs = now - new Date(session.last_user_at_char).getTime();
+      // 该 session 中最近一条用户消息时间
+      const lastUserMsg = await dbGet(
+        "SELECT MAX(created_at) as last_user_at_char FROM messages WHERE session_id = ? AND role = 'user'",
+        [session.id]
+      );
+      const lastUserAt = lastUserMsg?.last_user_at_char;
+      if (!lastUserAt) continue;
+
+      const idleMs = now - new Date(lastUserAt).getTime();
       if (idleMs < callIdleMs) continue;
 
-      // 来电后用户未回复则不再重复触发（用 session.last_call_at 按 session 去重）
-      if (session.last_call_at && session.last_user_at_char <= session.last_call_at) continue;
+      // 来电后用户未回复则不再重复触发
+      if (session.last_call_at && lastUserAt <= session.last_call_at) continue;
+
+      // 冷却期：距上次来电不足 call_cooldown_minutes 分钟则跳过
+      if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) continue;
 
       // 今日该角色对话中的用户消息数
       const todayMsgs = await dbGet(`
