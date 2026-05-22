@@ -458,7 +458,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   padding: 8px 14px 6px;
   border-bottom: 1px solid rgba(255,150,180,0.15);
   font-size: 0.8em;
-  color: rgba(255,190,210,0.65);
+  color: rgba(255,190,210,1);
   letter-spacing: 0.04em;
 }
 .call-msg-icon { font-size: 1em; }
@@ -477,7 +477,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .call-msg-replay:hover { color: rgba(255,190,210,1); }
 .call-msg-body {
   padding: 10px 14px;
-  color: rgba(255,225,232,0.88);
+  color: rgba(255,255,255,1);
 }
 .bubble-call-voicemail .call-msg-header { color: rgba(220,170,255,0.65); border-color: rgba(180,130,255,0.15); }
 .bubble-call-voicemail { background: rgba(38, 20, 55, 0.92) !important; border-color: rgba(180,130,255,0.18) !important; }
