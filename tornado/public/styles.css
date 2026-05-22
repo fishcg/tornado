@@ -1563,7 +1563,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 .char-group-header:hover { background: rgba(255,255,255,.03); }
 .char-group-name {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text-dim);
   letter-spacing: .04em;
