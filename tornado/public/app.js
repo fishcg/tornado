@@ -1024,6 +1024,7 @@ async function sendMessage() {
 
   try {
     await doStream(currentSessionId, text, replyBubble);
+    if (_pendingCallBubble) return; // 情绪来电等待中，不执行后续逻辑
     await loadSessions();
     // 情绪更新是异步的，稍等后再取
     setTimeout(() => refreshMood(currentSessionId), 1500);
