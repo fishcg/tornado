@@ -797,7 +797,16 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
     const icon = callType === "call" ? "📞" : "📱";
     const label = callType === "call" ? "来电" : "语音留言";
     const bodyText = content.slice(3); // strip emoji + space
-    bubble.innerHTML = `<div class="call-msg-header"><span class="call-msg-icon">${icon}</span><span class="call-msg-label">${label}</span></div><div class="call-msg-body">${renderBubbleText(bodyText)}</div>`;
+    const replayBtn = audioUrl ? `<button class="call-msg-replay" title="重播">▶</button>` : "";
+    bubble.innerHTML = `<div class="call-msg-header"><span class="call-msg-icon">${icon}</span><span class="call-msg-label">${label}</span>${replayBtn}</div><div class="call-msg-body">${renderBubbleText(bodyText)}</div>`;
+    if (audioUrl) {
+      bubble.querySelector(".call-msg-replay").addEventListener("click", () => {
+        if (_currentTtsAudio) { _currentTtsAudio.pause(); _currentTtsAudio = null; }
+        const a = new Audio(audioUrl);
+        _currentTtsAudio = a;
+        a.play();
+      });
+    }
   } else {
     bubble.className = `bubble ${extraClass}`;
     bubble.innerHTML = renderBubbleText(content);
