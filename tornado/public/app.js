@@ -964,10 +964,8 @@ async function doStream(sessionId, text, replyBubble) {
       }
       if (payload.done) {
         if (payload.skip_reply) {
-          // 情绪来电：保留气泡显示"来电中…"，等 incoming_call 到达后移除
-          replyBubble.classList.remove("thinking");
-          replyBubble.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`;
-          _pendingCallBubble = replyBubble.closest(".bubble-wrap");
+          // 情绪来电：保留气泡显示打字动画，等 incoming_call 到达后移除
+          _pendingCallBubble = replyBubble;
           return;
         }
         if (payload.msg_id) {
@@ -1389,7 +1387,7 @@ function handleWsPayload(payload) {
   }
   if (payload.incoming_call) {
     if (payload.session_id && payload.session_id !== currentSessionId) return;
-    if (_pendingCallBubble) { _pendingCallBubble.remove(); _pendingCallBubble = null; }
+    if (_pendingCallBubble) { _pendingCallBubble.closest(".bubble-wrap")?.remove(); _pendingCallBubble = null; }
     showIncomingCall(payload);
   }
 }
