@@ -3047,9 +3047,6 @@ setInterval(async () => {
       const idleMs = now - new Date(lastUserAt).getTime();
       if (idleMs < callIdleMs) { console.log(`[来电跳过] user=${userId} char=${char.name} 空闲不足 ${Math.round(idleMs/60000)}/${callIdleMinutes}分钟`); continue; }
 
-      // 来电后用户未回复则不再重复触发
-      if (session.last_call_at && lastUserAt <= session.last_call_at) { console.log(`[来电跳过] user=${userId} char=${char.name} 上次来电后用户未回复`); continue; }
-
       // 冷却期：距上次来电不足 call_cooldown_minutes 分钟则跳过
       if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) { console.log(`[来电跳过] user=${userId} char=${char.name} 冷却中 last_call_at=${session.last_call_at}`); continue; }
 
