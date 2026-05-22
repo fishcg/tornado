@@ -22,6 +22,7 @@ function renderBubbleText(text) {
 let currentSessionId = (() => { try { return Number(localStorage.getItem("lastSessionId")) || null; } catch { return null; } })();
 let sending = false;
 let allMessages = [];
+let _currentTtsAudio = null; // 全局追踪当前播放的 TTS，切换时自动停止
 let autoModeEnabled = false;
 let autoModeTimer = null;
 const _sessionsMap = new Map(); // id -> session object
@@ -1800,11 +1801,18 @@ function attachTtsPlayer(msgId, audioUrl, autoPlay = true, targetWrap = null) {
 
   let audio = null;
   const play = () => {
+    // 停止当前正在播放的其他 TTS
+    if (_currentTtsAudio && _currentTtsAudio !== audio) {
+      _currentTtsAudio.pause();
+      _currentTtsAudio = null;
+      document.querySelectorAll(".tts-btn-active").forEach(b => b.classList.remove("tts-btn-active"));
+    }
     if (audio) { audio.pause(); audio = null; }
     audio = new Audio(audioUrl);
+    _currentTtsAudio = audio;
     audio.play().catch(() => {});
     btn.classList.add("tts-btn-active");
-    audio.onended = () => btn.classList.remove("tts-btn-active");
+    audio.onended = () => { btn.classList.remove("tts-btn-active"); if (_currentTtsAudio === audio) _currentTtsAudio = null; };
   };
 
   btn.addEventListener("click", play);
