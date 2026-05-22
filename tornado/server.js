@@ -197,6 +197,15 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function nowLocal() {
+  return new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+}
+
+function toLocal(isoStr) {
+  if (!isoStr) return isoStr;
+  return new Date(isoStr).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+}
+
 function loadSoulFromFile() {
   if (!fs.existsSync(SOUL_PATH)) return null;
   return fs.readFileSync(SOUL_PATH, "utf8").trim();
@@ -1210,7 +1219,7 @@ async function generateSpecialCallScript(sessionId, userId, type, value) {
   }
 }
 
-async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionCooldown = false } = {}) {
+async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionCooldown = true } = {}) {
   const char = await getActiveCharacter(userId);
   if (!char) return;
   const session = await getSession(sessionId);
@@ -2504,7 +2513,7 @@ async function handleRequest(req, res) {
           return;
         }
       } else {
-        console.log(`[情绪来电] user=${userId} 冷却中（上次=${lastEmotionCallAt}），跳过`);
+        console.log(`[情绪来电] user=${userId} 冷却中（上次=\${toLocal(lastEmotionCallAt)}），跳过`);
       }
     }
 
@@ -3046,7 +3055,7 @@ setInterval(async () => {
     if (idleMs < callIdleMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 空闲不足 ${Math.round(idleMs/60000)}/${callIdleMinutes}分钟`); continue; }
 
     // 冷却期
-    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 冷却中 last_call_at=${session.last_call_at}`); continue; }
+    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 冷却中 last_call_at=${toLocal(session.last_call_at)}`); continue; }
 
     // 今日该角色对话中的用户消息数
     const todayMsgs = await dbGet(`
