@@ -49,6 +49,7 @@ function applyBubbleOpacity(v) {
   localStorage.setItem(BUBBLE_OPACITY_KEY, v);
   document.documentElement.style.setProperty("--user-bg", `rgba(61, 47, 110, ${v})`);
   document.documentElement.style.setProperty("--assistant-bg", `rgba(26, 26, 30, ${v})`);
+  document.documentElement.style.setProperty("--call-bg", `rgba(244, 110, 164, ${v})`);
 }
 
 function setChatBackground(url) {

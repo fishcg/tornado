@@ -445,7 +445,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .bubble.thinking { color: var(--text-dim); font-style: italic; }
 
 .bubble-call {
-  background: rgba(244, 110, 164, 0.92) !important;
+  background: var(--call-bg, rgba(244, 110, 164, 0.92)) !important;
   border: 1px solid rgba(255,150,180,0.18) !important;
   padding: 0 !important;
   overflow: hidden;
