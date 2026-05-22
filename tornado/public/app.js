@@ -1236,6 +1236,15 @@ function handleWsPayload(payload) {
   if (payload.tts) {
     attachTtsPlayer(payload.msg_id, payload.audio_url);
   }
+  if (payload.tts_stream_start) {
+    ttsStreamStart(payload.msg_id);
+  }
+  if (payload.tts_chunk) {
+    ttsStreamChunk(payload.msg_id, payload.data);
+  }
+  if (payload.tts_stream_end) {
+    ttsStreamEnd(payload.msg_id, payload.audio_url);
+  }
 }
 
 function connectEvents(sessionId) {
@@ -1408,6 +1417,42 @@ function typeOutText(bubble, text, durationMs) {
     }
     requestAnimationFrame(frame);
   });
+}
+
+// ── TTS 流式播放 ──────────────────────────────────────────────────────────────
+const _ttsStreams = new Map(); // msg_id -> { ctx, nextTime, chunks }
+const TTS_SAMPLE_RATE = 24000;
+
+function ttsStreamStart(msgId) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TTS_SAMPLE_RATE });
+  _ttsStreams.set(msgId, { ctx, nextTime: ctx.currentTime + 0.1, chunks: [] });
+}
+
+function ttsStreamChunk(msgId, base64) {
+  const state = _ttsStreams.get(msgId);
+  if (!state) return;
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  state.chunks.push(bytes);
+  const samples = new Int16Array(bytes.buffer);
+  const floats = new Float32Array(samples.length);
+  for (let i = 0; i < samples.length; i++) floats[i] = samples[i] / 32768;
+  const buf = state.ctx.createBuffer(1, floats.length, TTS_SAMPLE_RATE);
+  buf.copyToChannel(floats, 0);
+  const src = state.ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(state.ctx.destination);
+  const startAt = Math.max(state.nextTime, state.ctx.currentTime + 0.02);
+  src.start(startAt);
+  state.nextTime = startAt + buf.duration;
+}
+
+function ttsStreamEnd(msgId, audioUrl) {
+  const state = _ttsStreams.get(msgId);
+  if (state) {
+    // ctx 保持运行直到音频播完，之后 GC 自动回收
+    _ttsStreams.delete(msgId);
+  }
+  if (audioUrl) attachTtsPlayer(msgId, audioUrl, false);
 }
 
 function attachTtsPlayer(msgId, audioUrl, autoPlay = true, targetWrap = null) {

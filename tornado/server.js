@@ -2374,14 +2374,24 @@ async function handleRequest(req, res) {
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
           console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
           const ch = ttsChar.voice_channel || "qwen";
-          const { url: audioUrl } = ch === "cosyvoice"
-            ? await synthesizeSpeechCosyVoice(ttsInput, ttsChar.voice_id, lang, instruction)
-            : ch === "qwen-omni"
+          let audioUrl;
+          if (ch === "cosyvoice") {
+            pushToUser(userId, { tts_stream_start: true, msg_id: Number(msgId) });
+            const { url } = await synthesizeSpeechCosyVoice(
+              ttsInput, ttsChar.voice_id, lang, instruction,
+              (chunk) => pushToUser(userId, { tts_chunk: true, msg_id: Number(msgId), data: chunk.toString("base64") })
+            );
+            audioUrl = url;
+            pushToUser(userId, { tts_stream_end: true, msg_id: Number(msgId), audio_url: audioUrl });
+          } else {
+            const { url } = ch === "qwen-omni"
               ? await synthesizeSpeechQwenOmni(ttsInput, ttsChar.voice_id, lang, instruction)
               : await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
+            audioUrl = url;
+            pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
+          }
           console.log(`[tts] 合成完成 url=${audioUrl}`);
           await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
-          pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
         } catch (err) {
           console.error("[tts] 合成失败:", err.message);
         }
@@ -3042,26 +3052,57 @@ async function deleteVoiceCosyVoice(voiceId) {
   });
 }
 
-async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", instruction = "") {
-  const input = { text, voice: voiceId, format: "wav", sample_rate: 24000, language_hints: [lang] };
-  if (instruction) input.instruction = instruction;
-  const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "cosyvoice-v3.5-plus", input })
+async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", instruction = "", onChunk = null) {
+  const taskId = crypto.randomUUID();
+  const allChunks = [];
+
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket("wss://dashscope.aliyuncs.com/api-ws/v1/inference", {
+      headers: { Authorization: `Bearer ${OPENAI_API_KEY}` }
+    });
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return; settled = true; clearTimeout(timer);
+      err ? reject(err) : resolve();
+    };
+    const timer = setTimeout(() => { ws.terminate(); finish(new Error("CosyVoice TTS timeout")); }, 60000);
+
+    ws.on("open", () => {
+      const parameters = { text_type: "PlainText", voice: voiceId, format: "pcm", sample_rate: 24000, volume: 50, rate: 1.0, pitch: 1.0 };
+      if (instruction) parameters.instruction = instruction;
+      if (lang !== "zh") parameters.language_hints = [lang];
+      ws.send(JSON.stringify({
+        header: { action: "run-task", task_id: taskId, streaming: "duplex" },
+        payload: { task_group: "audio", task: "tts", function: "SpeechSynthesizer", model: "cosyvoice-v3.5-plus", parameters, input: {} }
+      }));
+    });
+
+    ws.on("message", (data, isBinary) => {
+      if (isBinary) {
+        const chunk = Buffer.from(data);
+        allChunks.push(chunk);
+        if (onChunk) onChunk(chunk);
+        return;
+      }
+      let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
+      const event = msg.header?.event;
+      if (event === "task-started") {
+        ws.send(JSON.stringify({ header: { action: "continue-task", task_id: taskId, streaming: "duplex" }, payload: { input: { text } } }));
+        ws.send(JSON.stringify({ header: { action: "finish-task", task_id: taskId, streaming: "duplex" }, payload: { input: {} } }));
+      } else if (event === "task-finished") {
+        ws.close(); finish(null);
+      } else if (event === "task-failed") {
+        finish(new Error(`CosyVoice TTS failed: ${msg.header?.error_message || JSON.stringify(msg)}`));
+      }
+    });
+    ws.on("error", (err) => finish(err));
+    ws.on("close", () => finish(null));
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`CosyVoice TTS ${res.status}: ${body.slice(0, 300)}`);
-  }
-  const data = await res.json();
-  const tempUrl = data.output?.audio?.url;
-  if (!tempUrl) throw new Error(`CosyVoice TTS: no audio url. ${JSON.stringify(data).slice(0, 200)}`);
-  const dlRes = await fetch(tempUrl);
-  if (!dlRes.ok) throw new Error(`CosyVoice TTS 音频下载失败: ${dlRes.status}`);
-  const buf = Buffer.from(await dlRes.arrayBuffer());
+
+  const pcm = Buffer.concat(allChunks);
+  const wav = pcm16ToWav(pcm, 24000, 1, 16);
   const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
-  const url = await uploadToOss(buf, filename);
+  const url = await uploadToOss(wav, filename);
   return { url, durationMs: 0 };
 }
 
