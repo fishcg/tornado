@@ -35,7 +35,7 @@ export async function answerQuestion(question, sourcePrefix) {
   const result = await generateStructured({
     schemaName: "memory_query_answer",
     schema: answerSchema,
-    model: "qwen-plus-latest",
+    model: "qwen-turbo-latest",
     enable_thinking: false,
     instructions:
       "Answer using only the provided memories and consolidations. Cite memory IDs like [Memory 3]. If evidence is weak, say so directly. 仅返回 json 格式数据，不要换行，注意特殊字符转义，不要输出额外的符号或字符，也不要加 markdonw 等语法，即第一个字符必须是 {，最后一个字符必须是 } ",
@@ -52,20 +52,16 @@ export async function answerQuestion(question, sourcePrefix) {
               JSON.stringify(
                 memories.map((memory) => ({
                   id: memory.id,
-                  source: memory.source,
                   summary: memory.summary,
-                  raw_text: memory.raw_text,
                   topics: memory.topics,
-                  entities: memory.entities,
-                  importance: memory.importance,
-                  connections: memory.connections
+                  importance: memory.importance
                 })),
                 null,
                 2
               ),
               "",
               "Consolidations:",
-              JSON.stringify(consolidations, null, 2)
+              JSON.stringify(consolidations.map((c) => ({ summary: c.summary, insight: c.insight })), null, 2)
             ].join("\n")
           }
         ]
