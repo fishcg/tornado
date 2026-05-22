@@ -1256,6 +1256,7 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
   pushToUser(userId, {
     incoming_call: true,
     call_log_id: callLogResult.insertId,
+    session_id: sessionId,
     char_name: char.name,
     script,
     audio_url: audioUrl,
@@ -3099,6 +3100,7 @@ setInterval(async () => {
       pushToUser(userId, {
         incoming_call: true,
         call_log_id: callLogId,
+        session_id: session.id,
         char_name: char.name,
         script,
         audio_url: audioUrl,

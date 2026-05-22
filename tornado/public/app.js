@@ -1350,6 +1350,7 @@ function handleWsPayload(payload) {
     ttsStreamEnd(payload.msg_id, payload.audio_url);
   }
   if (payload.incoming_call) {
+    if (payload.session_id && payload.session_id !== currentSessionId) return;
     showIncomingCall(payload);
   }
 }
