@@ -1250,7 +1250,10 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
       const ttsInput = lang === "ja" ? await translateToJapanese(ttsScript) : ttsScript;
       const ch = char.voice_channel || "qwen";
       const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
-      const { url } = await synthFn(ttsInput, char.voice_id, lang);
+      const callInstruction = (type === "emotion" || type?.startsWith("holiday") || type === "streak")
+        ? "带电话音效果，语气温柔，声音轻柔关切"
+        : "带电话音效果，语气有点生气，带着一丝委屈";
+      const { url } = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
       audioUrl = url;
     } catch (err) {
       console.error("[特殊来电] TTS 失败:", err.message);
@@ -3087,7 +3090,7 @@ setInterval(async () => {
           if (lang === "ja") ttsInput = await translateToJapanese(ttsScript);
           const ch = char.voice_channel || "qwen";
           const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
-          const { url } = await synthFn(ttsInput, char.voice_id, lang);
+          const { url } = await synthFn(ttsInput, char.voice_id, lang, "带电话音效果，语气有点生气，带着一丝委屈");
           audioUrl = url;
         } catch (err) {
           console.error("[来电] TTS 合成失败:", err.message);
