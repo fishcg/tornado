@@ -2991,7 +2991,7 @@ setInterval(async () => {
   }
 }, PROACTIVE_CHECK_MS);
 
-// ── 角色来电检测（每 1 分钟，按角色维度）────────────────────────────────────
+// ── 角色来电检测（每 1 分钟，按当前活跃 session 维度）────────────────────────
 setInterval(async () => {
   const now = Date.now();
   const nowHHMM = new Date().toTimeString().slice(0, 5);
@@ -3001,64 +3001,59 @@ setInterval(async () => {
   const callCooldownMs = Number(await getGlobalSetting("call_cooldown_minutes", "60")) * 60 * 1000;
   const today = new Date().toISOString().slice(0, 10);
 
-  // 只处理有活跃 WS 连接的用户
-  const activeUserIds = [...userClients.entries()]
+  // 只处理有活跃 WS 连接的 session
+  const activeSessionIds = [...sessionClients.entries()]
     .filter(([, set]) => set.size > 0)
-    .map(([uid]) => uid);
-  if (activeUserIds.length === 0) return;
+    .map(([sid]) => Number(sid));
+  console.log(`[来电检测] activeSessionIds=${JSON.stringify(activeSessionIds)}`);
+  if (activeSessionIds.length === 0) return;
 
-  for (const userId of activeUserIds) {
-    // 获取该用户所有角色
-    const chars = await dbAll(
-      "SELECT * FROM characters WHERE user_id = ? ORDER BY id ASC",
-      [userId]
-    );
+  for (const sessionId of activeSessionIds) {
+    const session = await getSession(sessionId);
+    if (!session || session.archived) continue;
+    const userId = session.user_id;
+    if (!userId) continue;
 
-    // 勿扰时段（取用户任意一个 session 的 dnd 配置，通常全局一致）
-    const anySession = await dbGet(
-      "SELECT dnd_start, dnd_end FROM sessions WHERE user_id = ? AND archived = 0 LIMIT 1",
-      [userId]
-    );
-    if (anySession?.dnd_start && anySession?.dnd_end) {
-      const { dnd_start, dnd_end } = anySession;
+    // 勿扰时段
+    if (session.dnd_start && session.dnd_end) {
+      const { dnd_start, dnd_end } = session;
       const inDnd = dnd_start <= dnd_end
         ? nowHHMM >= dnd_start && nowHHMM < dnd_end
         : nowHHMM >= dnd_start || nowHHMM < dnd_end;
       if (inDnd) continue;
     }
 
-    for (const char of chars) {
-      // 找该角色最近的 session
-      const session = await dbGet(`
-        SELECT s.* FROM sessions s
-        WHERE s.user_id = ? AND s.archived = 0
-          AND EXISTS (SELECT 1 FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name = ?)
-        ORDER BY s.updated_at DESC LIMIT 1
-      `, [userId, char.name]);
-      if (!session) continue;
+    // 该 session 对应的角色（取最后一条 assistant 消息的 character_name）
+    const lastAssistantMsg = await dbGet(
+      "SELECT character_name FROM messages WHERE session_id = ? AND role = 'assistant' AND character_name IS NOT NULL ORDER BY id DESC LIMIT 1",
+      [sessionId]
+    );
+    if (!lastAssistantMsg?.character_name) continue;
+    const char = await dbGet("SELECT * FROM characters WHERE name = ? AND user_id = ?", [lastAssistantMsg.character_name, userId]);
+    if (!char) continue;
 
-      // 该 session 中最近一条用户消息时间
-      const lastUserMsg = await dbGet(
-        "SELECT MAX(created_at) as last_user_at_char FROM messages WHERE session_id = ? AND role = 'user'",
-        [session.id]
-      );
-      const lastUserAt = lastUserMsg?.last_user_at_char;
-      if (!lastUserAt) continue;
+    // 最近一条用户消息时间
+    const lastUserMsg = await dbGet(
+      "SELECT MAX(created_at) as last_user_at FROM messages WHERE session_id = ? AND role = 'user'",
+      [sessionId]
+    );
+    const lastUserAt = lastUserMsg?.last_user_at;
+    if (!lastUserAt) continue;
 
-      const idleMs = now - new Date(lastUserAt).getTime();
-      if (idleMs < callIdleMs) continue;
+    const idleMs = now - new Date(lastUserAt).getTime();
+    if (idleMs < callIdleMs) continue;
 
-      // 冷却期：距上次来电不足 call_cooldown_minutes 分钟则跳过
-      if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) continue;
+    // 冷却期
+    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) continue;
 
-      // 今日该角色对话中的用户消息数
-      const todayMsgs = await dbGet(`
-        SELECT COUNT(*) as n FROM messages m
-        JOIN sessions s ON s.id = m.session_id
-        WHERE s.user_id = ? AND m.role = 'user' AND m.created_at LIKE ?
-          AND EXISTS (SELECT 1 FROM messages WHERE session_id = m.session_id AND role = 'assistant' AND character_name = ?)
-      `, [userId, `${today}%`, char.name]);
-      if ((todayMsgs?.n || 0) < callMinMessages) continue;
+    // 今日该角色对话中的用户消息数
+    const todayMsgs = await dbGet(`
+      SELECT COUNT(*) as n FROM messages m
+      JOIN sessions s ON s.id = m.session_id
+      WHERE s.user_id = ? AND m.role = 'user' AND m.created_at LIKE ?
+        AND EXISTS (SELECT 1 FROM messages WHERE session_id = m.session_id AND role = 'assistant' AND character_name = ?)
+    `, [userId, `${today}%`, char.name]);
+    if ((todayMsgs?.n || 0) < callMinMessages) continue;
 
       console.log(`[来电] user=${userId} char=${char.name} session=${session.id} reason=空闲 今日消息=${todayMsgs.n} 空闲=${Math.round(idleMs / 60000)}分钟 tts=${char.tts_enabled ? "on" : "off"}`);
       await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
@@ -3106,20 +3101,20 @@ setInterval(async () => {
         audio_url: audioUrl,
         tts_lang: lang
       });
-    }
+  }
 
-    // 节日来电检查（每年每节日触发一次，对所有在线用户）
-    const HOLIDAYS = { "02-14": "情人节", "05-20": "520", "07-07": "七夕", "12-25": "圣诞节", "01-01": "元旦" };
-    const todayMMDD = today.slice(5);
-    if (HOLIDAYS[todayMMDD]) {
-      const holidayKey = `holiday_call_${today.slice(0, 4)}_${todayMMDD}`;
-      if (await getGlobalSetting(holidayKey, "0") === "0") {
-        await setGlobalSetting(holidayKey, "1");
-        console.log(`[节日来电] 触发 ${HOLIDAYS[todayMMDD]}（${todayMMDD}），在线用户数=${activeUserIds.length}`);
-        for (const uid of activeUserIds) {
-          const s = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [uid]);
-          if (s) triggerSpecialCall(s.id, uid, `holiday_${todayMMDD}`, HOLIDAYS[todayMMDD]).catch((e) => console.error("[节日来电] 失败:", e.message));
-        }
+  // 节日来电检查（每年每节日触发一次，对所有在线用户）
+  const HOLIDAYS = { "02-14": "情人节", "05-20": "520", "07-07": "七夕", "12-25": "圣诞节", "01-01": "元旦" };
+  const todayMMDD = today.slice(5);
+  if (HOLIDAYS[todayMMDD]) {
+    const holidayKey = `holiday_call_${today.slice(0, 4)}_${todayMMDD}`;
+    if (await getGlobalSetting(holidayKey, "0") === "0") {
+      await setGlobalSetting(holidayKey, "1");
+      const activeUids = [...userClients.entries()].filter(([, set]) => set.size > 0).map(([uid]) => uid);
+      console.log(`[节日来电] 触发 ${HOLIDAYS[todayMMDD]}（${todayMMDD}），在线用户数=${activeUids.length}`);
+      for (const uid of activeUids) {
+        const s = await dbGet("SELECT id FROM sessions WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT 1", [uid]);
+        if (s) triggerSpecialCall(s.id, uid, `holiday_${todayMMDD}`, HOLIDAYS[todayMMDD]).catch((e) => console.error("[节日来电] 失败:", e.message));
       }
     }
   }
