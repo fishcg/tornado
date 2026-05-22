@@ -443,17 +443,37 @@
           </select>
           <span style="color:var(--text-dim);font-size:13px">影响新上传音色使用的复刻渠道，已复刻的角色不受影响</span>
         </div>
-        <h3 style="margin-top:16px">角色来电触发条件</h3>
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span style="color:var(--text-dim);font-size:13px">当天消息数 ≥</span>
-          <input type="number" id="callMinMessages" min="1" max="999" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
-          <span style="color:var(--text-dim);font-size:13px">句，且用户沉默超过</span>
-          <input type="number" id="callIdleMinutes" min="1" max="1440" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
-          <span style="color:var(--text-dim);font-size:13px">分钟，角色来电；每</span>
-          <input type="number" id="callCooldownMinutes" min="1" max="10080" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
-          <span style="color:var(--text-dim);font-size:13px">分钟内同一角色最多来电 1 次</span>
-        </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
+      </div>
+      <div class="admin-form">
+        <h3>通话管理</h3>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="color:var(--text-dim);font-size:13px;min-width:80px">空闲来电</span>
+            <span style="color:var(--text-dim);font-size:13px">当天消息数 ≥</span>
+            <input type="number" id="callMinMessages" min="1" max="999" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <span style="color:var(--text-dim);font-size:13px">句，且用户沉默超过</span>
+            <input type="number" id="callIdleMinutes" min="1" max="1440" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <span style="color:var(--text-dim);font-size:13px">分钟触发</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="color:var(--text-dim);font-size:13px;min-width:80px">来电冷却</span>
+            <span style="color:var(--text-dim);font-size:13px">同一角色每</span>
+            <input type="number" id="callCooldownMinutes" min="1" max="10080" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <span style="color:var(--text-dim);font-size:13px">分钟内最多来电 1 次</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="color:var(--text-dim);font-size:13px;min-width:80px">情绪来电</span>
+            <span style="color:var(--text-dim);font-size:13px">检测到用户情绪低落时触发（好感度 &gt; 60），每</span>
+            <input type="number" id="callEmotionCooldownMinutes" min="1" max="10080" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <span style="color:var(--text-dim);font-size:13px">分钟最多触发 1 次</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="color:var(--text-dim);font-size:13px;min-width:80px">节日来电</span>
+            <span style="color:var(--text-dim);font-size:13px">情人节（02-14）、520（05-20）、七夕（07-07）、圣诞（12-25）、元旦（01-01）每年各触发一次</span>
+          </div>
+        </div>
+        <button class="btn-sm btn-primary" id="saveCallSettingsBtn" style="margin-top:12px">保存</button>
       </div>
       <div class="admin-form">
         <h3>Soul 编辑（soul.md）</h3>
@@ -729,6 +749,7 @@ async function loadSystem() {
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
     document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
+    document.getElementById("callEmotionCooldownMinutes").value = settings.call_emotion_cooldown_minutes ?? "120";
   }
   if (soulData) {
     document.getElementById("soulEditor").value = soulData.soul || "";
@@ -747,10 +768,16 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const milestoneVideoDuration = Number(document.getElementById("milestoneVideoDuration").value) || 3;
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, tts_channel: ttsChannel }) });
+  if (data) showMsg("已保存");
+});
+
+document.getElementById("saveCallSettingsBtn").addEventListener("click", async () => {
   const callMinMessages = Number(document.getElementById("callMinMessages").value) || 20;
   const callIdleMinutes = Number(document.getElementById("callIdleMinutes").value) || 5;
   const callCooldownMinutes = Number(document.getElementById("callCooldownMinutes").value) || 60;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, tts_channel: ttsChannel, call_min_messages: callMinMessages, call_idle_minutes: callIdleMinutes, call_cooldown_minutes: callCooldownMinutes }) });
+  const callEmotionCooldownMinutes = Number(document.getElementById("callEmotionCooldownMinutes").value) || 120;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ call_min_messages: callMinMessages, call_idle_minutes: callIdleMinutes, call_cooldown_minutes: callCooldownMinutes, call_emotion_cooldown_minutes: callEmotionCooldownMinutes }) });
   if (data) showMsg("已保存");
 });
 

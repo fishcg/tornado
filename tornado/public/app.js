@@ -19,7 +19,7 @@ function renderBubbleText(text) {
   }).join('');
 }
 
-let currentSessionId = null;
+let currentSessionId = (() => { try { return Number(localStorage.getItem("lastSessionId")) || null; } catch { return null; } })();
 let sending = false;
 let allMessages = [];
 let autoModeEnabled = false;
@@ -544,8 +544,14 @@ async function loadSessions() {
     api("GET", "/character").catch(() => ({}))
   ]);
   renderSessionList(sessions, charInfo?.name || "");
-  if (sessions.length > 0 && !currentSessionId) {
-    await selectSession(sessions[0].id);
+  if (sessions.length > 0) {
+    const restoredExists = currentSessionId && sessions.some((s) => s.id === currentSessionId);
+    const needsLoad = !document.querySelector("#messages .message, #messages .empty-hint");
+    if (restoredExists && needsLoad) {
+      await selectSession(currentSessionId);
+    } else if (!restoredExists) {
+      await selectSession(sessions[0].id);
+    }
   }
 }
 
@@ -630,6 +636,7 @@ function renderSessionList(sessions, activeCharName = "") {
         await api("DELETE", `/sessions/${s.id}`);
         if (currentSessionId === s.id) {
           currentSessionId = null;
+          try { localStorage.removeItem("lastSessionId"); } catch {}
           messages.innerHTML = "";
         }
         await loadSessions();
@@ -656,6 +663,7 @@ function renderSessionList(sessions, activeCharName = "") {
 
 async function selectSession(id) {
   currentSessionId = id;
+  try { localStorage.setItem("lastSessionId", String(id)); } catch {}
   document.querySelectorAll("#session-list li").forEach((li) => {
     if (!li.dataset.id) return;
     li.classList.toggle("active", Number(li.dataset.id) === id);
@@ -707,6 +715,7 @@ async function selectSession(id) {
 async function newSession() {
   const s = await api("POST", "/sessions", { title: "新对话" });
   currentSessionId = s.id;
+  try { localStorage.setItem("lastSessionId", String(s.id)); } catch {}
   await loadSessions();
   messages.innerHTML = `<div class="empty-hint">开始聊天吧</div>`;
   input.focus();
@@ -1518,8 +1527,8 @@ function showIncomingCall(data) {
 
     if (data.audio_url) {
       callAudio = new Audio(data.audio_url);
-      // 接通后等 1s 再播放，模拟真实通话接通延迟
-      setTimeout(() => { callAudio?.play().catch(() => {}); }, 1000);
+      // 接通后等 0.7s 再播放，模拟真实通话接通延迟
+      setTimeout(() => { callAudio?.play().catch(() => {}); }, 700);
       callAudio.onended = () => {
         clearInterval(callTimer);
         status.textContent = "通话结束";

@@ -989,10 +989,7 @@ ${personality}当前心动值：${current}/100，${relationStage}。
       const settings = await getUserSettings(userId);
       checkAndUnlockAchievements(userId, sessionId, settings).catch((e) => console.error("[achievements] 调用失败:", e.message));
       checkRelationshipMilestone(userId, sessionId, current, newVal, settings).catch((e) => console.error("[milestone] 调用失败:", e.message));
-      // 好感度整20档触发特殊来电
-      if (Math.floor(newVal / 20) > Math.floor(current / 20) && newVal > 0) {
-        triggerSpecialCall(sessionId, userId, "affection", newVal).catch((e) => console.error("[特殊来电] affection 触发失败:", e.message));
-      }
+
     }
   } catch (err) {
     console.error("[affection] 更新失败:", err.message);
@@ -1178,6 +1175,7 @@ async function generateVoicemail(sessionId, userId, charName) {
 const SPECIAL_CALL_PROMPTS = {
   affection: (val) => `用户和你的好感度刚刚达到了 ${val} 点，你很开心，打电话来表达感情加深的喜悦，聊聊你们的关系。`,
   streak: (val) => `你们已经连续聊天 ${val} 天了，你打电话来庆祝这个小里程碑，表达陪伴的感动。`,
+  emotion: () => "你察觉到用户情绪有些低落或疲惫，主动打电话来关心，语气温柔体贴，开头用"喂？听得到吗？"，问问他/她是不是遇到了什么烦心事。",
   "holiday_02-14": () => "今天是情人节，你打电话来送上节日祝福，表达心意。",
   "holiday_05-20": () => "今天是520，你打电话来告白或表达爱意，真诚而温柔。",
   "holiday_07-07": () => "今天是七夕，你打电话来聊聊这个浪漫的节日，表达思念。",
@@ -1259,6 +1257,25 @@ async function triggerSpecialCall(sessionId, userId, type, value) {
     tts_lang: lang
   });
   console.log(`[特殊来电] user=${userId} type=${type} value=${value}`);
+}
+
+async function detectLowMood(text) {
+  try {
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      enable_thinking: false,
+      messages: [
+        {
+          role: "system",
+          content: "判断用户的消息是否表现出情绪低落、疲惫、难过、叹气、压力大等负面情绪。只回答 yes 或 no，不要解释。"
+        },
+        { role: "user", content: text }
+      ]
+    });
+    return (res.choices?.[0]?.message?.content || "").trim().toLowerCase().startsWith("yes");
+  } catch {
+    return false;
+  }
 }
 
 async function generateAutoUserMessage(sessionId) {
@@ -1697,7 +1714,8 @@ async function handleRequest(req, res) {
         tts_channel: await getGlobalSetting("tts_channel", "qwen"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
-        call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60")
+        call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
+        call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120")
       });
       return;
     }
@@ -1735,6 +1753,9 @@ async function handleRequest(req, res) {
       if ("call_cooldown_minutes" in body) {
         await setGlobalSetting("call_cooldown_minutes", String(Math.max(1, Number(body.call_cooldown_minutes) || 60)));
       }
+      if ("call_emotion_cooldown_minutes" in body) {
+        await setGlobalSetting("call_emotion_cooldown_minutes", String(Math.max(1, Number(body.call_emotion_cooldown_minutes) || 120)));
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
@@ -1745,7 +1766,8 @@ async function handleRequest(req, res) {
         tts_channel: await getGlobalSetting("tts_channel", "qwen"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
-        call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60")
+        call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
+        call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120")
       });
       return;
     }
@@ -2570,6 +2592,22 @@ async function handleRequest(req, res) {
     }
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
+    // 情绪低落触发来电：好感度 > 60 时，LLM 检测用户情绪
+    if ((char?.affection ?? 0) > 60) {
+      (async () => {
+        try {
+          const emotionCooldownMs = Number(await getGlobalSetting("call_emotion_cooldown_minutes", "120")) * 60000;
+          const lastEmotionCall = await getGlobalSetting(`emotion_call_last_${userId}`, "0");
+          if (Date.now() - Number(lastEmotionCall) < emotionCooldownMs) return;
+          const isLow = await detectLowMood(userText);
+          if (!isLow) return;
+          await setGlobalSetting(`emotion_call_last_${userId}`, String(Date.now()));
+          triggerSpecialCall(sessionId, userId, "emotion", null).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
+        } catch (e) {
+          console.error("[情绪来电] 检测失败:", e.message);
+        }
+      })();
+    }
 
     // 异步 TTS 合成，合成完通过 WS 推送播放
     console.log(`[tts] 检查条件 ttsEnabled=${ttsSettings.ttsEnabled} voice_id=${ttsChar?.voice_id || "无"}`);
