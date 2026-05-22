@@ -820,8 +820,8 @@ function appendBubble(role, content, extraClass = "", imageUrl = null, msgId = n
   wrap.appendChild(avatar);
   wrap.appendChild(bubble);
 
-  // 助手消息加重新生成按钮
-  if (role === "assistant" && msgId) {
+  // 助手消息加重新生成按钮（电话气泡不加）
+  if (role === "assistant" && msgId && !isCallMsg) {
     const regenBtn = document.createElement("button");
     regenBtn.className = "btn-regen";
     regenBtn.title = "重新生成";

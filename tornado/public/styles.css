@@ -507,6 +507,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   pointer-events: none;
   align-self: flex-start;
   margin-top: 4px;
+  margin-left: -6px;
   order: 99;
   flex-shrink: 0;
   background: none;

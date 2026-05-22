@@ -1265,6 +1265,7 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
     [userId, sessionId, char.name, script, audioUrl || null, nowIso()]
   );
   const msgId = await appendMessage(sessionId, "assistant", `📞 ${script}`, char.name, userId);
+  if (audioUrl) await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
   pushToUser(userId, {
     incoming_call: true,
     call_log_id: callLogResult.insertId,
@@ -3106,6 +3107,7 @@ setInterval(async () => {
 
       // 写入对话记录（标识为来电）
       const callMsgId = await appendMessage(session.id, "assistant", `📞 ${script}`, char.name, userId);
+      if (audioUrl) await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, callMsgId]);
 
       pushToUser(userId, {
         incoming_call: true,
