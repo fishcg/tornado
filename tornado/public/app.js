@@ -1340,6 +1340,110 @@ function handleWsPayload(payload) {
   if (payload.tts_stream_end) {
     ttsStreamEnd(payload.msg_id, payload.audio_url);
   }
+  if (payload.incoming_call) {
+    showIncomingCall(payload);
+  }
+}
+
+function showIncomingCall(data) {
+  if (document.getElementById("call-overlay")) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "call-overlay";
+  overlay.className = "call-overlay";
+
+  const phone = document.createElement("div");
+  phone.className = "call-phone";
+
+  const avatar = document.createElement("div");
+  avatar.className = "call-avatar";
+  avatar.textContent = (data.char_name || "?")[0];
+
+  const charName = document.createElement("div");
+  charName.className = "call-char-name";
+  charName.textContent = data.char_name || "";
+
+  const status = document.createElement("div");
+  status.className = "call-status";
+  status.textContent = "来电中…";
+
+  const subtitle = document.createElement("div");
+  subtitle.className = "call-subtitle";
+  subtitle.style.display = "none";
+
+  const actions = document.createElement("div");
+  actions.className = "call-actions";
+
+  const declineBtn = document.createElement("button");
+  declineBtn.className = "call-btn call-btn-decline";
+  declineBtn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.42 19.42 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 3.53 4.4z"/><line x1="23" y1="1" x2="1" y2="23"/></svg>`;
+  declineBtn.title = "挂断";
+
+  const acceptBtn = document.createElement("button");
+  acceptBtn.className = "call-btn call-btn-accept";
+  acceptBtn.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.13 19.13 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 6.61 6.61l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`;
+  acceptBtn.title = "接听";
+
+  actions.appendChild(declineBtn);
+  actions.appendChild(acceptBtn);
+  phone.appendChild(avatar);
+  phone.appendChild(charName);
+  phone.appendChild(status);
+  phone.appendChild(subtitle);
+  phone.appendChild(actions);
+  overlay.appendChild(phone);
+  document.body.appendChild(overlay);
+
+  // 铃声，最多响 10 次
+  const ring = new Audio("/audio/ring.mp3");
+  let ringCount = 0;
+  ring.play().catch(() => {});
+  ring.onended = () => {
+    ringCount++;
+    if (ringCount >= 10) {
+      close();
+    } else {
+      ring.play().catch(() => {});
+    }
+  };
+
+  function close() {
+    ring.pause();
+    ring.onended = null;
+    overlay.remove();
+  }
+
+  declineBtn.addEventListener("click", close);
+
+  acceptBtn.addEventListener("click", () => {
+    ring.pause();
+    ring.onended = null;
+    status.textContent = "通话中…";
+    actions.style.display = "none";
+
+    // 显示字幕（日语模式下显示中文原文）
+    if (data.tts_lang === "ja" && data.script) {
+      subtitle.textContent = data.script;
+      subtitle.style.display = "block";
+    }
+
+    if (data.audio_url) {
+      const audio = new Audio(data.audio_url);
+      audio.play().catch(() => {});
+      audio.onended = () => {
+        status.textContent = "通话结束";
+        subtitle.style.display = "none";
+        setTimeout(close, 1500);
+      };
+    } else {
+      // 无音频时直接显示文字
+      if (data.script) {
+        subtitle.textContent = data.script;
+        subtitle.style.display = "block";
+      }
+      setTimeout(close, 6000);
+    }
+  });
 }
 
 function connectEvents(sessionId) {

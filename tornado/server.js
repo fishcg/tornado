@@ -1120,6 +1120,32 @@ async function generateProactiveMessage(sessionId, userId) {
   }
 }
 
+async function generateCallScript(sessionId, userId) {
+  const msgs = await getMessages(sessionId);
+  if (msgs.length === 0) return null;
+  const charName = await getCharacterName(userId);
+  const context = msgs.slice(-10).map((m) =>
+    `${m.role === "user" ? "用户" : charName}：${m.content}`
+  ).join("\n");
+  const soul = await loadSoul(userId);
+  try {
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      enable_thinking: false,
+      messages: [
+        {
+          role: "system",
+          content: `${soul}\n\n你正在给用户打电话。根据最近的对话，自然地询问用户为什么没有回复，或者发起一个新的话题。要求：口语化、亲切、约200字，像真实通话一样，不要提及"打电话"这个动作本身，直接开口说话。`
+        },
+        { role: "user", content: `最近对话：\n${context}` }
+      ]
+    });
+    return (res.choices?.[0]?.message?.content || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 async function generateAutoUserMessage(sessionId) {
   const msgs = await getMessages(sessionId);
   if (msgs.length === 0) return null;
@@ -1553,7 +1579,9 @@ async function handleRequest(req, res) {
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
-        tts_channel: await getGlobalSetting("tts_channel", "qwen")
+        tts_channel: await getGlobalSetting("tts_channel", "qwen"),
+        call_min_messages: await getGlobalSetting("call_min_messages", "20"),
+        call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5")
       });
       return;
     }
@@ -1582,6 +1610,12 @@ async function handleRequest(req, res) {
       if ("tts_channel" in body && ["qwen", "qwen-omni", "cosyvoice"].includes(body.tts_channel)) {
         await setGlobalSetting("tts_channel", body.tts_channel);
       }
+      if ("call_min_messages" in body) {
+        await setGlobalSetting("call_min_messages", String(Math.max(1, Number(body.call_min_messages) || 20)));
+      }
+      if ("call_idle_minutes" in body) {
+        await setGlobalSetting("call_idle_minutes", String(Math.max(1, Number(body.call_idle_minutes) || 5)));
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
@@ -1589,7 +1623,9 @@ async function handleRequest(req, res) {
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
-        tts_channel: await getGlobalSetting("tts_channel", "qwen")
+        tts_channel: await getGlobalSetting("tts_channel", "qwen"),
+        call_min_messages: await getGlobalSetting("call_min_messages", "20"),
+        call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5")
       });
       return;
     }
@@ -2729,6 +2765,75 @@ setInterval(async () => {
     updateMood(session.id, updatedMsgs, sessionUserId).catch(() => {});
   }
 }, PROACTIVE_CHECK_MS);
+
+// ── 角色来电检测（每 1 分钟）────────────────────────────────────────────────
+setInterval(async () => {
+  const sessions = await listAllActiveSessions();
+  const now = Date.now();
+  const nowHHMM = new Date().toTimeString().slice(0, 5);
+  const callMinMessages = Number(await getGlobalSetting("call_min_messages", "20"));
+  const callIdleMinutes = Number(await getGlobalSetting("call_idle_minutes", "5"));
+  const callIdleMs = callIdleMinutes * 60 * 1000;
+  const today = new Date().toISOString().slice(0, 10);
+
+  for (const session of sessions) {
+    if (!session.last_user_at) continue;
+    const idleMs = now - new Date(session.last_user_at).getTime();
+    if (idleMs < callIdleMs) continue;
+    // 来电后用户未回复则不再重复触发
+    if (session.last_call_at && session.last_user_at <= session.last_call_at) continue;
+    // 勿扰时段
+    if (session.dnd_start && session.dnd_end) {
+      const inDnd = session.dnd_start <= session.dnd_end
+        ? nowHHMM >= session.dnd_start && nowHHMM < session.dnd_end
+        : nowHHMM >= session.dnd_start || nowHHMM < session.dnd_end;
+      if (inDnd) continue;
+    }
+    // 只推给有活跃连接的 session
+    const clients = sessionClients.get(session.id);
+    if (!clients || clients.size === 0) continue;
+    // 今日用户消息数
+    const sessionUserId = session.user_id ?? null;
+    const todayMsgs = await dbGet(
+      "SELECT COUNT(*) as n FROM messages WHERE session_id = ? AND role = 'user' AND created_at LIKE ?",
+      [session.id, `${today}%`]
+    );
+    if ((todayMsgs?.n || 0) < callMinMessages) continue;
+
+    console.log(`[来电] session=${session.id} 触发，今日消息=${todayMsgs.n}，空闲=${Math.round(idleMs / 60000)}分钟`);
+    await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
+
+    const script = await generateCallScript(session.id, sessionUserId).catch(() => null);
+    if (!script) continue;
+
+    const char = await getActiveCharacter(sessionUserId);
+    const charName = char?.name || await getCharacterName(sessionUserId);
+    let audioUrl = null;
+
+    if (char?.voice_id && char?.tts_enabled) {
+      try {
+        const ttsSettings = await getUserSettings(sessionUserId);
+        const lang = ttsSettings.ttsLang || "zh";
+        let ttsInput = script;
+        if (lang === "ja") ttsInput = await translateToJapanese(script);
+        const ch = char.voice_channel || "qwen";
+        const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
+        const { url } = await synthFn(ttsInput, char.voice_id, lang);
+        audioUrl = url;
+      } catch (err) {
+        console.error("[来电] TTS 合成失败:", err.message);
+      }
+    }
+
+    pushToSession(session.id, {
+      incoming_call: true,
+      char_name: charName,
+      script,
+      audio_url: audioUrl,
+      tts_lang: (await getUserSettings(sessionUserId)).ttsLang || "zh"
+    });
+  }
+}, 60 * 1000);
 
 // ── 启动 ──────────────────────────────────────────────────────────────────────
 

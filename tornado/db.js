@@ -220,6 +220,7 @@ export async function initDb() {
   await ensureColumn(pool, "sessions", "dnd_end", "VARCHAR(8)");
   await ensureColumn(pool, "sessions", "proactive_idle_minutes", "INT");
   await ensureColumn(pool, "sessions", "last_proactive_at", "VARCHAR(64)");
+  await ensureColumn(pool, "sessions", "last_call_at", "VARCHAR(64)");
   await ensureColumn(pool, "messages", "image_url", "TEXT");
   await ensureColumn(pool, "messages", "image_prompt", "TEXT");
   await ensureColumn(pool, "messages", "character_name", "VARCHAR(255)");

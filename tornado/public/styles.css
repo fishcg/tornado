@@ -2333,3 +2333,87 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   color: rgba(255,255,255,0.3);
   font-size: 16px;
 }
+
+/* ── 角色来电弹窗 ── */
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 10001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: rm-fade-in 0.3s ease both;
+}
+.call-phone {
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 32px;
+  padding: 40px 32px 36px;
+  width: min(320px, 88vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+}
+.call-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent, #7c6fcd), #4ea8de);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 4px;
+  animation: call-pulse 1.5s ease-in-out infinite;
+}
+@keyframes call-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(124,111,205,0.5); }
+  50% { box-shadow: 0 0 0 16px rgba(124,111,205,0); }
+}
+.call-char-name {
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+}
+.call-status {
+  font-size: 13px;
+  color: rgba(255,255,255,0.45);
+  letter-spacing: 0.05em;
+}
+.call-subtitle {
+  font-size: 13px;
+  color: rgba(255,255,255,0.6);
+  line-height: 1.6;
+  text-align: center;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 8px 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  width: 100%;
+  margin-top: 4px;
+}
+.call-actions {
+  display: flex;
+  gap: 40px;
+  margin-top: 20px;
+}
+.call-btn {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.call-btn:hover { transform: scale(1.08); }
+.call-btn:active { transform: scale(0.95); opacity: 0.8; }
+.call-btn-decline { background: #e05252; color: #fff; }
+.call-btn-accept { background: #3dba6e; color: #fff; }
