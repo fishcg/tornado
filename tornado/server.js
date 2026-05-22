@@ -3040,13 +3040,13 @@ setInterval(async () => {
       [sessionId]
     );
     const lastUserAt = lastUserMsg?.last_user_at;
-    if (!lastUserAt) continue;
+    if (!lastUserAt) { console.log(`[来电跳过] session=${sessionId} 无用户消息`); continue; }
 
     const idleMs = now - new Date(lastUserAt).getTime();
-    if (idleMs < callIdleMs) continue;
+    if (idleMs < callIdleMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 空闲不足 ${Math.round(idleMs/60000)}/${callIdleMinutes}分钟`); continue; }
 
     // 冷却期
-    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) continue;
+    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 冷却中 last_call_at=${session.last_call_at}`); continue; }
 
     // 今日该角色对话中的用户消息数
     const todayMsgs = await dbGet(`
@@ -3055,7 +3055,7 @@ setInterval(async () => {
       WHERE s.user_id = ? AND m.role = 'user' AND m.created_at LIKE ?
         AND EXISTS (SELECT 1 FROM messages WHERE session_id = m.session_id AND role = 'assistant' AND character_name = ?)
     `, [userId, `${today}%`, char.name]);
-    if ((todayMsgs?.n || 0) < callMinMessages) continue;
+    if ((todayMsgs?.n || 0) < callMinMessages) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 今日消息数不足 ${todayMsgs?.n}/${callMinMessages}`); continue; }
 
       console.log(`[来电] user=${userId} char=${char.name} session=${session.id} reason=空闲 今日消息=${todayMsgs.n} 空闲=${Math.round(idleMs / 60000)}分钟 tts=${char.tts_enabled ? "on" : "off"}`);
       await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
