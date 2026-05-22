@@ -1442,7 +1442,13 @@ async function handleRequest(req, res) {
     }
 
     if (method === "GET" && pathname === "/admin/users") {
-      const rows = await dbAll("SELECT id, username, is_admin, created_at FROM users ORDER BY id ASC", []);
+      const rows = await dbAll(`
+        SELECT u.id, u.username, u.is_admin, u.created_at,
+          (SELECT COUNT(*) FROM messages WHERE user_id = u.id AND role = 'user') as msg_count,
+          (SELECT COUNT(*) FROM sessions WHERE user_id = u.id AND archived = 0) as session_count,
+          (SELECT MAX(created_at) FROM messages WHERE user_id = u.id AND role = 'user') as last_active_at
+        FROM users u ORDER BY last_active_at DESC, u.id ASC
+      `, []);
       send(res, 200, rows);
       return;
     }

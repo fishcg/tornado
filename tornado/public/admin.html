@@ -318,7 +318,7 @@
       <h2>用户管理</h2>
       <table class="admin-table">
         <thead>
-          <tr><th>ID</th><th>用户名</th><th>角色</th><th>注册时间</th><th>操作</th></tr>
+          <tr><th>ID</th><th>用户名</th><th>角色</th><th>注册时间</th><th>消息数</th><th>会话数</th><th>最近活跃</th><th>操作</th></tr>
         </thead>
         <tbody id="usersBody"></tbody>
       </table>
@@ -614,6 +614,9 @@ async function loadUsers() {
       <td>${u.username}</td>
       <td><span class="badge ${u.is_admin ? "badge-admin" : "badge-user"}">${u.is_admin ? "管理员" : "普通用户"}</span></td>
       <td>${fmtDate(u.created_at)}</td>
+      <td>${u.msg_count ?? 0}</td>
+      <td>${u.session_count ?? 0}</td>
+      <td>${u.last_active_at ? fmtDate(u.last_active_at) : "—"}</td>
       <td style="display:flex;gap:6px">
         <button class="btn-sm btn-secondary" onclick="toggleAdmin(${u.id}, ${u.is_admin})">${u.is_admin ? "取消管理员" : "设为管理员"}</button>
         <button class="btn-sm btn-danger" onclick="deleteUser(${u.id}, '${u.username}')">删除</button>

@@ -24,6 +24,7 @@ let sending = false;
 let allMessages = [];
 let autoModeEnabled = false;
 let autoModeTimer = null;
+const _sessionsMap = new Map(); // id -> session object
 let semiAutoEnabled = false;
 let suggestionsGen = 0;
 const PAGE_SIZE = 40;
@@ -550,6 +551,8 @@ async function loadSessions() {
 
 function renderSessionList(sessions, activeCharName = "") {
   sessionList.innerHTML = "";
+  _sessionsMap.clear();
+  for (const s of sessions) _sessionsMap.set(s.id, s);
 
   // 读取折叠状态
   let expandedChars;
@@ -683,6 +686,19 @@ async function selectSession(id) {
   if (autoModeEnabled) setAutoMode(false);
   if (semiAutoEnabled) setSemiAutoMode(false);
   suggestionsGen++;
+  // 自动切换到该会话对应的角色
+  const targetSession = _sessionsMap.get(id);
+  const targetCharName = targetSession?.character_name;
+  if (targetCharName && targetCharName !== characterName) {
+    try {
+      const chars = await api("GET", "/characters");
+      const match = chars?.find((c) => c.name === targetCharName);
+      if (match && !match.is_active) {
+        await api("PATCH", `/characters/${match.id}`, { is_active: true });
+        await loadCharacter();
+      }
+    } catch {}
+  }
   await loadMessages(id);
   connectEvents(id);
   refreshMood(id);
