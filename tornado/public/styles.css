@@ -2383,9 +2383,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   align-items: center;
   justify-content: center;
   animation: rm-fade-in 0.3s ease both;
-  backdrop-filter: blur(16px) brightness(0.7);
-  -webkit-backdrop-filter: blur(16px) brightness(0.7);
-  background: rgba(0,0,0,0.2);
+  backdrop-filter: blur(6px) brightness(0.88);
+  -webkit-backdrop-filter: blur(6px) brightness(0.88);
+  background: rgba(0,0,0,0.08);
 }
 .call-phone {
   background: linear-gradient(180deg, #1c3040 0%, #0d1f2d 55%, #0a1520 100%);
