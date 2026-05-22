@@ -2813,25 +2813,48 @@ document.getElementById("character-new-btn")?.addEventListener("click", async ()
 async function openCompanionModal() {
   const modal = document.getElementById("companion-modal");
   modal.classList.remove("hidden");
-  // 同步右侧面板当前显示的数据到弹窗
-  const syncText = (fromId, toId) => {
-    const from = document.getElementById(fromId);
-    const to = document.getElementById(toId);
-    if (from && to) to.textContent = from.textContent;
-  };
   const syncSrc = (fromId, toId) => {
     const from = document.getElementById(fromId);
     const to = document.getElementById(toId);
     if (from && to) { to.src = from.src; to.classList.toggle("hidden", from.classList.contains("hidden")); }
   };
   syncSrc("rp-card-img", "cm-card-img");
-  syncText("rp-card-name", "cm-card-name");
+  const nameFrom = document.getElementById("rp-card-name");
+  const nameTo = document.getElementById("cm-card-name");
+  if (nameFrom && nameTo) nameTo.textContent = nameFrom.textContent;
   const skeleton = document.getElementById("cm-card-skeleton");
   const rpSkeleton = document.getElementById("rp-card-skeleton");
   if (skeleton && rpSkeleton) skeleton.classList.toggle("hidden", rpSkeleton.classList.contains("hidden"));
-  syncText("rp-mood-label", "cm-mood-label");
-  syncText("rp-topic-text", "cm-topic-text");
-  syncText("rp-memory-status", "cm-memory-status");
+  const moodFrom = document.getElementById("rp-mood-label");
+  const moodTo = document.getElementById("cm-mood-label");
+  if (moodFrom && moodTo) moodTo.textContent = moodFrom.textContent;
+  // 默认展开角色设定，加载数据
+  try {
+    const soulData = await api("GET", "/character/soul");
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
+    set("cm-char-name", soulData.name);
+    set("cm-char-appearance", soulData.appearance);
+    set("cm-char-description", soulData.description);
+    set("cm-char-personality", soulData.personality);
+    set("cm-soul-editor", soulData.soul);
+  } catch {}
+  try {
+    const chars = await api("GET", "/characters");
+    const sel = document.getElementById("cm-character-select");
+    if (sel) {
+      sel.innerHTML = chars.map(c =>
+        `<option value="${c.id}" ${c.is_active ? "selected" : ""}>${c.name}</option>`
+      ).join("");
+      sel.onchange = async () => {
+        await api("PATCH", `/characters/${sel.value}`, { is_active: true });
+        setChatBackground(null);
+        await newSession();
+        await loadCharacter();
+        showToast("已切换角色");
+      };
+    }
+  } catch {}
+  await loadVoiceSection("cm");
 }
 
 document.getElementById("companion-close")?.addEventListener("click", () => {
@@ -2856,7 +2879,7 @@ document.getElementById("cm-ingest-btn")?.addEventListener("click", () => {
   document.getElementById("rp-ingest-btn")?.click();
 });
 
-document.getElementById("cm-soul-toggle")?.addEventListener("click", async () => {
+document.getElementById("cm-soul-toggle")?.addEventListener("click", () => {
   const header = document.getElementById("cm-soul-toggle");
   const body = document.getElementById("cm-soul-body");
   const isOpen = !body.classList.contains("hidden");
@@ -2866,34 +2889,6 @@ document.getElementById("cm-soul-toggle")?.addEventListener("click", async () =>
   } else {
     body.classList.remove("hidden");
     header.classList.add("open");
-    // 加载角色数据到弹窗字段
-    try {
-      const soulData = await api("GET", "/character/soul");
-      const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
-      set("cm-char-name", soulData.name);
-      set("cm-char-appearance", soulData.appearance);
-      set("cm-char-description", soulData.description);
-      set("cm-char-personality", soulData.personality);
-      set("cm-soul-editor", soulData.soul);
-    } catch {}
-    // 加载角色列表
-    try {
-      const chars = await api("GET", "/characters");
-      const sel = document.getElementById("cm-character-select");
-      if (sel) {
-        sel.innerHTML = chars.map(c =>
-          `<option value="${c.id}" ${c.is_active ? "selected" : ""}>${c.name}</option>`
-        ).join("");
-        sel.onchange = async () => {
-          await api("PATCH", `/characters/${sel.value}`, { is_active: true });
-          setChatBackground(null);
-          await newSession();
-          await loadCharacter();
-          showToast("已切换角色");
-        };
-      }
-    } catch {}
-    await loadVoiceSection("cm");
   }
 });
 
