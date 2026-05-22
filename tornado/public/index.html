@@ -52,6 +52,10 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
           归档会话
         </button>
+        <button class="shortcut-btn" id="sc-call-logs">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.13 19.13 0 0 1 4.26 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.17 1h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.15 8.91a16 16 0 0 0 6.61 6.61l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+          来电记录
+        </button>
         <button class="shortcut-btn" id="sc-logout">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           退出登录
@@ -543,6 +547,16 @@
         <button id="archived-close">✕</button>
       </div>
       <div id="archived-list" class="archived-list"></div>
+    </div>
+  </div>
+
+  <div id="call-logs-modal" class="modal-overlay hidden">
+    <div class="gallery-box">
+      <div class="gallery-header">
+        <span>来电记录</span>
+        <button id="call-logs-close">✕</button>
+      </div>
+      <div id="call-logs-list" class="archived-list"></div>
     </div>
   </div>
 

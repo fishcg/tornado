@@ -2152,6 +2152,23 @@ async function handleRequest(req, res) {
     send(res, 200, { ok: true, msg_id: targetMsgId });
     return;
   }
+  if (method === "GET" && pathname === "/call-logs") {
+    const rows = await dbAll(
+      "SELECT id, session_id, char_name, script, audio_url, answered, created_at FROM call_logs WHERE user_id = ? ORDER BY id DESC LIMIT 50",
+      [userId]
+    );
+    send(res, 200, rows);
+    return;
+  }
+
+  const callLogAnswerMatch = pathname.match(/^\/call-logs\/(\d+)\/answer$/);
+  if (method === "POST" && callLogAnswerMatch) {
+    const logId = Number(callLogAnswerMatch[1]);
+    await dbRun("UPDATE call_logs SET answered = 1 WHERE id = ? AND user_id = ?", [logId, userId]);
+    send(res, 200, { ok: true });
+    return;
+  }
+
   if (method === "GET" && pathname === "/sessions") {
     send(res, 200, await listSessions(userId));
     return;
@@ -2825,12 +2842,20 @@ setInterval(async () => {
       }
     }
 
+    const ttsLang = (await getUserSettings(sessionUserId)).ttsLang || "zh";
+    const callLogResult = await dbRun(
+      "INSERT INTO call_logs (user_id, session_id, char_name, script, audio_url, answered, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)",
+      [sessionUserId, session.id, charName, script, audioUrl || null, nowIso()]
+    );
+    const callLogId = callLogResult.insertId;
+
     pushToSession(session.id, {
       incoming_call: true,
+      call_log_id: callLogId,
       char_name: charName,
       script,
       audio_url: audioUrl,
-      tts_lang: (await getUserSettings(sessionUserId)).ttsLang || "zh"
+      tts_lang: ttsLang
     });
   }
 }, 60 * 1000);

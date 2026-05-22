@@ -202,6 +202,18 @@ const CREATE_TABLES = [
     created_at VARCHAR(64) NOT NULL,
     UNIQUE KEY uq_user_char_stage (user_id, character_id, stage),
     KEY idx_rm_user (user_id)
+  ) CHARACTER SET utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS call_logs (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT NOT NULL,
+    char_name VARCHAR(255) NOT NULL,
+    script TEXT,
+    audio_url TEXT,
+    answered INT NOT NULL DEFAULT 0,
+    created_at VARCHAR(64) NOT NULL,
+    KEY idx_call_logs_user (user_id)
   ) CHARACTER SET utf8mb4`
 ];
 

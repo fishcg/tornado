@@ -1420,6 +1420,7 @@ function showIncomingCall(data) {
     ring.onended = null;
     status.textContent = "通话中…";
     actions.style.display = "none";
+    if (data.call_log_id) api("POST", `/call-logs/${data.call_log_id}/answer`).catch(() => {});
 
     // 显示字幕（日语模式下显示中文原文）
     if (data.tts_lang === "ja" && data.script) {
@@ -2843,6 +2844,7 @@ document.getElementById("sc-search").addEventListener("click", focusSearch);
 document.getElementById("sc-export").addEventListener("click", exportSession);
 document.getElementById("sc-gallery").addEventListener("click", openGallery);
 document.getElementById("sc-archive").addEventListener("click", openArchivedSessions);
+document.getElementById("sc-call-logs").addEventListener("click", openCallLogs);
 document.getElementById("sc-logout").addEventListener("click", async () => {
   await fetch("/auth/logout", { method: "POST" });
   location.href = "/auth";
@@ -2850,6 +2852,70 @@ document.getElementById("sc-logout").addEventListener("click", async () => {
 document.getElementById("archived-close").addEventListener("click", () => {
   document.getElementById("archived-modal").classList.add("hidden");
 });
+document.getElementById("call-logs-close").addEventListener("click", () => {
+  document.getElementById("call-logs-modal").classList.add("hidden");
+});
+
+async function openCallLogs() {
+  const modal = document.getElementById("call-logs-modal");
+  const list = document.getElementById("call-logs-list");
+  modal.classList.remove("hidden");
+  list.innerHTML = '<div style="padding:16px;color:var(--text-dim)">加载中…</div>';
+  const logs = await api("GET", "/call-logs");
+  list.innerHTML = "";
+  if (!logs || logs.length === 0) {
+    list.innerHTML = '<div style="padding:16px;color:var(--text-dim)">暂无来电记录</div>';
+    return;
+  }
+  for (const log of logs) {
+    const item = document.createElement("div");
+    item.className = "archived-item";
+    item.style.flexDirection = "column";
+    item.style.alignItems = "flex-start";
+    item.style.gap = "6px";
+
+    const top = document.createElement("div");
+    top.style.cssText = "display:flex;align-items:center;gap:10px;width:100%";
+
+    const status = document.createElement("span");
+    status.style.cssText = `font-size:11px;padding:2px 7px;border-radius:10px;background:${log.answered ? "rgba(61,186,110,0.15)" : "rgba(224,82,82,0.15)"};color:${log.answered ? "#3dba6e" : "#e05252"}`;
+    status.textContent = log.answered ? "已接听" : "未接听";
+
+    const charName = document.createElement("span");
+    charName.style.cssText = "font-size:13px;font-weight:600;color:var(--text);flex:1";
+    charName.textContent = log.char_name;
+
+    const time = document.createElement("span");
+    time.style.cssText = "font-size:11px;color:var(--text-dim)";
+    time.textContent = log.created_at ? log.created_at.slice(0, 16).replace("T", " ") : "";
+
+    top.appendChild(status);
+    top.appendChild(charName);
+    top.appendChild(time);
+
+    const script = document.createElement("div");
+    script.style.cssText = "font-size:12px;color:var(--text-dim);line-height:1.5;max-height:60px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical";
+    script.textContent = log.script || "";
+
+    item.appendChild(top);
+    item.appendChild(script);
+
+    if (log.audio_url) {
+      const playBtn = document.createElement("button");
+      playBtn.className = "archived-restore-btn";
+      playBtn.textContent = "▶ 播放";
+      playBtn.addEventListener("click", () => {
+        const audio = new Audio(log.audio_url);
+        audio.play().catch(() => {});
+        playBtn.textContent = "播放中…";
+        audio.onended = () => { playBtn.textContent = "▶ 播放"; };
+      });
+      item.appendChild(playBtn);
+    }
+
+    list.appendChild(item);
+  }
+}
 
 // ── 聊天区更多按钮 ────────────────────────────────────────────────────────────
 // ── 全屏 ──────────────────────────────────────────────────────────────────────
