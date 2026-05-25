@@ -266,6 +266,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 .tts-btn:hover { background: rgba(255,255,255,0.1); color: var(--text, #e8e8f0); }
 .tts-btn.tts-btn-active { background: var(--accent-dim, #2a2540); color: var(--accent, #7c6fcd); border-color: var(--accent, #7c6fcd); }
+.tts-btn.tts-btn-pending { background: var(--accent-dim, #2a2540); color: var(--accent, #7c6fcd); border-color: var(--accent, #7c6fcd); animation: tts-pulse 1s ease-in-out infinite; }
+@keyframes tts-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 .avatar {
   width: 32px; height: 32px; border-radius: 50%;

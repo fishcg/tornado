@@ -1521,7 +1521,11 @@ function showIncomingCall(data) {
   // 铃声，最多响 10 次
   const ring = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
   let ringCount = 0;
-  ring.play().catch(() => {});
+  ring.play().catch(() => {
+    // 移动端 autoplay 被拦截，等用户点击 overlay 时再播
+    const tryRing = () => { ring.play().catch(() => {}); overlay.removeEventListener("click", tryRing); };
+    overlay.addEventListener("click", tryRing, { once: true });
+  });
   ring.onended = () => {
     ringCount++;
     if (ringCount >= 10) {
@@ -1881,7 +1885,25 @@ function attachTtsPlayer(msgId, audioUrl, autoPlay = true, targetWrap = null) {
   player.appendChild(btn);
   target.appendChild(player);
 
-  if (autoPlay) play();
+  if (autoPlay) {
+    audio = new Audio(audioUrl);
+    _currentTtsAudio = audio;
+    btn.classList.add("tts-btn-active");
+    audio.onended = () => { btn.classList.remove("tts-btn-active"); if (_currentTtsAudio === audio) _currentTtsAudio = null; };
+    audio.play().catch(() => {
+      // 移动端 autoplay 被拦截，高亮按钮提示用户手动点击
+      btn.classList.remove("tts-btn-active");
+      btn.classList.add("tts-btn-pending");
+      const onInteract = () => {
+        btn.classList.remove("tts-btn-pending");
+        play();
+        document.removeEventListener("touchstart", onInteract);
+        document.removeEventListener("click", onInteract);
+      };
+      document.addEventListener("touchstart", onInteract, { once: true, passive: true });
+      document.addEventListener("click", onInteract, { once: true });
+    });
+  }
 }
 
 // ── 关系阶段升级演出 ──────────────────────────────────────────────────────────
@@ -3451,6 +3473,19 @@ function showAnnouncementModal(list, index) {
   loadSessions();
   checkAnnouncements();
   checkVoicemail();
+
+  // 移动端 autoplay 解锁：首次用户交互时播放静音音频，解除浏览器限制
+  let _audioUnlocked = false;
+  function unlockAudio() {
+    if (_audioUnlocked) return;
+    _audioUnlocked = true;
+    const silent = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
+    silent.play().catch(() => {});
+    document.removeEventListener("touchstart", unlockAudio);
+    document.removeEventListener("click", unlockAudio);
+  }
+  document.addEventListener("touchstart", unlockAudio, { passive: true });
+  document.addEventListener("click", unlockAudio);
 
   // 新用户引导：打开右侧状态面板并展开角色设定
   if (localStorage.getItem("show_onboarding") === "1") {
