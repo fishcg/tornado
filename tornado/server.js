@@ -3964,7 +3964,13 @@ async function checkAndUnlockAchievements(userId, sessionId, { imageFallbackEnab
   const unlocked = await dbAll("SELECT achievement_id FROM user_achievements WHERE user_id = ? AND character_id = ?", [userId, char.id]);
   const unlockedIds = new Set(unlocked.map((r) => r.achievement_id));
 
-  const [[msgRow]] = await getDb().execute(`SELECT COUNT(*) as n FROM messages WHERE user_id = ? AND role = 'user'`, [userId]);
+  const [[msgRow]] = await getDb().execute(
+    `SELECT COUNT(*) as n FROM messages m
+     JOIN sessions s ON s.id = m.session_id
+     WHERE m.user_id = ? AND m.role = 'user'
+       AND EXISTS (SELECT 1 FROM messages m2 WHERE m2.session_id = m.session_id AND m2.role = 'assistant' AND m2.character_name = ?)`,
+    [userId, char.name]
+  );
   const msgCount = msgRow.n;
   const affection = char.affection ?? 0;
   const streakDays = char.streak_days ?? 0;
