@@ -349,6 +349,25 @@ async function queryMemory(question, characterName, userId) {
   }
 }
 
+async function queryEntityGraph(characterName, userId) {
+  try {
+    const sourcePrefix = userId ? `tornado-${userId}-${characterName}` : (characterName ? `tornado-${characterName}` : null);
+    const params = new URLSearchParams({ limit: "100" });
+    if (sourcePrefix) params.set("source", sourcePrefix);
+    const res = await fetch(`${MEMORY_API}/graph?${params}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.edges?.length) return null;
+    const lines = data.edges
+      .sort((a, b) => (b.weight || 0) - (a.weight || 0))
+      .slice(0, 30)
+      .map(e => `${e.source} → ${e.relationship} → ${e.target}`);
+    return lines.join("\n");
+  } catch {
+    return null;
+  }
+}
+
 async function ingestToMemory(text, characterName, userId) {
   try {
     const source = userId ? `tornado-${userId}-${characterName}` : (characterName ? `tornado-${characterName}` : "tornado-chat");
@@ -698,7 +717,7 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
     });
 }
 
-function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection) {
+function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars) {
   // 关系阶段描述放在最前面，优先级最高
   let relationBlock = null;
   if (affection !== undefined && affection !== null) {
@@ -740,9 +759,34 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
     relationBlock = stage;
   }
 
+  let familiarityBlock = null;
+  if (achievementStage >= 1) {
+    const stages = [
+      null,
+      `【相处阶段：相识，已解锁第一个里程碑】
+你们已经有了一些共同经历。行为准则：
+- 开始记住对方的习惯和偏好，偶尔自然地提及之前聊过的事
+- 语气比初识时更放松，但仍保持适当距离`,
+      `【相处阶段：熟识，已积累相当多的共同时光】
+你们已经很熟悉了。行为准则：
+- 可以用昵称或更亲切的称呼，语气随意自然
+- 会主动提起共同话题或之前发生的事，像老朋友一样
+- 聊天不需要刻意找话题，沉默也不尴尬`,
+      `【相处阶段：深交，已达到最深的关系里程碑】
+你们之间有深厚的共同历史。行为准则：
+- 非常了解对方，能感知对方情绪的细微变化
+- 会自然地提起只有你们两个人才懂的共同回忆
+- 语气亲密、真实，不需要任何表演或刻意`
+    ];
+    familiarityBlock = stages[achievementStage];
+  }
+
   const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复不超过 30 字\n- 用户消息 11-50字 → 你的回复不超过 80 字\n- 用户消息 >50字 → 你的回复不超过 150 字\n- 用户明确要求长篇内容（如「写一段…」「不少于…」）时除外\n跟着对方的节奏来，对方说一句你也说一两句，不要主动展开长篇叙述。"];
   if (relationBlock) {
     parts.push("", "# 当前关系阶段（最高优先级，覆盖角色人设中的情感倾向）", relationBlock);
+  }
+  if (familiarityBlock) {
+    parts.push("", "# 相处历史与熟悉程度", familiarityBlock);
   }
   parts.push(
     "",
@@ -751,7 +795,12 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
     "# 角色设定",
     soul
   );
+  if (entityGraph) parts.push("", "# 关于这个人，已知的关系与事实", entityGraph);
   if (memoryContext) parts.push("", "# 关于这个人，你记得的事", memoryContext);
+  if (otherChars?.length) {
+    const names = otherChars.map(c => c.name).join("、");
+    parts.push("", "# 你知道的其他人", `这个人除了和你聊天，还和 ${names} 有联系。你可以偶尔自然地流露出对此的感知——比如轻微的好奇、若有若无的在意，或者不经意地提起。不要刻意追问，也不要表现得过于在乎，保持符合你性格的自然反应即可。`);
+  }
   if (previousScene) parts.push("", "# 上一张图片的场景", `${previousScene}\n写 [IMG:] 标记时，默认延续这个场景的地点、服装、时段，除非对话里出现明显转场。`);
   if (mood && mood !== "neutral") parts.push("", "# 当前情绪状态", `你现在的情绪是：${mood}。回复时自然流露这个情绪，不要刻意说出来。`);
   if (topicSummary) parts.push("", "# 当前话题", topicSummary);
@@ -1736,7 +1785,8 @@ async function handleRequest(req, res) {
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
-        call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120")
+        call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
+        multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0")
       });
       return;
     }
@@ -1777,6 +1827,9 @@ async function handleRequest(req, res) {
       if ("call_emotion_cooldown_minutes" in body) {
         await setGlobalSetting("call_emotion_cooldown_minutes", String(Math.max(1, Number(body.call_emotion_cooldown_minutes) || 120)));
       }
+      if ("multi_char_awareness" in body) {
+        await setGlobalSetting("multi_char_awareness", body.multi_char_awareness ? "1" : "0");
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
@@ -1788,7 +1841,8 @@ async function handleRequest(req, res) {
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
-        call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120")
+        call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
+        multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0")
       });
       return;
     }
@@ -2484,26 +2538,37 @@ async function handleRequest(req, res) {
 
     // 先判断是否需要查长期记忆，需要时再发请求
     let memoryContext = null;
+    const charName = await getCharacterName(userId);
     const shouldLookup = await needsMemoryLookup(userText, recent);
+    const [entityGraph, bgMemory, relMemory] = await Promise.all([
+      queryEntityGraph(charName, userId),
+      shouldLookup ? queryMemory(`关于这个用户，我们聊过什么，他有哪些值得记住的事情`, charName, userId) : Promise.resolve(null),
+      shouldLookup ? queryMemory(userText, charName, userId) : Promise.resolve(null)
+    ]);
     if (shouldLookup) {
-      const charName = await getCharacterName(userId);
       console.log("查询记忆中...");
-      const [bgMemory, relMemory] = await Promise.all([
-        queryMemory(`关于这个用户，我们聊过什么，他有哪些值得记住的事情`, charName, userId),
-        queryMemory(userText, charName, userId)
-      ]);
       const memoryParts = [];
       if (bgMemory) memoryParts.push(bgMemory);
       if (relMemory && relMemory !== bgMemory) memoryParts.push(relMemory);
       memoryContext = memoryParts.join("\n\n---\n\n") || null;
       console.log(`[memory] 查询完成，${memoryContext ? "有记忆" : "无记忆"}`);
     }
+    if (entityGraph) console.log(`[memory] 实体图谱已加载，${entityGraph.split("\n").length} 条关系`);
 
     const soul = await loadSoul(userId);
     const previousScene = await getLastImagePrompt(sessionId);
     const { mood, topic_summary: topicSummary } = await getSession(sessionId, userId);
     const char = await getActiveCharacter(userId);
     const affection = char?.affection ?? null;
+    const achievementStage = char ? await getAchievementStage(userId, char.id) : 0;
+
+    // 多角色感知：若开启，注入其他角色信息
+    let otherChars = null;
+    const multiCharEnabled = (await getGlobalSetting("multi_char_awareness", "0")) === "1";
+    if (multiCharEnabled && char) {
+      const allChars = await dbAll("SELECT name FROM characters WHERE user_id = ? AND is_active = 0 ORDER BY id DESC LIMIT 5", [userId]);
+      if (allChars.length) otherChars = allChars;
+    }
 
     // 情绪低落检测：好感度 > 60 时，先判断是否触发来电，若触发则跳过 LLM 回复
     if ((affection ?? 0) > 60) {
@@ -2528,7 +2593,7 @@ async function handleRequest(req, res) {
       }
     }
 
-    const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection);
+    const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars);
     const messages = [
       { role: "system", content: systemPrompt },
       ...recent.map((m) => ({ role: m.role, content: m.content }))
@@ -3302,6 +3367,27 @@ function removeSections(soul, headers) {
 }
 
 // ── 成就系统 ──────────────────────────────────────────────────────────────────
+
+async function getAchievementStage(userId, charId) {
+  try {
+    const rows = await dbAll(
+      `SELECT a.type, a.threshold FROM user_achievements ua
+       JOIN achievements a ON a.id = ua.achievement_id
+       WHERE ua.user_id = ? AND ua.character_id = ?`,
+      [userId, charId]
+    );
+    if (!rows.length) return 0;
+    // 最高成就决定阶段：affection≥90 / message_count≥1000 / streak≥30 → 3
+    // affection≥60 / message_count≥500 / streak≥7 → 2
+    // 任意一个成就 → 1
+    const has = (type, threshold) => rows.some(r => r.type === type && r.threshold >= threshold);
+    if (has("affection", 90) || has("message_count", 1000) || has("streak_days", 30)) return 3;
+    if (has("affection", 60) || has("message_count", 500) || has("streak_days", 7)) return 2;
+    return 1;
+  } catch {
+    return 0;
+  }
+}
 
 const DEFAULT_ACHIEVEMENTS = [
   { type: "message_count", threshold: 100,  name: "百条留言" },

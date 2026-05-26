@@ -1371,6 +1371,7 @@ function handleWsPayload(payload) {
   }
   if (payload.affection_update) {
     renderAffection(payload.affection, payload.delta);
+    if (payload.delta && payload.delta !== 0) showAffectionBubbleTip(payload.delta);
   }
   if (payload.achievement_unlock) {
     showAchievementModal(payload);
@@ -1697,6 +1698,18 @@ function renderAffection(value, delta = null) {
       setTimeout(() => tip.remove(), 2000);
     });
   }
+}
+
+function showAffectionBubbleTip(delta) {
+  const lastWrap = [...document.querySelectorAll("#messages .bubble-wrap.assistant")].at(-1);
+  if (!lastWrap) return;
+  const bubble = lastWrap.querySelector(".bubble");
+  if (!bubble) return;
+  const tip = document.createElement("span");
+  tip.className = "affection-bubble-tip" + (delta > 0 ? " up" : " down");
+  tip.textContent = (delta > 0 ? "+" : "") + delta + " ♡";
+  bubble.appendChild(tip);
+  setTimeout(() => tip.remove(), 2200);
 }
 
 const ACH_TYPE_THEME = {
@@ -2326,6 +2339,9 @@ function renderCharacterCard(cardUrl) {
   if (nameEl) nameEl.textContent = characterName || "龙卷";
   if (!img || !skeleton) return;
   if (cardUrl) {
+    document.getElementById("rp-card-spinner")?.classList.remove("hidden");
+    const hint = document.getElementById("rp-card-hint");
+    if (hint) hint.textContent = "生成角色卡片中…";
     img.src = cardUrl;
     img.onload = () => {
       img.classList.remove("hidden");
@@ -2335,6 +2351,9 @@ function renderCharacterCard(cardUrl) {
   } else {
     img.classList.add("hidden");
     skeleton.classList.remove("hidden");
+    document.getElementById("rp-card-spinner")?.classList.add("hidden");
+    const hint = document.getElementById("rp-card-hint");
+    if (hint) hint.textContent = "完善角色设定后\n点击重新生成";
   }
 }
 
@@ -2860,9 +2879,9 @@ document.getElementById("rp-soul-save")?.addEventListener("click", async () => {
 document.getElementById("character-new-btn")?.addEventListener("click", async () => {
   const name = prompt("新角色名称：");
   if (!name?.trim()) return;
-  const result = await api("POST", "/characters", { name: name.trim() });
-  await api("PATCH", `/characters/${result.id}`, { is_active: true });
-  location.reload();
+  await api("POST", "/characters", { name: name.trim() });
+  showToast("角色已创建，请完善外貌和性格描述后点击「保存角色设定」");
+  openCompanionModal();
 });
 
 // ── 伴侣弹窗 ──────────────────────────────────────────────────────────────────
@@ -2880,7 +2899,16 @@ async function openCompanionModal() {
   if (nameFrom && nameTo) nameTo.textContent = nameFrom.textContent;
   const skeleton = document.getElementById("cm-card-skeleton");
   const rpSkeleton = document.getElementById("rp-card-skeleton");
-  if (skeleton && rpSkeleton) skeleton.classList.toggle("hidden", rpSkeleton.classList.contains("hidden"));
+  if (skeleton && rpSkeleton) {
+    skeleton.classList.toggle("hidden", rpSkeleton.classList.contains("hidden"));
+    // 同步 spinner/hint 状态
+    const rpSpinner = document.getElementById("rp-card-spinner");
+    const cmSpinner = document.getElementById("cm-card-spinner");
+    const rpHint = document.getElementById("rp-card-hint");
+    const cmHint = document.getElementById("cm-card-hint");
+    if (cmSpinner && rpSpinner) cmSpinner.classList.toggle("hidden", rpSpinner.classList.contains("hidden"));
+    if (cmHint && rpHint) cmHint.textContent = rpHint.textContent;
+  }
   const moodFrom = document.getElementById("rp-mood-label");
   const moodTo = document.getElementById("cm-mood-label");
   if (moodFrom && moodTo) moodTo.textContent = moodFrom.textContent;
@@ -2902,11 +2930,14 @@ async function openCompanionModal() {
         `<option value="${c.id}" ${c.is_active ? "selected" : ""}>${c.name}</option>`
       ).join("");
       sel.onchange = async () => {
-        await api("PATCH", `/characters/${sel.value}`, { is_active: true });
-        setChatBackground(null);
-        await newSession();
-        await loadCharacter();
-        showToast("已切换角色");
+        const char = chars.find(c => String(c.id) === sel.value);
+        if (!char) return;
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ""; };
+        set("cm-char-name", char.name);
+        set("cm-char-appearance", char.appearance);
+        set("cm-char-description", char.description);
+        set("cm-char-personality", char.personality);
+        set("cm-soul-editor", char.soul_content);
       };
     }
   } catch {}
@@ -2950,6 +2981,16 @@ document.getElementById("cm-soul-toggle")?.addEventListener("click", () => {
 
 document.getElementById("cm-soul-save")?.addEventListener("click", async () => {
   const get = (id) => document.getElementById(id)?.value ?? "";
+  const sel = document.getElementById("cm-character-select");
+  const selectedId = sel?.value;
+  // 如果选中的角色不是当前激活角色，先激活它
+  if (selectedId) {
+    const chars = await api("GET", "/characters");
+    const active = chars.find(c => c.is_active);
+    if (!active || String(active.id) !== String(selectedId)) {
+      await api("PATCH", `/characters/${selectedId}`, { is_active: true });
+    }
+  }
   await api("PATCH", "/character/soul", {
     name: get("cm-char-name"),
     appearance: get("cm-char-appearance"),
@@ -2959,15 +3000,22 @@ document.getElementById("cm-soul-save")?.addEventListener("click", async () => {
   });
   showToast("角色设定已保存");
   await loadCharacter();
-  location.reload();
 });
 
 document.getElementById("cm-character-new-btn")?.addEventListener("click", async () => {
   const name = prompt("新角色名称：");
   if (!name?.trim()) return;
   const result = await api("POST", "/characters", { name: name.trim() });
-  await api("PATCH", `/characters/${result.id}`, { is_active: true });
-  location.reload();
+  const sel = document.getElementById("cm-character-select");
+  if (sel) {
+    const opt = document.createElement("option");
+    opt.value = result.id;
+    opt.textContent = name.trim();
+    sel.appendChild(opt);
+    sel.value = result.id;
+    sel.dispatchEvent(new Event("change"));
+  }
+  showToast("角色已创建，请完善外貌和性格描述后点击「保存角色设定」");
 });
 
 // ── 导出 ──────────────────────────────────────────────────────────────────────

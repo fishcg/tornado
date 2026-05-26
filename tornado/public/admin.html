@@ -434,6 +434,14 @@
           </label>
           <label for="deepseekThinkingToggle">开启后主聊天使用 DeepSeek 深度思考（更慢但更准）</label>
         </div>
+        <h3 style="margin-top:16px">多角色感知</h3>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="multiCharAwarenessToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="multiCharAwarenessToggle">开启后，角色会感知到用户还在和其他角色聊天，可能流露轻微好奇或在意</label>
+        </div>
         <h3 style="margin-top:16px">TTS 复刻渠道</h3>
         <div style="display:flex;align-items:center;gap:10px">
           <select id="ttsChannel" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
@@ -745,6 +753,7 @@ async function loadSystem() {
     document.getElementById("milestoneVideoDuration").value = settings.milestone_video_duration ?? "3";
     document.getElementById("videoDurationRow").style.display = settings.milestone_mode === "video" ? "flex" : "none";
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
+    document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "qwen";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
@@ -767,8 +776,9 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const milestoneMode = document.getElementById("milestoneMode").value;
   const milestoneVideoDuration = Number(document.getElementById("milestoneVideoDuration").value) || 3;
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
+  const multiCharAwareness = document.getElementById("multiCharAwarenessToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, tts_channel: ttsChannel }) });
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel }) });
   if (data) showMsg("已保存");
 });
 
