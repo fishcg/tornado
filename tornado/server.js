@@ -717,7 +717,7 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
     });
 }
 
-function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars) {
+function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars, diary, behaviorHint) {
   // 关系阶段描述放在最前面，优先级最高
   let relationBlock = null;
   if (affection !== undefined && affection !== null) {
@@ -795,6 +795,8 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
     "# 角色设定",
     soul
   );
+  if (diary) parts.push("", "# 你上次和这个人聊完之后的内心想法", diary + "\n（这是你自己的内心活动，不要直接复述给对方，但可以自然地延伸出话题或流露相关情绪）");
+  if (behaviorHint) parts.push("", "# 你注意到的行为变化", behaviorHint + "\n（可以自然地、不经意地提到，不要像监控一样追问，保持轻松关心的语气）");
   if (entityGraph) parts.push("", "# 关于这个人，已知的关系与事实", entityGraph);
   if (memoryContext) parts.push("", "# 关于这个人，你记得的事", memoryContext);
   if (otherChars?.length) {
@@ -1177,6 +1179,80 @@ async function generateProactiveMessage(sessionId, userId) {
   } catch {
     return null;
   }
+}
+
+async function generateDiary(sessionId, userId) {
+  const msgs = await getMessages(sessionId);
+  if (msgs.filter(m => m.role === "user").length < 4) return null;
+  const charName = await getCharacterName(userId);
+  const soul = await loadSoul(userId);
+  const context = msgs.slice(-20).map(m =>
+    `${m.role === "user" ? "用户" : charName}：${m.content}`
+  ).join("\n");
+  try {
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      enable_thinking: false,
+      messages: [{
+        role: "system",
+        content: `${soul}\n\n你刚刚和用户结束了一段对话。现在请以第一人称写一段简短的内心独白（50-100字），记录你对这次对话的感受、印象深刻的细节、或者接下来想做的事。不要写成总结，要像真实的内心活动——零散、感性、带有情绪。不要用引号包裹。`
+      }, {
+        role: "user",
+        content: `刚才的对话：\n${context}`
+      }]
+    });
+    return (res.choices?.[0]?.message?.content || "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function getLatestDiary(userId, characterId) {
+  if (!userId || !characterId) return null;
+  const row = await dbGet(
+    "SELECT content FROM character_diaries WHERE user_id = ? AND character_id = ? ORDER BY id DESC LIMIT 1",
+    [userId, characterId]
+  );
+  return row?.content || null;
+}
+
+async function detectBehaviorPattern(userId, sessionId) {
+  if (!userId) return null;
+  const rows = await dbAll(`
+    SELECT DATE(created_at) as d, MIN(created_at) as first_msg_at
+    FROM messages
+    WHERE user_id = ? AND role = 'user' AND created_at > DATE_SUB(NOW(), INTERVAL 14 DAY)
+    GROUP BY DATE(created_at)
+    ORDER BY d DESC
+  `, [userId]);
+  if (rows.length < 3) return null;
+
+  const hints = [];
+  const today = new Date().toISOString().slice(0, 10);
+  const lastChatDate = rows[0]?.d;
+  if (lastChatDate && lastChatDate !== today) {
+    const gapDays = Math.floor((Date.now() - new Date(lastChatDate).getTime()) / 86400000);
+    if (gapDays >= 2) {
+      hints.push(`用户已经 ${gapDays} 天没来找你了（之前几乎每天都会来）`);
+    }
+  }
+
+  const recentHours = rows.slice(0, 7).map(r => new Date(r.first_msg_at).getHours());
+  const avgHour = recentHours.reduce((a, b) => a + b, 0) / recentHours.length;
+  const sessionFirstMsg = await dbGet(
+    "SELECT created_at FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1",
+    [sessionId]
+  );
+  if (sessionFirstMsg) {
+    const sessionHour = new Date(sessionFirstMsg.created_at).getHours();
+    const diff = Math.abs(sessionHour - avgHour);
+    if (diff >= 3) {
+      const direction = sessionHour > avgHour ? "晚" : "早";
+      hints.push(`用户今天比平时${direction}了约${Math.round(diff)}个小时来找你`);
+    }
+  }
+
+  return hints.length ? hints.join("；") : null;
 }
 
 async function generateCallScript(sessionId, userId) {
@@ -2539,11 +2615,14 @@ async function handleRequest(req, res) {
     // 先判断是否需要查长期记忆，需要时再发请求
     let memoryContext = null;
     const charName = await getCharacterName(userId);
+    const char = await getActiveCharacter(userId);
     const shouldLookup = await needsMemoryLookup(userText, recent);
-    const [entityGraph, bgMemory, relMemory] = await Promise.all([
+    const [entityGraph, bgMemory, relMemory, diary, behaviorHint] = await Promise.all([
       queryEntityGraph(charName, userId),
       shouldLookup ? queryMemory(`关于这个用户，我们聊过什么，他有哪些值得记住的事情`, charName, userId) : Promise.resolve(null),
-      shouldLookup ? queryMemory(userText, charName, userId) : Promise.resolve(null)
+      shouldLookup ? queryMemory(userText, charName, userId) : Promise.resolve(null),
+      getLatestDiary(userId, char?.id),
+      detectBehaviorPattern(userId, sessionId)
     ]);
     if (shouldLookup) {
       console.log("查询记忆中...");
@@ -2554,11 +2633,12 @@ async function handleRequest(req, res) {
       console.log(`[memory] 查询完成，${memoryContext ? "有记忆" : "无记忆"}`);
     }
     if (entityGraph) console.log(`[memory] 实体图谱已加载，${entityGraph.split("\n").length} 条关系`);
+    if (diary) console.log(`[diary] 注入日记: ${diary.slice(0, 40)}...`);
+    if (behaviorHint) console.log(`[behavior] ${behaviorHint}`);
 
     const soul = await loadSoul(userId);
     const previousScene = await getLastImagePrompt(sessionId);
     const { mood, topic_summary: topicSummary } = await getSession(sessionId, userId);
-    const char = await getActiveCharacter(userId);
     const affection = char?.affection ?? null;
     const achievementStage = char ? await getAchievementStage(userId, char.id) : 0;
 
@@ -2593,7 +2673,7 @@ async function handleRequest(req, res) {
       }
     }
 
-    const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars);
+    const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars, diary, behaviorHint);
     const messages = [
       { role: "system", content: systemPrompt },
       ...recent.map((m) => ({ role: m.role, content: m.content }))
@@ -3075,6 +3155,32 @@ setInterval(async () => {
     pushToSession(session.id, payload);
     const updatedMsgs = await getMessages(session.id);
     updateMood(session.id, updatedMsgs, sessionUserId).catch(() => {});
+  }
+
+  // ── 日记生成：空闲 > 2 小时且未生成过日记的 session ──
+  const DIARY_IDLE_MS = 2 * 60 * 60 * 1000;
+  const allSessions = await listAllActiveSessions();
+  for (const session of allSessions) {
+    if (!session.last_user_at || session.diary_generated) continue;
+    const idleMs = Date.now() - new Date(session.last_user_at).getTime();
+    if (idleMs < DIARY_IDLE_MS) continue;
+    const sessionUserId = session.user_id ?? null;
+    if (!sessionUserId) continue;
+    const msgs = await getMessages(session.id);
+    if (msgs.filter(m => m.role === "user").length < 4) continue;
+    const char = await getActiveCharacter(sessionUserId);
+    if (!char) continue;
+    const charName = char.name || "default";
+    console.log(`[diary] 生成日记 session=${session.id} user=${sessionUserId} char=${charName}`);
+    const diary = await generateDiary(session.id, sessionUserId).catch(() => null);
+    if (!diary) continue;
+    await dbRun(
+      "INSERT INTO character_diaries (user_id, character_id, session_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
+      [sessionUserId, char.id, session.id, diary, nowIso()]
+    );
+    await dbRun("UPDATE sessions SET diary_generated = 1 WHERE id = ?", [session.id]);
+    ingestToMemory(`[${charName}的内心独白] ${diary}`, charName, sessionUserId);
+    console.log(`[diary] 日记已生成并存储: ${diary.slice(0, 50)}...`);
   }
 }, PROACTIVE_CHECK_MS);
 

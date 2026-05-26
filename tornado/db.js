@@ -214,6 +214,16 @@ const CREATE_TABLES = [
     answered INT NOT NULL DEFAULT 0,
     created_at VARCHAR(64) NOT NULL,
     KEY idx_call_logs_user (user_id)
+  ) CHARACTER SET utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS character_diaries (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    character_id INT NOT NULL,
+    session_id INT NOT NULL,
+    content TEXT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    KEY idx_diaries_user_char (user_id, character_id)
   ) CHARACTER SET utf8mb4`
 ];
 
@@ -234,6 +244,7 @@ export async function initDb() {
   await ensureColumn(pool, "sessions", "last_proactive_at", "VARCHAR(64)");
   await ensureColumn(pool, "sessions", "last_call_at", "VARCHAR(64)");
   await ensureColumn(pool, "sessions", "last_emotion_call_at", "VARCHAR(64)");
+  await ensureColumn(pool, "sessions", "diary_generated", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "messages", "image_url", "TEXT");
   await ensureColumn(pool, "messages", "image_prompt", "TEXT");
   await ensureColumn(pool, "messages", "character_name", "VARCHAR(255)");
