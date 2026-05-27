@@ -2011,10 +2011,12 @@ async function handleRequest(req, res) {
     const appearanceHash = crypto.createHash("md5").update(appearance).digest("hex").slice(0, 8);
     const rows = await dbAll("SELECT mood, image_url, appearance_hash FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
     const avatars = {};
+    let stale = false;
     for (const row of rows) {
-      if (row.appearance_hash === appearanceHash) avatars[row.mood] = row.image_url;
+      avatars[row.mood] = row.image_url;
+      if (row.appearance_hash !== appearanceHash) stale = true;
     }
-    send(res, 200, { character: name, avatars });
+    send(res, 200, { character: name, avatars, stale });
     return;
   }
 
