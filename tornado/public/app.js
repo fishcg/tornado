@@ -1519,11 +1519,13 @@ function showIncomingCall(data) {
   overlay.appendChild(phone);
   document.body.appendChild(overlay);
 
-  // 铃声，最多响 10 次
-  const ring = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
+  // 铃声，最多响 10 次。复用全局单例（已在首次用户交互时解锁），
+  // 否则 iOS 对临时新建的 Audio 实例会拦截 autoplay
+  const ring = window._ringAudio || new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
+  ring.currentTime = 0;
   let ringCount = 0;
   ring.play().catch(() => {
-    // 移动端 autoplay 被拦截，等用户点击 overlay 时再播
+    // 仍然被拦截（用户从未交互过）：等点击 overlay 时再播
     const tryRing = () => { ring.play().catch(() => {}); overlay.removeEventListener("click", tryRing); };
     overlay.addEventListener("click", tryRing, { once: true });
   });
@@ -3529,9 +3531,21 @@ function showAnnouncementModal(list, index) {
     _audioUnlocked = true;
     const silent = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
     silent.play().catch(() => {});
+    // 同时解锁铃声 Audio 实例：iOS 对每个 Audio 单独判断手势，必须对这个实例本身触发一次播放
+    if (window._ringAudio) {
+      window._ringAudio.muted = true;
+      window._ringAudio.play().then(() => {
+        window._ringAudio.pause();
+        window._ringAudio.currentTime = 0;
+        window._ringAudio.muted = false;
+      }).catch(() => {});
+    }
     document.removeEventListener("touchstart", unlockAudio);
     document.removeEventListener("click", unlockAudio);
   }
+  // 预创建铃声实例并全局暴露，供 showIncomingCall 复用
+  window._ringAudio = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
+  window._ringAudio.preload = "auto";
   document.addEventListener("touchstart", unlockAudio, { passive: true });
   document.addEventListener("click", unlockAudio);
 
