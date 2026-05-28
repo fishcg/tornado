@@ -288,8 +288,34 @@ function sendFile(res, filePath) {
     send(res, 404, "Not found");
     return;
   }
-  res.writeHead(200, { "Content-Type": mime[ext] || "text/plain", "Cache-Control": "no-cache" });
+  // HTML 完全不缓存（含静态资源版本号），JS/CSS 用强校验避免 iOS Safari 激进缓存
+  const cacheControl = ext === ".html"
+    ? "no-store, no-cache, must-revalidate"
+    : "no-cache, must-revalidate";
+  res.writeHead(200, { "Content-Type": mime[ext] || "text/plain", "Cache-Control": cacheControl });
   fs.createReadStream(filePath).pipe(res);
+}
+
+function sendHtmlWithAssetVersion(res, htmlPath, publicDir) {
+  if (!fs.existsSync(htmlPath)) {
+    send(res, 404, "Not found");
+    return;
+  }
+  let html = fs.readFileSync(htmlPath, "utf8");
+  // 给 app.js / styles.css / auth.js 等本地静态资源注入 mtime 作为版本号，绕过浏览器缓存
+  const assets = ["app.js", "styles.css", "auth.js"];
+  for (const asset of assets) {
+    const assetPath = path.join(publicDir, asset);
+    if (!fs.existsSync(assetPath)) continue;
+    const v = Math.floor(fs.statSync(assetPath).mtimeMs);
+    const re = new RegExp(`(["'/])${asset.replace(".", "\\.")}(["'?])`, "g");
+    html = html.replace(re, (m, p1, p2) => p2 === "?" ? m : `${p1}${asset}?v=${v}${p2}`);
+  }
+  res.writeHead(200, {
+    "Content-Type": "text/html",
+    "Cache-Control": "no-store, no-cache, must-revalidate"
+  });
+  res.end(html);
 }
 
 // ── memory-ai ─────────────────────────────────────────────────────────────────
@@ -1642,7 +1668,7 @@ async function handleRequest(req, res) {
 
   // ── 静态文件（公开）────────────────────────────────────────────────────────
   if (method === "GET" && pathname === "/auth") {
-    sendFile(res, path.join(PUBLIC_DIR, "auth.html"));
+    sendHtmlWithAssetVersion(res, path.join(PUBLIC_DIR, "auth.html"), PUBLIC_DIR);
     return;
   }
   if (method === "GET" && pathname === "/") {
@@ -1653,7 +1679,7 @@ async function handleRequest(req, res) {
       res.end();
       return;
     }
-    sendFile(res, path.join(PUBLIC_DIR, "index.html"));
+    sendHtmlWithAssetVersion(res, path.join(PUBLIC_DIR, "index.html"), PUBLIC_DIR);
     return;
   }
   if (method === "GET" && (pathname === "/app.js" || pathname === "/styles.css" || pathname === "/auth.js")) {
@@ -1677,7 +1703,7 @@ async function handleRequest(req, res) {
     if (!session) { res.writeHead(302, { Location: "/auth" }); res.end(); return; }
     const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
     if (!user?.is_admin) { res.writeHead(302, { Location: "/" }); res.end(); return; }
-    sendFile(res, path.join(PUBLIC_DIR, "admin.html"));
+    sendHtmlWithAssetVersion(res, path.join(PUBLIC_DIR, "admin.html"), PUBLIC_DIR);
     return;
   }
 
