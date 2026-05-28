@@ -3529,23 +3529,23 @@ function showAnnouncementModal(list, index) {
   function unlockAudio() {
     if (_audioUnlocked) return;
     _audioUnlocked = true;
-    const silent = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
-    silent.play().catch(() => {});
-    // 同时解锁铃声 Audio 实例：iOS 对每个 Audio 单独判断手势，必须对这个实例本身触发一次播放
-    if (window._ringAudio) {
+    try {
+      const silent = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=");
+      silent.play().catch(() => {});
+      // 在用户手势上下文里创建并解锁铃声 Audio 实例：iOS 对每个 Audio 单独判断手势
+      if (!window._ringAudio) {
+        window._ringAudio = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
+      }
       window._ringAudio.muted = true;
       window._ringAudio.play().then(() => {
         window._ringAudio.pause();
         window._ringAudio.currentTime = 0;
         window._ringAudio.muted = false;
       }).catch(() => {});
-    }
+    } catch {}
     document.removeEventListener("touchstart", unlockAudio);
     document.removeEventListener("click", unlockAudio);
   }
-  // 预创建铃声实例并全局暴露，供 showIncomingCall 复用
-  window._ringAudio = new Audio("https://acgay.oss-cn-hangzhou.aliyuncs.com/tornado/audio/ring2.mp3");
-  window._ringAudio.preload = "auto";
   document.addEventListener("touchstart", unlockAudio, { passive: true });
   document.addEventListener("click", unlockAudio);
 
