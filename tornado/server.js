@@ -129,6 +129,7 @@ const FLAGS_DEFAULT        = FLAG_CHAT_IMAGE; // 0b0010 = 2
 async function getUserSettings(userId) {
   const row = await dbGet("SELECT * FROM user_settings WHERE user_id = ?", [userId]);
   const globalImageEnabled = (await getGlobalSetting("chat_image_enabled", "1")) !== "0";
+  const manualAffectionEnabled = (await getGlobalSetting("manual_affection_enabled", "1")) !== "0";
   const flags = row ? (row.flags ?? FLAGS_DEFAULT) : FLAGS_DEFAULT;
   const base = {
     imageFallbackEnabled: !!(flags & FLAG_IMAGE_FALLBACK),
@@ -138,6 +139,7 @@ async function getUserSettings(userId) {
     ttsEnabled:           !!(flags & FLAG_TTS_ENABLED),
     ttsLang:              row?.tts_lang || "zh",
     llmProvider:          row?.llm_provider || "deepseek",
+    manualAffectionEnabled,
   };
   if (!globalImageEnabled) base.chatImageEnabled = false;
   return base;
@@ -1880,6 +1882,7 @@ async function handleRequest(req, res) {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
+        manual_affection_enabled: await getGlobalSetting("manual_affection_enabled", "1"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
@@ -1903,6 +1906,9 @@ async function handleRequest(req, res) {
       if ("affection_interval" in body) {
         const n = Math.max(1, Math.min(20, Math.floor(Number(body.affection_interval) || 3)));
         await setGlobalSetting("affection_interval", String(n));
+      }
+      if ("manual_affection_enabled" in body) {
+        await setGlobalSetting("manual_affection_enabled", body.manual_affection_enabled ? "1" : "0");
       }
       if ("milestone_mode" in body && ["comic", "video"].includes(body.milestone_mode)) {
         await setGlobalSetting("milestone_mode", body.milestone_mode);
@@ -1936,6 +1942,7 @@ async function handleRequest(req, res) {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
+        manual_affection_enabled: await getGlobalSetting("manual_affection_enabled", "1"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
@@ -2188,6 +2195,8 @@ async function handleRequest(req, res) {
     return;
   }
   if (method === "PATCH" && pathname === "/character/affection") {
+    const manualEnabled = (await getGlobalSetting("manual_affection_enabled", "1")) !== "0";
+    if (!manualEnabled) { send(res, 403, { error: "manual affection disabled" }); return; }
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
     const body = await readBody(req);

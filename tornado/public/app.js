@@ -667,6 +667,11 @@ function renderSessionList(sessions, activeCharName = "") {
 async function selectSession(id) {
   currentSessionId = id;
   try { localStorage.setItem("lastSessionId", String(id)); } catch {}
+  // 切换会话立刻停止旧会话的 TTS（流式 + 已开始播放的 audio），避免串台
+  if (_currentTtsAudio) { try { _currentTtsAudio.pause(); } catch {} _currentTtsAudio = null; }
+  document.querySelectorAll(".tts-btn-active").forEach(b => b.classList.remove("tts-btn-active"));
+  for (const [, state] of _ttsStreams) { try { state.ctx.close(); } catch {} }
+  _ttsStreams.clear();
   document.querySelectorAll("#session-list li").forEach((li) => {
     if (!li.dataset.id) return;
     li.classList.toggle("active", Number(li.dataset.id) === id);
@@ -1380,9 +1385,11 @@ function handleWsPayload(payload) {
     showRelationMilestoneModal(payload);
   }
   if (payload.tts) {
+    if (payload.msg_id && !document.querySelector(`[data-msg-id="${payload.msg_id}"]`)) return;
     attachTtsPlayer(payload.msg_id, payload.audio_url);
   }
   if (payload.tts_stream_start) {
+    if (payload.msg_id && !document.querySelector(`[data-msg-id="${payload.msg_id}"]`)) return;
     ttsStreamStart(payload.msg_id);
   }
   if (payload.tts_chunk) {
@@ -1867,7 +1874,7 @@ function ttsStreamEnd(msgId, audioUrl) {
 }
 
 function attachTtsPlayer(msgId, audioUrl, autoPlay = true, targetWrap = null) {
-  const wrap = targetWrap || (msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null) || document.querySelector(".bubble-wrap.assistant:last-child");
+  const wrap = targetWrap || (msgId ? document.querySelector(`[data-msg-id="${msgId}"]`) : null);
   if (!wrap) return;
   const target = wrap.querySelector(".bubble") || wrap;
   if (target.querySelector(".tts-player")) return;
@@ -2080,9 +2087,17 @@ function showRelationMilestoneModal(data) {
   document.body.appendChild(overlay);
 }
 
+function applyManualAffectionVisibility() {
+  const row = document.getElementById("affection-set-row");
+  if (!row) return;
+  const enabled = window._manualAffectionEnabled !== false;
+  row.style.display = enabled ? "flex" : "none";
+}
+
 async function openAffectionLog() {
   const modal = document.getElementById("affection-modal");
   const list = document.getElementById("affection-log-list");
+  applyManualAffectionVisibility();
   modal.classList.remove("hidden");
   list.innerHTML = '<p style="color:var(--text-dim);font-size:13px;padding:16px">加载中…</p>';
   try {
@@ -2694,6 +2709,8 @@ async function openSettings() {
     if (autoExpandToggle) autoExpandToggle.classList.toggle("on", !!gs.imageAutoExpand);
     window._imageAutoExpand = !!gs.imageAutoExpand;
     window._collapseAction = !!gs.collapseAction;
+    window._manualAffectionEnabled = gs.manualAffectionEnabled !== false;
+    applyManualAffectionVisibility();
     const collapseToggle = document.getElementById("collapse-action-toggle");
     if (collapseToggle) collapseToggle.classList.toggle("on", !!gs.collapseAction);
     const ttsToggle = document.getElementById("tts-enabled-setting-toggle");
@@ -3516,6 +3533,8 @@ function showAnnouncementModal(list, index) {
     const gs = await api("GET", "/settings");
     window._imageAutoExpand = !!gs.imageAutoExpand;
     window._collapseAction = !!gs.collapseAction;
+    window._manualAffectionEnabled = gs.manualAffectionEnabled !== false;
+    applyManualAffectionVisibility();
   } catch {}
   initMoodGrid();
   initBottomNav();

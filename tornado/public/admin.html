@@ -414,6 +414,14 @@
           <input type="number" id="affectionInterval" min="1" max="20" style="width:80px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
           <span style="color:var(--text-dim);font-size:13px">每隔多少轮对话评估一次心动值，默认 3</span>
         </div>
+        <h3 style="margin-top:16px">手动设置心动值</h3>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="manualAffectionToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="manualAffectionToggle">允许前台用户在"心动历程"里手动设置心动值（关闭后只能由系统自动评估）</label>
+        </div>
         <h3 style="margin-top:16px">关系里程碑展示形式</h3>
         <div style="display:flex;align-items:center;gap:10px">
           <select id="milestoneMode" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
@@ -749,6 +757,7 @@ async function loadSystem() {
     document.getElementById("globalImageToggle").checked = settings.chat_image_enabled !== "0";
     document.getElementById("dailySceneImageLimit").value = settings.daily_scene_image_limit ?? "5";
     document.getElementById("affectionInterval").value = settings.affection_interval ?? "3";
+    document.getElementById("manualAffectionToggle").checked = settings.manual_affection_enabled !== "0";
     document.getElementById("milestoneMode").value = settings.milestone_mode ?? "comic";
     document.getElementById("milestoneVideoDuration").value = settings.milestone_video_duration ?? "3";
     document.getElementById("videoDurationRow").style.display = settings.milestone_mode === "video" ? "flex" : "none";
@@ -773,12 +782,13 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const enabled = document.getElementById("globalImageToggle").checked;
   const limit = Number(document.getElementById("dailySceneImageLimit").value) || 0;
   const affectionInterval = Number(document.getElementById("affectionInterval").value) || 3;
+  const manualAffectionEnabled = document.getElementById("manualAffectionToggle").checked;
   const milestoneMode = document.getElementById("milestoneMode").value;
   const milestoneVideoDuration = Number(document.getElementById("milestoneVideoDuration").value) || 3;
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
   const multiCharAwareness = document.getElementById("multiCharAwarenessToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel }) });
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel }) });
   if (data) showMsg("已保存");
 });
 
