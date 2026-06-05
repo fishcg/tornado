@@ -18,12 +18,13 @@
 
 ---
 
-## 两个服务
+## 项目组成
 
-| 服务 | 端口     | 职责 |
-|---|--------|---|
-| **tornado** | `3011` | 虚拟伴侣聊天，角色扮演，心动值，成就系统，图片生成 |
+| 组件 | 端口 | 职责 |
+|---|---|---|
+| **tornado** | `3011` | 虚拟伴侣聊天，角色扮演，心动值，成就系统，图片生成，版本管理 |
 | **memory** | `8880` | 长期记忆摄取、巩固、查询 |
+| **app** | — | React Native (Expo) 移动端客户端，见 [`app/README.md`](app/README.md) |
 
 两个服务共用同一个 MySQL 数据库，通过 `MEMORY_API` 互通。用 `npm run all` 一键启动。
 
@@ -35,12 +36,16 @@
 
 - **角色扮演**：可配置角色聊天灵魂设定（`soul.md`），角色会根据关系阶段调整态度和边界
 - **心动值系统**：0–100 的关系进度，影响角色对话风格和容忍度，由 LLM 根据对话内容自动评估
+- **情绪系统**：角色根据对话动态切换情绪，实时更新头像（多情绪独立头像，AI 生成或自定义上传）
 - **成就系统**：达成消息数、心动值、连续聊天天数等里程碑时，触发成就弹窗，附带 AI 生成的角色自拍和心理独白
+- **关系里程碑**：心动值跨越阶段阈值时触发升级演出，支持漫画/视频两种展示形式
 - **场景插图**：手动或自动触发，根据当前对话内容生成场景图片，保持场景连续性
-- **情绪头像**：角色根据当前情绪实时更新头像
+- **语音通话**：模拟来电界面，角色可主动拨打电话，支持接听/挂断和语音留言
+- **TTS 语音**：聊天回复可语音播放，流式 PCM 与完整音频双模式，支持多种 TTS 渠道（Qwen / CosyVoice / Qwen-Omni）
 - **主动消息**：空闲超时后角色会主动发起对话（可配置免打扰时段）
-- **多用户隔离**：邀请码注册，每个用户独立的角色、对话、心动值数据
-- **管理后台**：角色配置、成就管理、全局参数（心动频次、每日插图上限等）
+- **多用户隔离**：邀请码注册，每个用户独立的角色、对话、心动值、成就数据
+- **App 版本管理**：后台发布新版本 APK，客户端启动检查 + API 级别拦截（426），支持强制更新
+- **管理后台**：用户管理、角色配置、成就管理、全局参数、App 版本管理、公告管理等
 
 ### 长期记忆（memory）
 
@@ -49,6 +54,18 @@
 - **记忆巩固**：定时（默认 30 分钟）发现跨记忆联系，提炼更高层洞察
 - **记忆查询**：基于记忆库回答问题，返回带来源引用的答案
 - **自动监听**：把文件丢进 `./inbox`，服务自动摄取
+
+### 移动端 App（app/）
+
+基于 Expo (React Native) 的移动客户端，支持 Android / iOS。提供完整的聊天、角色管理、成就、来电、版本更新等功能。社区版用户可以通过网页版「下载 App」按钮获取安装包。
+
+```bash
+cd app
+npm install
+npx expo start --dev-client
+```
+
+构建和发布详见 [`app/README.md`](app/README.md)。
 
 ---
 
@@ -85,6 +102,12 @@ IMAGE_API_KEY=your_key
 # 记忆 LLM（memory）
 OPENAI_MODEL=qwen3.5-plus
 
+# OSS（图片/APK 上传，可选）
+OSS_ACCESS_KEY_ID=your_oss_key
+OSS_ACCESS_KEY_SECRET=your_oss_secret
+OSS_BUCKET=your_bucket
+OSS_REGION=oss-cn-hangzhou
+
 # 其他
 MEMORY_API=http://localhost:8880
 PASSWORD_SALT=your_salt
@@ -98,8 +121,9 @@ npm run all
 ```
 
 - 聊天界面：`http://localhost:3011/`
-- 管理后台：`http://localhost:3011/admin.html`
+- 管理后台：`http://localhost:3011/admin`（或 `/admin.html`）
 - 记忆仪表盘：`http://localhost:8880/`
+- 移动端 App：`cd app && npx expo start --dev-client`
 
 ---
 
@@ -120,6 +144,11 @@ npm run all
 | `PASSWORD_SALT` | `tornado-default-salt-2025` | 密码加盐 |
 | `DEFAULT_INVITE_CODE` | `tornado2025` | 初始邀请码 |
 | `PROACTIVE_IDLE_MINUTES` | `30` | 主动消息空闲阈值（分钟） |
+| `OSS_ACCESS_KEY_ID` | — | 阿里云 OSS AccessKey（图片/APK 上传） |
+| `OSS_ACCESS_KEY_SECRET` | — | 阿里云 OSS Secret |
+| `OSS_BUCKET` | — | OSS Bucket 名 |
+| `OSS_REGION` | `oss-cn-hangzhou` | OSS 区域 |
+| `DINGTALK_TOKEN` | — | 钉钉机器人 Token（告警通知，可选） |
 
 ### memory（记忆服务）
 
