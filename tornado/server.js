@@ -1807,8 +1807,8 @@ async function handleRequest(req, res) {
   if (method === "GET" && pathname === "/auth/me") {
     const session = await getAuthSession(req);
     if (!session) { send(res, 401, { error: "unauthorized" }); return; }
-    const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
-    send(res, 200, { id: session.userId, username: session.username, is_admin: user?.is_admin ? 1 : 0 });
+    const user = await dbGet("SELECT is_admin, avatar_url FROM users WHERE id = ?", [session.userId]);
+    send(res, 200, { id: session.userId, username: session.username, is_admin: user?.is_admin ? 1 : 0, avatar_url: user?.avatar_url || null });
     return;
   }
 
@@ -2738,6 +2738,48 @@ async function handleRequest(req, res) {
     const mimeMap = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp" };
     res.writeHead(200, { "Content-Type": mimeMap[ext] || "application/octet-stream", "Cache-Control": "public, max-age=86400" });
     fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  // POST /user/avatar — 上传用户头像（二进制流 → OSS → 写 users.avatar_url）
+  if (method === "POST" && pathname === "/user/avatar") {
+    const MAX_AVATAR_BYTES = 10 * 1024 * 1024;
+    const declared = Number(req.headers["content-length"] || 0);
+    if (declared && declared > MAX_AVATAR_BYTES) {
+      send(res, 413, { error: "图片过大，最大 10MB" });
+      return;
+    }
+    const chunks = [];
+    let total = 0;
+    let aborted = false;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > MAX_AVATAR_BYTES) { aborted = true; try { req.destroy(); } catch {} break; }
+      chunks.push(chunk);
+    }
+    if (aborted) { send(res, 413, { error: "图片过大，最大 10MB" }); return; }
+    const buf = Buffer.concat(chunks);
+    if (buf.length === 0) { send(res, 400, { error: "empty body" }); return; }
+    const ext = (req.headers["content-type"] || "").includes("png") ? ".png" : ".jpg";
+    const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+    const filename = `user-avatar-${userId}-${Date.now()}${ext}`;
+    let avatarUrl;
+    try {
+      avatarUrl = await uploadToOss(buf, filename, mimeType);
+    } catch (err) {
+      console.error(`[user-avatar] OSS 上传失败: ${err.message}`);
+      send(res, 500, { error: "上传失败" });
+      return;
+    }
+    await dbRun("UPDATE users SET avatar_url = ? WHERE id = ?", [avatarUrl, userId]);
+    send(res, 200, { ok: true, avatar_url: avatarUrl });
+    return;
+  }
+
+  // DELETE /user/avatar — 清除用户头像
+  if (method === "DELETE" && pathname === "/user/avatar") {
+    await dbRun("UPDATE users SET avatar_url = NULL WHERE id = ?", [userId]);
+    send(res, 200, { ok: true });
     return;
   }
 

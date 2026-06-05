@@ -367,4 +367,7 @@ export async function initDb() {
   // 迁移：app_versions 改走语义化版本，删除废弃的整数列
   await dropColumn(pool, "app_versions", "version_code");
   await dropColumn(pool, "app_versions", "min_version_code");
+
+  // 用户头像
+  await ensureColumn(pool, "users", "avatar_url", "TEXT");
 }

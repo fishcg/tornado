@@ -22,6 +22,7 @@ import {
 } from "@/components/Icons";
 import { useUi } from "@/store/ui";
 import { useAvatars } from "@/store/avatars";
+import { useAuth } from "@/store/auth";
 
 type Msg = {
   id: number | string;
@@ -145,6 +146,7 @@ export default function ChatScreen() {
   const chatBgOpacity = useUi((u) => u.chatBgOpacity);
   const bubbleOpacity = useUi((u) => u.bubbleOpacity);
   const playingId = useTtsPlayingId();
+  const userAvatar = useAuth((s) => s.avatarUrl);
   const insets = useSafeAreaInsets();
   const loadAvatars = useAvatars((s) => s.load);
   const setOneAvatar = useAvatars((s) => s.setOne);
@@ -600,10 +602,12 @@ export default function ChatScreen() {
               item={item}
               characterName={character?.name || ""}
               characterAvatar={item.role === "assistant" ? currentAvatar : null}
+              userAvatar={item.role === "user" ? userAvatar : null}
               onPlay={(url) => playTts(url, item.id)}
               onLongPress={onBubbleLongPress}
               onTapImage={(url) => setLightboxUrl(url)}
               onAvatarPress={() => setAvatarsOpen(true)}
+              onUserAvatarPress={() => router.push("/(tabs)/me")}
               collapseAction={collapseAction}
               bubbleOpacity={bubbleOpacity}
               isPlaying={playingId === item.id}
@@ -728,13 +732,14 @@ function BubbleImage({ url }: { url: string }) {
 }
 
 function Bubble({
-  item, characterName, characterAvatar, onPlay, onLongPress, onTapImage, onAvatarPress, collapseAction, bubbleOpacity, isPlaying, moodColor,
+  item, characterName, characterAvatar, userAvatar, onPlay, onLongPress, onTapImage, onAvatarPress, onUserAvatarPress, collapseAction, bubbleOpacity, isPlaying, moodColor,
 }: {
-  item: Msg; characterName: string; characterAvatar?: string | null;
+  item: Msg; characterName: string; characterAvatar?: string | null; userAvatar?: string | null;
   onPlay: (url: string) => void;
   onLongPress: (item: Msg) => void;
   onTapImage: (url: string) => void;
   onAvatarPress?: () => void;
+  onUserAvatarPress?: () => void;
   collapseAction: boolean;
   bubbleOpacity: number;
   isPlaying: boolean;
@@ -742,7 +747,8 @@ function Bubble({
 }) {
   const isUser = item.role === "user";
   const initial = isUser ? "我" : (characterName?.[0] || "?");
-  const showAvatar = !isUser && !!characterAvatar;
+  const showAvatar = isUser ? !!userAvatar : !!characterAvatar;
+  const avatarUri = isUser ? userAvatar : characterAvatar;
   const parts = useMemo(
     () => item.content ? renderBubbleParts(item.content, collapseAction) : [],
     [item.content, collapseAction]
@@ -788,13 +794,13 @@ function Bubble({
     <View style={[s.row, isUser ? s.rowUser : s.rowAssistant]}>
       <Pressable
         style={s.avatarWrap}
-        onPress={!isUser && onAvatarPress ? onAvatarPress : undefined}
-        disabled={isUser || !onAvatarPress}
+        onPress={isUser ? onUserAvatarPress : onAvatarPress}
+        disabled={isUser ? !onUserAvatarPress : !onAvatarPress}
       >
         {/* 头像图片：静态容器，永不随播放状态改变结构/层级，避免远程图被重载闪烁 */}
         <View style={[s.avatar, isUser && s.avatarUser]}>
           {showAvatar
-            ? <Image source={{ uri: characterAvatar! }} style={s.avatarImg} />
+            ? <Image source={{ uri: avatarUri! }} style={s.avatarImg} />
             : <Text style={s.avatarText}>{initial}</Text>}
         </View>
         {/* 播放高亮：绝对定位覆盖层，作为后置兄弟节点，不影响上面图片节点的索引 */}
