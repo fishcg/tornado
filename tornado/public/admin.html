@@ -419,6 +419,14 @@
         </div>
         <button class="btn-sm btn-primary" id="addVerBtn">发布版本</button>
       </div>
+      <div class="admin-form">
+        <h3>App 最低可用版本</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="text" id="appMinVersion" placeholder="如 0.2.0（留空不强制）" style="width:160px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <button class="btn-sm btn-primary" id="saveMinVersionBtn">保存</button>
+        </div>
+        <div style="color:var(--text-dim);font-size:13px;margin-top:8px">低于此版本的 App 客户端调接口将被拦截（426），提示更新</div>
+      </div>
       <table class="admin-table" id="ver-table">
         <thead><tr><th>版本号</th><th>强制</th><th>大小</th><th>发布时间</th><th>启用</th><th>操作</th></tr></thead>
         <tbody id="ver-list"></tbody>
@@ -490,11 +498,6 @@
             <option value="cosyvoice">阿里云 CosyVoice</option>
           </select>
           <span style="color:var(--text-dim);font-size:13px">影响新上传音色使用的复刻渠道，已复刻的角色不受影响</span>
-        </div>
-        <h3 style="margin-top:16px">App 最低可用版本</h3>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="text" id="appMinVersion" placeholder="如 0.2.0（留空不强制）" style="width:160px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
-          <span style="color:var(--text-dim);font-size:13px">低于此版本的 App 客户端调接口将被拦截（426），提示更新</span>
         </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
@@ -802,7 +805,6 @@ async function loadSystem() {
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
     document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "qwen";
-    document.getElementById("appMinVersion").value = settings.app_min_version ?? "";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
     document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
@@ -827,8 +829,7 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
   const multiCharAwareness = document.getElementById("multiCharAwarenessToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
-  const appMinVersion = document.getElementById("appMinVersion").value.trim();
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel, app_min_version: appMinVersion }) });
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel }) });
   if (data) showMsg("已保存");
 });
 
@@ -955,6 +956,7 @@ function fmtBytes(n) {
 }
 
 async function loadAppVersions() {
+  loadMinVersion();
   const rows = await api("/admin/app-versions");
   if (!rows) return;
   const tbody = document.getElementById("ver-list");
@@ -992,6 +994,17 @@ async function loadAppVersions() {
     });
   });
 }
+
+async function loadMinVersion() {
+  const settings = await api("/admin/global-settings");
+  if (settings) document.getElementById("appMinVersion").value = settings.app_min_version ?? "";
+}
+
+document.getElementById("saveMinVersionBtn").addEventListener("click", async () => {
+  const appMinVersion = document.getElementById("appMinVersion").value.trim();
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ app_min_version: appMinVersion }) });
+  if (data) showMsg("已保存");
+});
 
 document.getElementById("uploadApkBtn").addEventListener("click", async () => {
   const fileInput = document.getElementById("apkFile");
