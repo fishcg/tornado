@@ -41,6 +41,43 @@ async function ensureColumn(pool, table, column, definition) {
   }
 }
 
+// 修复 mood_avatars 老表的主键：原 PK (character, mood) 不含 user_id，会被多用户互覆盖
+async function fixMoodAvatarsKey(pool) {
+  try {
+    const [pkRows] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mood_avatars' AND INDEX_NAME='PRIMARY' ORDER BY SEQ_IN_INDEX"
+    );
+    const pkCols = pkRows.map((r) => r.COLUMN_NAME);
+    // 老主键：character + mood（无 id、无 user_id）
+    const isLegacy = pkCols.length === 2 && pkCols.includes("character") && pkCols.includes("mood");
+    if (!isLegacy) return;
+    console.log("[db] 升级 mood_avatars 主键以支持多用户隔离…");
+    // 1. 加 id 列（先不设主键）
+    const [idCol] = await pool.execute(
+      "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mood_avatars' AND COLUMN_NAME='id'"
+    );
+    if (!idCol.length) {
+      await pool.execute("ALTER TABLE `mood_avatars` ADD COLUMN id INT");
+    }
+    // 2. 删除老主键
+    await pool.execute("ALTER TABLE `mood_avatars` DROP PRIMARY KEY");
+    // 3. id 设为自增 + 主键
+    await pool.execute("ALTER TABLE `mood_avatars` MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT PRIMARY KEY");
+    // 4. 加唯一索引（character + mood + user_id）
+    const [uniqRows] = await pool.execute(
+      "SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='mood_avatars' AND INDEX_NAME='uniq_char_mood_user'"
+    );
+    if (!uniqRows.length) {
+      await pool.execute(
+        "ALTER TABLE `mood_avatars` ADD UNIQUE KEY uniq_char_mood_user (`character`(191), mood, user_id)"
+      );
+    }
+    console.log("[db] mood_avatars 主键升级完成");
+  } catch (e) {
+    console.warn("[db] mood_avatars 主键升级失败（可忽略，下次启动重试）:", e.message);
+  }
+}
+
 const CREATE_TABLES = [
   `CREATE TABLE IF NOT EXISTS sessions (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -78,13 +115,14 @@ const CREATE_TABLES = [
   ) CHARACTER SET utf8mb4`,
 
   `CREATE TABLE IF NOT EXISTS mood_avatars (
+    id INT AUTO_INCREMENT PRIMARY KEY,
     \`character\` VARCHAR(255) NOT NULL DEFAULT '',
     mood VARCHAR(32) NOT NULL,
     image_url TEXT NOT NULL,
     appearance_hash VARCHAR(64) NOT NULL DEFAULT '',
     created_at VARCHAR(64) NOT NULL,
     user_id INT,
-    PRIMARY KEY (\`character\`, mood),
+    UNIQUE KEY uniq_char_mood_user (\`character\`(191), mood, user_id),
     KEY idx_mood_avatars_character_user (\`character\`(191), user_id),
     KEY idx_mood_avatars_character_hash (\`character\`(191), appearance_hash)
   ) CHARACTER SET utf8mb4`,
@@ -224,6 +262,14 @@ const CREATE_TABLES = [
     content TEXT NOT NULL,
     created_at VARCHAR(64) NOT NULL,
     KEY idx_diaries_user_char (user_id, character_id)
+  ) CHARACTER SET utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS auth_sessions (
+    sid VARCHAR(128) NOT NULL PRIMARY KEY,
+    user_id INT NOT NULL,
+    username VARCHAR(64) NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    KEY idx_auth_user (user_id)
   ) CHARACTER SET utf8mb4`
 ];
 
@@ -251,6 +297,7 @@ export async function initDb() {
   await ensureColumn(pool, "messages", "user_id", "INT");
   await ensureColumn(pool, "mood_avatars", "appearance_hash", "VARCHAR(64) NOT NULL DEFAULT ''");
   await ensureColumn(pool, "mood_avatars", "user_id", "INT");
+  await fixMoodAvatarsKey(pool);
   await ensureColumn(pool, "character_cards", "user_id", "INT");
   await ensureColumn(pool, "characters", "appearance", "TEXT");
   await ensureColumn(pool, "characters", "personality", "TEXT");
@@ -264,6 +311,8 @@ export async function initDb() {
   await ensureColumn(pool, "characters", "last_chat_date", "VARCHAR(16)");
   await ensureColumn(pool, "user_settings", "scene_image_date", "VARCHAR(16)");
   await ensureColumn(pool, "user_settings", "scene_image_count", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "user_settings", "avatar_image_date", "VARCHAR(16)");
+  await ensureColumn(pool, "user_settings", "avatar_image_count", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "user_settings", "llm_provider", "VARCHAR(32) NOT NULL DEFAULT 'deepseek'");
   await ensureColumn(pool, "user_settings", "tts_lang", "VARCHAR(4) NOT NULL DEFAULT 'zh'");
   await ensureColumn(pool, "user_achievements", "notified", "INT NOT NULL DEFAULT 0");

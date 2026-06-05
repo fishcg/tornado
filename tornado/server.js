@@ -57,33 +57,61 @@ async function uploadToOss(buffer, filename, mimeType) {
 
 // ── 鉴权 ──────────────────────────────────────────────────────────────────────
 
-const authSessions = new Map(); // sid -> { userId, username }
+const authSessions = new Map(); // sid -> { userId, username }  内存缓存
 
 function hashPassword(password) {
   return crypto.createHash("sha256").update(password + PASSWORD_SALT).digest("hex");
 }
 
-function createAuthSession(userId, username) {
+async function loadAuthSession(sid) {
+  if (!sid) return null;
+  const cached = authSessions.get(sid);
+  if (cached) return cached;
+  const row = await dbGet("SELECT user_id, username FROM auth_sessions WHERE sid = ?", [sid]);
+  if (!row) return null;
+  const sess = { userId: row.user_id, username: row.username };
+  authSessions.set(sid, sess);
+  return sess;
+}
+
+async function createAuthSession(userId, username) {
   const sid = crypto.randomBytes(32).toString("hex");
-  authSessions.set(sid, { userId, username });
+  const sess = { userId, username };
+  authSessions.set(sid, sess);
+  await dbRun("INSERT INTO auth_sessions (sid, user_id, username, created_at) VALUES (?, ?, ?, ?)",
+    [sid, userId, username, nowIso()]);
   return sid;
 }
 
-function getAuthSession(req) {
+async function deleteAuthSession(sid) {
+  if (!sid) return;
+  authSessions.delete(sid);
+  await dbRun("DELETE FROM auth_sessions WHERE sid = ?", [sid]);
+}
+
+async function getAuthSession(req) {
+  const auth = req.headers.authorization || req.headers.Authorization;
+  if (auth) {
+    const m = auth.match(/^Bearer\s+([A-Za-z0-9]+)$/i);
+    if (m) {
+      const sess = await loadAuthSession(m[1]);
+      if (sess) return sess;
+    }
+  }
   const cookie = req.headers.cookie || "";
   const match = cookie.match(/(?:^|;\s*)sid=([^;]+)/);
   if (!match) return null;
-  return authSessions.get(match[1]) || null;
+  return await loadAuthSession(match[1]);
 }
 
-function requireAuth(req, res) {
-  const session = getAuthSession(req);
+async function requireAuth(req, res) {
+  const session = await getAuthSession(req);
   if (!session) { send(res, 401, { error: "unauthorized" }); return null; }
   return session;
 }
 
 async function requireAdmin(req, res) {
-  const session = getAuthSession(req);
+  const session = await getAuthSession(req);
   if (!session) { send(res, 401, { error: "unauthorized" }); return null; }
   const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
   if (!user?.is_admin) { send(res, 403, { error: "forbidden" }); return null; }
@@ -570,9 +598,10 @@ async function rewriteSafePrompt(originalPrompt) {
   return (res.choices?.[0]?.message?.content || "").trim();
 }
 
-async function generateImage(prompt, sceneAnchor = "", { imageFallbackEnabled = true } = {}) {
+async function generateImage(prompt, sceneAnchor = "", { imageFallbackEnabled = true, aspectRatio = null } = {}) {
+  const ratio = aspectRatio || "16:9";
   try {
-    return await callImageApi(prompt);
+    return await callImageApi(prompt, { aspectRatio: ratio });
   } catch (err) {
     if (err.status === 400) {
       console.log("生图被拒，尝试改写 prompt 重试...");
@@ -581,17 +610,17 @@ async function generateImage(prompt, sceneAnchor = "", { imageFallbackEnabled = 
         const retryPrompt = sceneAnchor ? `${safePrompt}${sceneAnchor}` : safePrompt;
         console.log(`改写后: ${retryPrompt}`);
         try {
-          return await callImageApi(retryPrompt);
+          return await callImageApi(retryPrompt, { aspectRatio: ratio });
         } catch (err2) {
           if (!imageFallbackEnabled) throw err2;
           console.log(`改写后仍失败，切换 DashScope 重试: ${err2.message}`);
-          return await callImageApiFallback(retryPrompt);
+          return await callImageApiFallback(retryPrompt, { aspectRatio: ratio });
         }
       }
     }
     if (!imageFallbackEnabled) throw err;
     console.log(`主 API 失败，切换 DashScope 重试: ${err.message}`);
-    return await callImageApiFallback(prompt);
+    return await callImageApiFallback(prompt, { aspectRatio: ratio });
   }
 }
 
@@ -714,14 +743,39 @@ async function consumeDailyImageQuota(userId) {
   return true;
 }
 
-async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId } = {}) {
+// 头像每日配额（独立于场景插图）
+async function consumeDailyAvatarQuota(userId, count = 1) {
+  const dailyLimit = Number(await getGlobalSetting("daily_avatar_image_limit", "20"));
+  if (dailyLimit <= 0) return true;
+  const today = new Date().toISOString().slice(0, 10);
+  await dbRun("INSERT IGNORE INTO user_settings (user_id, flags) VALUES (?, ?)", [userId, FLAGS_DEFAULT]);
+  const row = await dbGet("SELECT avatar_image_date, avatar_image_count FROM user_settings WHERE user_id = ?", [userId]);
+  const usedToday = row?.avatar_image_date === today ? (row.avatar_image_count ?? 0) : 0;
+  if (usedToday + count > dailyLimit) return false;
+  if (row?.avatar_image_date === today) {
+    await dbRun("UPDATE user_settings SET avatar_image_count = avatar_image_count + ? WHERE user_id = ?", [count, userId]);
+  } else {
+    await dbRun("UPDATE user_settings SET avatar_image_date = ?, avatar_image_count = ? WHERE user_id = ?", [today, count, userId]);
+  }
+  return true;
+}
+
+async function getAvatarQuotaInfo(userId) {
+  const dailyLimit = Number(await getGlobalSetting("daily_avatar_image_limit", "20"));
+  const today = new Date().toISOString().slice(0, 10);
+  const row = await dbGet("SELECT avatar_image_date, avatar_image_count FROM user_settings WHERE user_id = ?", [userId]);
+  const usedToday = row?.avatar_image_date === today ? (row.avatar_image_count ?? 0) : 0;
+  return { dailyLimit, usedToday, remaining: Math.max(0, dailyLimit - usedToday) };
+}
+
+async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId, aspectRatio = null } = {}) {
   pendingImages.add(msgId);
   await updateMessageImagePrompt(msgId, prompt);
   const sanitized = sanitizeImagePrompt(prompt);
   const sceneAnchor = previousScene ? `（延续上一张的场景设定：${sanitizeImagePrompt(previousScene)}；若对话里没有明显转场请保持地点、服装、时段一致）` : "";
   const fullPrompt = `${await buildCharacterPromptPrefix(userId)}，${sanitized}${sceneAnchor}`;
   console.log(`${silent ? "自动" : "显式"}生图 [msg ${msgId}]: ${fullPrompt}`);
-  generateImage(fullPrompt, sceneAnchor, { imageFallbackEnabled })
+  generateImage(fullPrompt, sceneAnchor, { imageFallbackEnabled, aspectRatio })
     .then(async (url) => {
       await updateMessageImage(msgId, url);
       console.log(`生图完成 [msg ${msgId}]: ${url}`);
@@ -1516,12 +1570,13 @@ async function listAllActiveSessions() {
 }
 
 async function listSessions(userId) {
-  return dbAll(`
-    SELECT s.*,
-      (SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_message,
-      (SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) as character_name
-    FROM sessions s WHERE s.archived = 0 AND s.user_id = ? ORDER BY updated_at DESC
-  `, [userId]);
+  const sql =
+    "SELECT s.*, " +
+    "(SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_message, " +
+    "(SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) as character_name, " +
+    "(SELECT image_url FROM mood_avatars WHERE `character` = (SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) AND (user_id = s.user_id OR user_id IS NULL) ORDER BY (mood='neutral') DESC, id DESC LIMIT 1) as character_avatar " +
+    "FROM sessions s WHERE s.archived = 0 AND s.user_id = ? ORDER BY updated_at DESC";
+  return dbAll(sql, [userId]);
 }
 
 async function getSession(id, userId) {
@@ -1632,9 +1687,9 @@ async function handleRequest(req, res) {
     const userId = result.insertId;
     await dbRun("INSERT INTO user_settings (user_id) VALUES (?)", [userId]);
     await ensureDefaultCharacter(userId);
-    const sid = createAuthSession(userId, username);
+    const sid = await createAuthSession(userId, username);
     res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": `sid=${sid}; HttpOnly; Path=/; SameSite=Lax` });
-    res.end(JSON.stringify({ ok: true, username, is_new_user: true }));
+    res.end(JSON.stringify({ ok: true, username, is_new_user: true, token: sid }));
     return;
   }
 
@@ -1645,23 +1700,27 @@ async function handleRequest(req, res) {
     if (!username || !password) { send(res, 400, { error: "缺少用户名或密码" }); return; }
     const user = await dbGet("SELECT * FROM users WHERE username = ?", [username]);
     if (!user || user.password_hash !== hashPassword(password)) { send(res, 401, { error: "用户名或密码错误" }); return; }
-    const sid = createAuthSession(user.id, user.username);
+    const sid = await createAuthSession(user.id, user.username);
     res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": `sid=${sid}; HttpOnly; Path=/; SameSite=Lax` });
-    res.end(JSON.stringify({ ok: true, username: user.username }));
+    res.end(JSON.stringify({ ok: true, username: user.username, token: sid }));
     return;
   }
 
   if (method === "POST" && pathname === "/auth/logout") {
+    // 收集前端可能给到的 Bearer / cookie sid，全部尝试删
+    const auth = req.headers.authorization || req.headers.Authorization || "";
+    const bearerMatch = auth.match(/^Bearer\s+([A-Za-z0-9]+)$/i);
+    if (bearerMatch) await deleteAuthSession(bearerMatch[1]);
     const cookie = req.headers.cookie || "";
-    const match = cookie.match(/(?:^|;\s*)sid=([^;]+)/);
-    if (match) authSessions.delete(match[1]);
+    const cookieMatch = cookie.match(/(?:^|;\s*)sid=([^;]+)/);
+    if (cookieMatch) await deleteAuthSession(cookieMatch[1]);
     res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": "sid=; HttpOnly; Path=/; Max-Age=0" });
     res.end(JSON.stringify({ ok: true }));
     return;
   }
 
   if (method === "GET" && pathname === "/auth/me") {
-    const session = getAuthSession(req);
+    const session = await getAuthSession(req);
     if (!session) { send(res, 401, { error: "unauthorized" }); return; }
     const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
     send(res, 200, { id: session.userId, username: session.username, is_admin: user?.is_admin ? 1 : 0 });
@@ -1675,7 +1734,7 @@ async function handleRequest(req, res) {
   }
   if (method === "GET" && pathname === "/") {
     // 未登录重定向到 /auth
-    const session = getAuthSession(req);
+    const session = await getAuthSession(req);
     if (!session) {
       res.writeHead(302, { Location: "/auth" });
       res.end();
@@ -1701,7 +1760,7 @@ async function handleRequest(req, res) {
     }
   }
   if (method === "GET" && pathname === "/admin") {
-    const session = getAuthSession(req);
+    const session = await getAuthSession(req);
     if (!session) { res.writeHead(302, { Location: "/auth" }); res.end(); return; }
     const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
     if (!user?.is_admin) { res.writeHead(302, { Location: "/" }); res.end(); return; }
@@ -1710,7 +1769,7 @@ async function handleRequest(req, res) {
   }
 
   // ── 所有 API 路由需要登录 ──────────────────────────────────────────────────
-  const authSession = requireAuth(req, res);
+  const authSession = await requireAuth(req, res);
   if (!authSession) return;
   const userId = authSession.userId;
 
@@ -1881,6 +1940,7 @@ async function handleRequest(req, res) {
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
+        daily_avatar_image_limit: await getGlobalSetting("daily_avatar_image_limit", "20"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         manual_affection_enabled: await getGlobalSetting("manual_affection_enabled", "1"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
@@ -1902,6 +1962,10 @@ async function handleRequest(req, res) {
       if ("daily_scene_image_limit" in body) {
         const n = Math.max(0, Math.floor(Number(body.daily_scene_image_limit) || 5));
         await setGlobalSetting("daily_scene_image_limit", String(n));
+      }
+      if ("daily_avatar_image_limit" in body) {
+        const n = Math.max(0, Math.floor(Number(body.daily_avatar_image_limit) || 20));
+        await setGlobalSetting("daily_avatar_image_limit", String(n));
       }
       if ("affection_interval" in body) {
         const n = Math.max(1, Math.min(20, Math.floor(Number(body.affection_interval) || 3)));
@@ -1941,6 +2005,7 @@ async function handleRequest(req, res) {
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
+        daily_avatar_image_limit: await getGlobalSetting("daily_avatar_image_limit", "20"),
         affection_interval: await getGlobalSetting("affection_interval", "3"),
         manual_affection_enabled: await getGlobalSetting("manual_affection_enabled", "1"),
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
@@ -2049,11 +2114,50 @@ async function handleRequest(req, res) {
       avatars[row.mood] = row.image_url;
       if (row.appearance_hash !== appearanceHash) stale = true;
     }
-    send(res, 200, { character: name, avatars, stale });
+    const quota = await getAvatarQuotaInfo(userId);
+    send(res, 200, { character: name, avatars, stale, moods: Object.keys(MOOD_AVATAR_PROMPTS), quota });
     return;
   }
 
-  // DELETE /avatars — 清除当前角色所有情绪头像，触发重新生成
+  // POST /avatars/regenerate — 一键重置：删除全部头像 + 重新生成（消耗对应数量配额）
+  if (method === "POST" && pathname === "/avatars/regenerate") {
+    const name = await getCharacterName(userId);
+    if (!name) { send(res, 400, { error: "no character" }); return; }
+    const moods = Object.keys(MOOD_AVATAR_PROMPTS);
+    const ok = await consumeDailyAvatarQuota(userId, moods.length);
+    if (!ok) {
+      const q = await getAvatarQuotaInfo(userId);
+      send(res, 429, { error: `今日头像配额不足（${q.usedToday}/${q.dailyLimit}）` });
+      return;
+    }
+    await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
+    pregenerateMoodAvatars(name, null, userId).catch(() => {});
+    send(res, 202, { ok: true, message: "已开始重新生成全部情绪头像" });
+    return;
+  }
+
+  // POST /avatars/:mood/regenerate — 重生成单一情绪头像
+  const moodRegenMatch = pathname.match(/^\/avatars\/([a-z_]+)\/regenerate$/);
+  if (method === "POST" && moodRegenMatch) {
+    const mood = moodRegenMatch[1];
+    if (!MOOD_AVATAR_PROMPTS[mood]) { send(res, 400, { error: "unknown mood" }); return; }
+    const name = await getCharacterName(userId);
+    if (!name) { send(res, 400, { error: "no character" }); return; }
+    const ok = await consumeDailyAvatarQuota(userId, 1);
+    if (!ok) {
+      const q = await getAvatarQuotaInfo(userId);
+      send(res, 429, { error: `今日头像配额不足（${q.usedToday}/${q.dailyLimit}）` });
+      return;
+    }
+    await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [name, mood, userId]);
+    generateMoodAvatar(mood, userId).then((url) => {
+      if (url) pushToUser(userId, { mood_avatar_update: true, mood, avatar_url: url });
+    }).catch(() => {});
+    send(res, 202, { ok: true });
+    return;
+  }
+
+  // DELETE /avatars — 清除当前角色所有情绪头像（不重新生成）
   if (method === "DELETE" && pathname === "/avatars") {
     const name = await getCharacterName(userId);
     await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
@@ -2284,8 +2388,25 @@ async function handleRequest(req, res) {
   if (method === "POST" && pathname === "/character/voice") {
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
+    const MAX_VOICE_BYTES = 20 * 1024 * 1024;
+    const declared = Number(req.headers["content-length"] || 0);
+    if (declared && declared > MAX_VOICE_BYTES) {
+      send(res, 413, { error: "音频文件过大，最大 20MB" });
+      return;
+    }
     const chunks = [];
-    for await (const chunk of req) chunks.push(chunk);
+    let total = 0;
+    let aborted = false;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > MAX_VOICE_BYTES) {
+        aborted = true;
+        try { req.destroy(); } catch {}
+        break;
+      }
+      chunks.push(chunk);
+    }
+    if (aborted) { send(res, 413, { error: "音频文件过大，最大 20MB" }); return; }
     const buf = Buffer.concat(chunks);
     if (buf.length === 0) { send(res, 400, { error: "empty body" }); return; }
     const ct = req.headers["content-type"] || "";
@@ -2347,8 +2468,23 @@ async function handleRequest(req, res) {
 
   // GET /characters — 角色列表
   if (method === "GET" && pathname === "/characters") {
-    const rows = await dbAll("SELECT id, name, is_active, created_at FROM characters WHERE user_id = ? ORDER BY id ASC", [userId]);
+    const rows = await dbAll(
+      "SELECT c.id, c.name, c.is_active, c.created_at, " +
+      "(SELECT image_url FROM mood_avatars WHERE `character` = c.name AND (user_id = c.user_id OR user_id IS NULL) ORDER BY (mood='neutral') DESC, id DESC LIMIT 1) as avatar_url " +
+      "FROM characters c WHERE c.user_id = ? ORDER BY c.id ASC",
+      [userId]
+    );
     send(res, 200, rows);
+    return;
+  }
+
+  // GET /characters/:id — 单个角色详情（含 soul_content 与结构化字段）
+  const charGetMatch = pathname.match(/^\/characters\/(\d+)$/);
+  if (method === "GET" && charGetMatch) {
+    const charId = Number(charGetMatch[1]);
+    const row = await dbGet("SELECT id, name, appearance, personality, description, soul_content, is_active, created_at FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
+    if (!row) { send(res, 404, { error: "not found" }); return; }
+    send(res, 200, row);
     return;
   }
 
@@ -2370,6 +2506,9 @@ async function handleRequest(req, res) {
   if (method === "PATCH" && charEditMatch) {
     const charId = Number(charEditMatch[1]);
     const body = await readBody(req);
+    const existing = await dbGet("SELECT * FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
+    if (!existing) { send(res, 404, { error: "not found" }); return; }
+    const appearanceChanged = typeof body.appearance === "string" && body.appearance.trim() !== (existing.appearance || "");
     if (body.is_active) {
       await dbRun("UPDATE characters SET is_active = 0 WHERE user_id = ?", [userId]);
       await dbRun("UPDATE characters SET is_active = 1 WHERE id = ? AND user_id = ?", [charId, userId]);
@@ -2377,8 +2516,15 @@ async function handleRequest(req, res) {
       if (activated) pregenerateMoodAvatars(activated.name, null, userId).catch(() => {});
     }
     if (typeof body.name === "string") await dbRun("UPDATE characters SET name = ? WHERE id = ? AND user_id = ?", [body.name.trim(), charId, userId]);
+    if (typeof body.appearance === "string") await dbRun("UPDATE characters SET appearance = ? WHERE id = ? AND user_id = ?", [body.appearance.trim(), charId, userId]);
+    if (typeof body.personality === "string") await dbRun("UPDATE characters SET personality = ? WHERE id = ? AND user_id = ?", [body.personality.trim(), charId, userId]);
+    if (typeof body.description === "string") await dbRun("UPDATE characters SET description = ? WHERE id = ? AND user_id = ?", [body.description.trim(), charId, userId]);
     if (typeof body.soul_content === "string") await dbRun("UPDATE characters SET soul_content = ? WHERE id = ? AND user_id = ?", [body.soul_content.trim(), charId, userId]);
     send(res, 200, { ok: true });
+    if (appearanceChanged) {
+      const finalName = typeof body.name === "string" ? body.name.trim() : existing.name;
+      pregenerateMoodAvatars(finalName, null, userId).catch(() => {});
+    }
     return;
   }
 
@@ -2423,27 +2569,31 @@ async function handleRequest(req, res) {
       send(res, 400, { error: "empty body" });
       return;
     }
-    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
     const ext = (req.headers["content-type"] || "").includes("png") ? ".png" : ".jpg";
-    const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, filename);
-    fs.writeFileSync(filePath, buf);
-    const imageUrl = `/uploads/${filename}`;
+    const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+    const filename = `user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}${ext}`;
+    // 直传 OSS，不再落本地磁盘
+    let imageUrl;
+    try {
+      imageUrl = await uploadToOss(buf, filename, mimeType);
+    } catch (err) {
+      console.error(`[user-image] OSS 上传失败: ${err.message}`);
+      send(res, 500, { error: "上传失败" });
+      return;
+    }
     const msgId = await appendMessage(sessionId, "user", "[图片]", null, userId);
     await updateMessageImage(msgId, imageUrl);
 
-    // 等待图片识别完成再响应，让前端可以在识别后再显示图片
+    // 异步识别图片内容（不阻塞响应，避免前端长时间等）
     const base64 = buf.toString("base64");
-    const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
     const dataUrl = `data:${mimeType};base64,${base64}`;
-    try {
-      const desc = await recognizeImage(dataUrl);
+    recognizeImage(dataUrl).then(async (desc) => {
       if (desc) {
         await updateMessageImagePrompt(msgId, desc);
         await appendMessage(sessionId, "user", `（我发了一张图片，图片内容是：${desc}）`, null, userId);
         console.log(`用户图片识别 [msg ${msgId}]: ${desc}`);
       }
-    } catch {}
+    }).catch(() => {});
 
     send(res, 200, { ok: true, msg_id: Number(msgId), image_url: imageUrl });
     return;
@@ -2478,7 +2628,9 @@ async function handleRequest(req, res) {
       targetMsgId = await appendMessage(sessionId, "assistant", "", null, userId);
     }
     pushToSession(sessionId, { image_pending: true, msg_id: targetMsgId });
-    fireImageGeneration(targetMsgId, prompt, sessionId, { silent: false, imageFallbackEnabled, userId });
+    const reqAspect = url.searchParams.get("aspect") || "";
+    const aspect = ["1:1", "2:3", "9:16", "16:9"].includes(reqAspect) ? reqAspect : null;
+    fireImageGeneration(targetMsgId, prompt, sessionId, { silent: false, imageFallbackEnabled, userId, aspectRatio: aspect });
     send(res, 200, { ok: true, msg_id: targetMsgId });
     return;
   }
@@ -2845,7 +2997,9 @@ async function handleRequest(req, res) {
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
           console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
-          const ch = ttsChar.voice_channel || "qwen";
+          // 客户端声明不支持流式 PCM（如 RN App）时强制走非流式渠道
+          const allowStreamTts = req.headers["x-stream-tts"] !== "0";
+          const ch = (allowStreamTts ? (ttsChar.voice_channel || "qwen") : (ttsChar.voice_channel === "cosyvoice" ? "qwen" : (ttsChar.voice_channel || "qwen")));
           let audioUrl;
           if (ch === "cosyvoice") {
             pushToUser(userId, { tts_stream_start: true, msg_id: Number(msgId) });
@@ -3372,17 +3526,20 @@ const server = http.createServer((req, res) => {
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 wss.on("connection", async (ws, req) => {
-  // 从 cookie 中取 session token 做鉴权
-  const cookieHeader = req.headers.cookie || "";
-  const tokenMatch = cookieHeader.match(/(?:^|;\s*)sid=([^;]+)/);
-  const token = tokenMatch ? tokenMatch[1] : null;
-  const authSession = token ? authSessions.get(token) : null;
-  const userId = authSession?.userId ?? null;
-
-  // 从 URL query 取 sessionId
+  // 从 URL query 取 sessionId 与可选 token（RN 端走 query token，Web 端走 cookie）
+  // sessionId 可为 0：表示全局监听（接收当前用户所有 session 的事件，用于本地通知）
   const url = new URL(req.url, `http://localhost`);
   const sessionId = Number(url.searchParams.get("sessionId"));
-  if (!sessionId) { ws.close(4001, "missing sessionId"); return; }
+  if (sessionId === null || Number.isNaN(sessionId)) { ws.close(4001, "missing sessionId"); return; }
+
+  let token = url.searchParams.get("token");
+  if (!token) {
+    const cookieHeader = req.headers.cookie || "";
+    const m = cookieHeader.match(/(?:^|;\s*)sid=([^;]+)/);
+    token = m ? m[1] : null;
+  }
+  const authSession = token ? await loadAuthSession(token) : null;
+  const userId = authSession?.userId ?? null;
 
   registerClient(sessionId, ws, userId);
   console.log(`[ws] 连接 session=${sessionId} user=${userId}`);
