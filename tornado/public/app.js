@@ -1196,6 +1196,45 @@ input.addEventListener("keydown", (e) => {
 btnSend.addEventListener("click", sendMessage);
 btnNew.addEventListener("click", newSession);
 
+// ── 下载 App ──────────────────────────────────────────────────────────────────
+const btnDownloadApp = document.getElementById("btn-download-app");
+const downloadAppModal = document.getElementById("download-app-modal");
+
+if (btnDownloadApp) {
+  btnDownloadApp.addEventListener("click", async () => {
+    const qr = document.getElementById("download-app-qr");
+    const link = document.getElementById("download-app-link");
+    const empty = document.getElementById("download-app-empty");
+    const versionEl = document.getElementById("download-app-version");
+    qr.style.display = "none";
+    link.style.display = "none";
+    empty.style.display = "none";
+    versionEl.textContent = "加载中…";
+    downloadAppModal.classList.remove("hidden");
+    try {
+      const res = await fetch(API + "/app/latest-version?platform=android");
+      const data = await res.json();
+      if (!data || !data.latest_version || !data.download_url) {
+        versionEl.textContent = "";
+        empty.style.display = "block";
+        return;
+      }
+      versionEl.textContent = `Android · 版本 ${data.latest_version}`;
+      link.href = data.download_url;
+      link.style.display = "inline-block";
+      qr.src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(data.download_url);
+      qr.style.display = "block";
+    } catch {
+      versionEl.textContent = "";
+      empty.style.display = "block";
+    }
+  });
+  document.getElementById("download-app-close").addEventListener("click", () => downloadAppModal.classList.add("hidden"));
+  downloadAppModal.addEventListener("click", (e) => {
+    if (e.target === downloadAppModal) downloadAppModal.classList.add("hidden");
+  });
+}
+
 // ── 生成场景插图 ──────────────────────────────────────────────────────────────
 const btnSceneImage = document.getElementById("btn-scene-image");
 let _sceneImagePendingMsgId = null;

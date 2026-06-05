@@ -8,7 +8,7 @@ import {
   useAudioRecorder, useAudioRecorderState,
 } from "expo-audio";
 import * as DocumentPicker from "expo-document-picker";
-import { baseUrl, loadToken } from "@/api/client";
+import { baseUrl, clientHeaders, loadToken } from "@/api/client";
 import { api } from "@/api/client";
 import { confirm, toast } from "@/components/Ui";
 import { playTts, stopTts, TtsPlayerHost } from "@/audio/tts";
@@ -72,6 +72,7 @@ export default function VoiceClone() {
         method: "POST",
         headers: {
           "Content-Type": contentType,
+          ...clientHeaders(),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: blob,

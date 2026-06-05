@@ -41,6 +41,17 @@ async function ensureColumn(pool, table, column, definition) {
   }
 }
 
+// 删除已废弃的列（若存在）
+async function dropColumn(pool, table, column) {
+  const [rows] = await pool.execute(
+    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?",
+    [table, column]
+  );
+  if (rows.length) {
+    await pool.execute(`ALTER TABLE \`${table}\` DROP COLUMN \`${column}\``);
+  }
+}
+
 // 修复 mood_avatars 老表的主键：原 PK (character, mood) 不含 user_id，会被多用户互覆盖
 async function fixMoodAvatarsKey(pool) {
   try {
@@ -200,6 +211,19 @@ const CREATE_TABLES = [
     KEY idx_announcement_reads_ann_id (announcement_id)
   ) CHARACTER SET utf8mb4`,
 
+  `CREATE TABLE IF NOT EXISTS app_versions (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    platform VARCHAR(16) NOT NULL DEFAULT 'android',
+    version_name VARCHAR(32) NOT NULL,
+    release_notes TEXT,
+    download_url TEXT NOT NULL,
+    file_size BIGINT,
+    force_update INT NOT NULL DEFAULT 0,
+    enabled INT NOT NULL DEFAULT 1,
+    created_at VARCHAR(64) NOT NULL,
+    KEY idx_app_versions_platform_enabled (platform, enabled)
+  ) CHARACTER SET utf8mb4`,
+
   `CREATE TABLE IF NOT EXISTS global_settings (
     \`key\` VARCHAR(128) NOT NULL PRIMARY KEY,
     value TEXT NOT NULL
@@ -339,4 +363,8 @@ export async function initDb() {
       await pool.execute("ALTER TABLE user_achievements ADD UNIQUE KEY uq_user_achievement (user_id, achievement_id, character_id)");
     }
   } catch {}
+
+  // 迁移：app_versions 改走语义化版本，删除废弃的整数列
+  await dropColumn(pool, "app_versions", "version_code");
+  await dropColumn(pool, "app_versions", "min_version_code");
 }

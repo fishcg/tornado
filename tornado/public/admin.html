@@ -290,6 +290,7 @@
       <button class="admin-nav-item" data-section="invite-codes">邀请码</button>
       <button class="admin-nav-item" data-section="announcements">公告管理</button>
       <button class="admin-nav-item" data-section="achievements">成就管理</button>
+      <button class="admin-nav-item" data-section="app-versions">App 版本</button>
       <button class="admin-nav-item" data-section="system">系统设置</button>
     </div>
   </nav>
@@ -393,6 +394,37 @@
       </table>
     </section>
 
+    <section id="section-app-versions" class="admin-section">
+      <h2>App 版本管理</h2>
+      <div class="admin-form">
+        <h3>发布新版本（Android）</h3>
+        <div class="row" style="margin-bottom:12px">
+          <input type="file" id="apkFile" accept=".apk,application/vnd.android.package-archive" style="flex:1;min-width:160px">
+          <button class="btn-sm btn-secondary" id="uploadApkBtn">上传 APK</button>
+        </div>
+        <div id="apkUploadStatus" style="font-size:12px;color:var(--text-dim);margin-bottom:12px"></div>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <input id="verName" type="text" placeholder="版本号（如 0.2.0，需与 app.json 的 version 一致）" style="width:300px">
+        </div>
+        <input id="verDownloadUrl" type="text" placeholder="下载链接（上传 APK 后自动填入，也可手动填外链）">
+        <textarea id="verNotes" placeholder="更新说明（每行一条，将展示给用户）"></textarea>
+        <div class="row" style="flex-wrap:wrap;gap:16px;margin-bottom:12px">
+          <div class="toggle-wrap" style="margin-bottom:0">
+            <label class="toggle">
+              <input type="checkbox" id="verForceUpdate">
+              <span class="toggle-slider"></span>
+            </label>
+            <label for="verForceUpdate">强制更新（用户必须升级才能继续使用）</label>
+          </div>
+        </div>
+        <button class="btn-sm btn-primary" id="addVerBtn">发布版本</button>
+      </div>
+      <table class="admin-table" id="ver-table">
+        <thead><tr><th>版本号</th><th>强制</th><th>大小</th><th>发布时间</th><th>启用</th><th>操作</th></tr></thead>
+        <tbody id="ver-list"></tbody>
+      </table>
+    </section>
+
     <section id="section-system" class="admin-section">
       <h2>系统设置</h2>
       <div class="admin-form">
@@ -458,6 +490,11 @@
             <option value="cosyvoice">阿里云 CosyVoice</option>
           </select>
           <span style="color:var(--text-dim);font-size:13px">影响新上传音色使用的复刻渠道，已复刻的角色不受影响</span>
+        </div>
+        <h3 style="margin-top:16px">App 最低可用版本</h3>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="text" id="appMinVersion" placeholder="如 0.2.0（留空不强制）" style="width:160px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <span style="color:var(--text-dim);font-size:13px">低于此版本的 App 客户端调接口将被拦截（426），提示更新</span>
         </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
@@ -545,6 +582,7 @@ function loadSection(name) {
   else if (name === "invite-codes") loadCodes();
   else if (name === "announcements") loadAnnouncements();
   else if (name === "achievements") loadAchievements();
+  else if (name === "app-versions") loadAppVersions();
   else if (name === "system") loadSystem();
 }
 
@@ -764,6 +802,7 @@ async function loadSystem() {
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
     document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "qwen";
+    document.getElementById("appMinVersion").value = settings.app_min_version ?? "";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
     document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
@@ -788,7 +827,8 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
   const multiCharAwareness = document.getElementById("multiCharAwarenessToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel }) });
+  const appMinVersion = document.getElementById("appMinVersion").value.trim();
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel, app_min_version: appMinVersion }) });
   if (data) showMsg("已保存");
 });
 
@@ -904,6 +944,107 @@ document.getElementById("addAchBtn").addEventListener("click", async () => {
     document.getElementById("ach-name").value = "";
     loadAchievements();
     showMsg("成就已添加");
+  }
+});
+
+// ── App 版本管理 ───────────────────────────────────────────────────────────────
+function fmtBytes(n) {
+  if (!n) return "—";
+  const mb = n / (1024 * 1024);
+  return mb >= 1 ? mb.toFixed(1) + " MB" : (n / 1024).toFixed(0) + " KB";
+}
+
+async function loadAppVersions() {
+  const rows = await api("/admin/app-versions");
+  if (!rows) return;
+  const tbody = document.getElementById("ver-list");
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--text-dim)">暂无版本</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map((v) => `
+    <tr>
+      <td>${v.version_name}</td>
+      <td>${v.force_update ? "是" : "否"}</td>
+      <td>${fmtBytes(v.file_size)}</td>
+      <td>${fmtDate(v.created_at)}</td>
+      <td>
+        <label class="toggle">
+          <input type="checkbox" class="ver-enabled" data-id="${v.id}" ${v.enabled ? "checked" : ""}>
+          <span class="toggle-slider"></span>
+        </label>
+      </td>
+      <td><button class="btn-sm btn-danger ver-del-btn" data-id="${v.id}">删除</button></td>
+    </tr>
+  `).join("");
+
+  tbody.querySelectorAll(".ver-enabled").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      const data = await api(`/admin/app-versions/${cb.dataset.id}`, { method: "PATCH", body: JSON.stringify({ enabled: cb.checked }) });
+      if (data) showMsg(cb.checked ? "已启用" : "已禁用");
+    });
+  });
+  tbody.querySelectorAll(".ver-del-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      if (!confirm("确认删除此版本？")) return;
+      const data = await api(`/admin/app-versions/${btn.dataset.id}`, { method: "DELETE" });
+      if (data) { showMsg("已删除"); loadAppVersions(); }
+    });
+  });
+}
+
+document.getElementById("uploadApkBtn").addEventListener("click", async () => {
+  const fileInput = document.getElementById("apkFile");
+  const file = fileInput.files[0];
+  if (!file) { showMsg("请先选择 APK 文件", false); return; }
+  const statusEl = document.getElementById("apkUploadStatus");
+  const btn = document.getElementById("uploadApkBtn");
+  btn.disabled = true;
+  statusEl.textContent = `上传中…（${fmtBytes(file.size)}）`;
+  try {
+    const res = await fetch("/admin/app-versions/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/vnd.android.package-archive" },
+      body: file
+    });
+    if (res.status === 401 || res.status === 403) { location.href = "/"; return; }
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "上传失败");
+    document.getElementById("verDownloadUrl").value = data.url;
+    statusEl.textContent = `上传成功：${data.url}`;
+    showMsg("APK 上传成功，下载链接已填入");
+  } catch (e) {
+    statusEl.textContent = "";
+    showMsg(e.message || "上传失败", false);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("addVerBtn").addEventListener("click", async () => {
+  const version_name = document.getElementById("verName").value.trim();
+  const download_url = document.getElementById("verDownloadUrl").value.trim();
+  const release_notes = document.getElementById("verNotes").value;
+  const force_update = document.getElementById("verForceUpdate").checked;
+  if (!/^\d+(\.\d+){0,2}$/.test(version_name)) { showMsg("版本号格式应为 x.y.z（如 0.2.0）", false); return; }
+  if (!download_url) { showMsg("请先上传 APK 或填写下载链接", false); return; }
+  const file = document.getElementById("apkFile").files[0];
+  const data = await api("/admin/app-versions", {
+    method: "POST",
+    body: JSON.stringify({
+      platform: "android", version_name, release_notes,
+      download_url, file_size: file ? file.size : null, force_update
+    })
+  });
+  if (data) {
+    showMsg("版本已发布");
+    document.getElementById("verName").value = "";
+    document.getElementById("verDownloadUrl").value = "";
+    document.getElementById("verNotes").value = "";
+    document.getElementById("verForceUpdate").checked = false;
+    document.getElementById("apkFile").value = "";
+    document.getElementById("apkUploadStatus").textContent = "";
+    loadAppVersions();
   }
 });
 

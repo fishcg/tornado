@@ -127,6 +127,63 @@ async function setGlobalSetting(key, value) {
   await dbRun("INSERT INTO global_settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value=?", [key, String(value), String(value)]);
 }
 
+// ── 客户端 UA 解析 & 版本比较 ──────────────────────────────────────────────────
+// 解析形如 "tornadoApp/0.1.0 (android 14)" 的 UA；非 App 客户端返回 null。
+// 兜底：UA 取不到版本时读 X-Client-Version 头。
+function parseClientInfo(req) {
+  const ua = String(req.headers["user-agent"] || "");
+  const m = ua.match(/tornadoApp\/(\d+(?:\.\d+){0,2})(?:\s*\(([^)]*)\))?/i);
+  let version = null;
+  let os = null;
+  let osVersion = null;
+  if (m) {
+    version = m[1];
+    if (m[2]) {
+      const parts = m[2].trim().split(/\s+/);
+      os = (parts[0] || "").toLowerCase() || null;
+      osVersion = parts[1] || null;
+    }
+  }
+  // 兜底头（部分平台 fetch 会覆盖 UA）
+  if (!version) {
+    const hv = req.headers["x-client-version"];
+    if (hv) version = String(hv).trim();
+    const ho = req.headers["x-client-os"];
+    if (ho) {
+      const parts = String(ho).trim().split(/\s+/);
+      os = (parts[0] || "").toLowerCase() || os;
+      osVersion = parts[1] || osVersion;
+    }
+  }
+  if (!version) return null; // 非 App 客户端
+  return { isApp: true, version, os, osVersion, ua };
+}
+
+// 语义化版本比较：a<b 返回 -1，a==b 返回 0，a>b 返回 1。非法输入按 0 段处理。
+function compareVersions(a, b) {
+  const pa = String(a || "0").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b || "0").split(".").map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x < y) return -1;
+    if (x > y) return 1;
+  }
+  return 0;
+}
+
+// 取某平台 enabled 的最新版本（按语义化版本号取最大；行数很少，JS 内排序）
+async function getLatestAppVersion(platform = "android") {
+  const rows = await dbAll(
+    "SELECT version_name, release_notes, download_url, force_update FROM app_versions WHERE platform = ? AND enabled = 1",
+    [platform]
+  );
+  if (!rows.length) return null;
+  rows.sort((a, b) => compareVersions(b.version_name, a.version_name));
+  return rows[0];
+}
+
 // ── MySQL 辅助函数 ─────────────────────────────────────────────────────────────
 
 async function dbGet(sql, params = []) {
@@ -1669,6 +1726,34 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ── 客户端版本中间件 ─────────────────────────────────────────────────────────
+  // 解析 App UA 挂到 req.clientInfo；版本低于 app_min_version 的 App 请求拦截为 426。
+  // 网页端（无 tornadoApp UA）不受影响。
+  req.clientInfo = parseClientInfo(req);
+  if (req.clientInfo?.isApp) {
+    // 白名单：版本检查、下载、鉴权等需放行，否则旧版无法自救
+    const versionExempt =
+      pathname === "/app/latest-version" ||
+      pathname.startsWith("/auth/") ||
+      pathname === "/uploads" ||
+      pathname.startsWith("/uploads/");
+    if (!versionExempt) {
+      const minVersion = await getGlobalSetting("app_min_version", "");
+      if (minVersion && compareVersions(req.clientInfo.version, minVersion) < 0) {
+        const latest = await getLatestAppVersion(req.clientInfo.os === "ios" ? "ios" : "android");
+        send(res, 426, {
+          error: "version_too_low",
+          message: "当前版本过低，请更新后继续使用",
+          min_version: minVersion,
+          current_version: req.clientInfo.version,
+          latest_version: latest?.version_name || null,
+          download_url: latest?.download_url || null
+        });
+        return;
+      }
+    }
+  }
+
   // ── 鉴权路由（公开）────────────────────────────────────────────────────────
   if (method === "POST" && pathname === "/auth/register") {
     const body = await readBody(req);
@@ -1724,6 +1809,23 @@ async function handleRequest(req, res) {
     if (!session) { send(res, 401, { error: "unauthorized" }); return; }
     const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
     send(res, 200, { id: session.userId, username: session.username, is_admin: user?.is_admin ? 1 : 0 });
+    return;
+  }
+
+  // GET /app/latest-version — 客户端检查最新版本（公开，无需鉴权）
+  // 全部走语义化版本：latest_version 给客户端比较，min_version 与中间件用同一个阈值
+  if (method === "GET" && pathname === "/app/latest-version") {
+    const platform = url.searchParams.get("platform") || "android";
+    const row = await getLatestAppVersion(platform);
+    const minVersion = await getGlobalSetting("app_min_version", "");
+    if (!row) { send(res, 200, { latest_version: null, min_version: minVersion || null }); return; }
+    send(res, 200, {
+      latest_version: row.version_name,
+      release_notes: row.release_notes || "",
+      download_url: row.download_url,
+      force_update: row.force_update ? 1 : 0,
+      min_version: minVersion || null
+    });
     return;
   }
 
@@ -1936,6 +2038,82 @@ async function handleRequest(req, res) {
       return;
     }
 
+    // ── App 版本管理 ──────────────────────────────────────────────────────────
+    // POST /admin/app-versions/upload — 上传 APK，存 OSS，返回直链
+    if (method === "POST" && pathname === "/admin/app-versions/upload") {
+      const MAX_APK_BYTES = 200 * 1024 * 1024;
+      const declared = Number(req.headers["content-length"] || 0);
+      if (declared && declared > MAX_APK_BYTES) {
+        send(res, 413, { error: "安装包过大，最大 200MB" });
+        return;
+      }
+      const chunks = [];
+      let total = 0;
+      let aborted = false;
+      for await (const chunk of req) {
+        total += chunk.length;
+        if (total > MAX_APK_BYTES) {
+          aborted = true;
+          try { req.destroy(); } catch {}
+          break;
+        }
+        chunks.push(chunk);
+      }
+      if (aborted) { send(res, 413, { error: "安装包过大，最大 200MB" }); return; }
+      const buf = Buffer.concat(chunks);
+      if (buf.length === 0) { send(res, 400, { error: "empty body" }); return; }
+      const filename = `app-android-${Date.now()}.apk`;
+      const url = await uploadToOss(buf, filename, "application/vnd.android.package-archive");
+      send(res, 200, { url, size: buf.length });
+      return;
+    }
+
+    // GET /admin/app-versions — 版本列表（按语义化版本号倒序）
+    if (method === "GET" && pathname === "/admin/app-versions") {
+      const rows = await dbAll("SELECT * FROM app_versions", []);
+      rows.sort((a, b) => compareVersions(b.version_name, a.version_name) || (b.id - a.id));
+      send(res, 200, rows);
+      return;
+    }
+
+    // POST /admin/app-versions — 新建版本
+    if (method === "POST" && pathname === "/admin/app-versions") {
+      const body = await readBody(req);
+      const platform = ["android", "ios"].includes(body.platform) ? body.platform : "android";
+      const versionName = String(body.version_name || "").trim();
+      const downloadUrl = String(body.download_url || "").trim();
+      if (!/^\d+(\.\d+){0,2}$/.test(versionName)) { send(res, 400, { error: "版本号格式应为 x.y.z（如 0.2.0）" }); return; }
+      if (!downloadUrl) { send(res, 400, { error: "下载链接不能为空（请先上传 APK 或填写外链）" }); return; }
+      const releaseNotes = String(body.release_notes || "");
+      const fileSize = body.file_size != null ? Math.floor(Number(body.file_size)) || null : null;
+      const forceUpdate = body.force_update ? 1 : 0;
+      const result = await dbRun(
+        "INSERT INTO app_versions (platform, version_name, release_notes, download_url, file_size, force_update, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+        [platform, versionName, releaseNotes, downloadUrl, fileSize, forceUpdate, nowIso()]
+      );
+      send(res, 200, { id: Number(result.insertId) });
+      return;
+    }
+
+    const adminVerMatch = pathname.match(/^\/admin\/app-versions\/(\d+)$/);
+    if (method === "PATCH" && adminVerMatch) {
+      const verId = Number(adminVerMatch[1]);
+      const body = await readBody(req);
+      if ("enabled" in body) await dbRun("UPDATE app_versions SET enabled = ? WHERE id = ?", [body.enabled ? 1 : 0, verId]);
+      if ("force_update" in body) await dbRun("UPDATE app_versions SET force_update = ? WHERE id = ?", [body.force_update ? 1 : 0, verId]);
+      if ("release_notes" in body) await dbRun("UPDATE app_versions SET release_notes = ? WHERE id = ?", [String(body.release_notes || ""), verId]);
+      if ("download_url" in body && String(body.download_url || "").trim()) await dbRun("UPDATE app_versions SET download_url = ? WHERE id = ?", [String(body.download_url).trim(), verId]);
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    if (method === "DELETE" && adminVerMatch) {
+      const verId = Number(adminVerMatch[1]);
+      await dbRun("DELETE FROM app_versions WHERE id = ?", [verId]);
+      send(res, 200, { ok: true });
+      return;
+    }
+
     if (method === "GET" && pathname === "/admin/global-settings") {
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
@@ -1951,7 +2129,8 @@ async function handleRequest(req, res) {
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
         call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
-        multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0")
+        multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0"),
+        app_min_version: await getGlobalSetting("app_min_version", "")
       });
       return;
     }
@@ -2002,6 +2181,13 @@ async function handleRequest(req, res) {
       if ("multi_char_awareness" in body) {
         await setGlobalSetting("multi_char_awareness", body.multi_char_awareness ? "1" : "0");
       }
+      if ("app_min_version" in body) {
+        // 形如 "0.2.0"，留空表示不强制
+        const v = String(body.app_min_version || "").trim();
+        if (v === "" || /^\d+(\.\d+){0,2}$/.test(v)) {
+          await setGlobalSetting("app_min_version", v);
+        }
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
@@ -2016,7 +2202,8 @@ async function handleRequest(req, res) {
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
         call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
-        multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0")
+        multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0"),
+        app_min_version: await getGlobalSetting("app_min_version", "")
       });
       return;
     }

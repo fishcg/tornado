@@ -11,6 +11,7 @@ import { useGlobalNotifier } from "@/hooks/useGlobalNotifier";
 import { UiHost } from "@/components/Ui";
 import { AchievementHost } from "@/components/AchievementHost";
 import { MilestoneHost } from "@/components/MilestoneHost";
+import { UpdateGate } from "@/components/UpdateGate";
 
 export default function RootLayout() {
   const { ready, signedIn, hydrate } = useAuth();
@@ -81,6 +82,7 @@ export default function RootLayout() {
       <UiHost />
       <AchievementHost />
       <MilestoneHost />
+      <UpdateGate />
     </SafeAreaProvider>
     </GestureHandlerRootView>
   );

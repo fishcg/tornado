@@ -1,5 +1,5 @@
 import EventSource from "react-native-sse";
-import { baseUrl, loadToken } from "@/api/client";
+import { baseUrl, clientHeaders, loadToken } from "@/api/client";
 
 export type ChatStreamEvent =
   | { type: "text"; text: string }
@@ -16,6 +16,7 @@ export async function streamChat(
   const token = await loadToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...clientHeaders(),
   };
   if (token) headers.Authorization = `Bearer ${token}`;
 

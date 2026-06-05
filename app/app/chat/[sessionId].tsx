@@ -8,7 +8,7 @@ import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
-import { api, baseUrl, loadToken } from "@/api/client";
+import { api, baseUrl, clientHeaders, loadToken } from "@/api/client";
 import { streamChat } from "@/hooks/useSSE";
 import { useWS } from "@/hooks/useWS";
 import { playTts, stopTts, TtsPlayerHost, useTtsPlayingId } from "@/audio/tts";
@@ -340,6 +340,7 @@ export default function ChatScreen() {
         method: "POST",
         headers: {
           "Content-Type": ct,
+          ...clientHeaders(),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: bytes,
@@ -606,6 +607,7 @@ export default function ChatScreen() {
               collapseAction={collapseAction}
               bubbleOpacity={bubbleOpacity}
               isPlaying={playingId === item.id}
+              moodColor={moodM.color}
             />
           )}
           style={{ flex: 1 }}
@@ -672,7 +674,7 @@ export default function ChatScreen() {
 
 async function authHeader(): Promise<Record<string, string>> {
   const t = await loadToken();
-  return t ? { Authorization: `Bearer ${t}` } : {};
+  return { ...clientHeaders(), ...(t ? { Authorization: `Bearer ${t}` } : {}) };
 }
 
 function Lightbox({ url, onClose }: { url: string; onClose: () => void }) {
@@ -726,7 +728,7 @@ function BubbleImage({ url }: { url: string }) {
 }
 
 function Bubble({
-  item, characterName, characterAvatar, onPlay, onLongPress, onTapImage, onAvatarPress, collapseAction, bubbleOpacity, isPlaying,
+  item, characterName, characterAvatar, onPlay, onLongPress, onTapImage, onAvatarPress, collapseAction, bubbleOpacity, isPlaying, moodColor,
 }: {
   item: Msg; characterName: string; characterAvatar?: string | null;
   onPlay: (url: string) => void;
@@ -736,6 +738,7 @@ function Bubble({
   collapseAction: boolean;
   bubbleOpacity: number;
   isPlaying: boolean;
+  moodColor?: string;
 }) {
   const isUser = item.role === "user";
   const initial = isUser ? "我" : (characterName?.[0] || "?");
@@ -779,7 +782,7 @@ function Bubble({
   const bubbleScale = glow.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] });
   const bubbleLift = glow.interpolate({ inputRange: [0, 1], outputRange: [0, -3] });
 
-  const haloColor = isUser ? "#60a5fa" : "#f472b6";
+  const haloColor = isUser ? "#60a5fa" : (moodColor || "#f472b6");
 
   return (
     <View style={[s.row, isUser ? s.rowUser : s.rowAssistant]}>

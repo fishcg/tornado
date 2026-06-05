@@ -725,6 +725,16 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #modal-no { background: var(--border); color: var(--text-dim); }
 #modal-no:hover { background: #333; color: var(--text); }
 
+#download-app-link {
+  padding: 8px 20px; border-radius: 8px;
+  background: var(--accent); color: #fff;
+  font-size: 14px; font-weight: 500; text-decoration: none;
+  transition: background .15s;
+}
+#download-app-link:hover { background: #9080e0; }
+#download-app-close { background: var(--border); color: var(--text-dim); }
+#download-app-close:hover { background: #333; color: var(--text); }
+
 /* ── 汉堡按钮（桌面隐藏，移动端显示）── */
 .btn-hamburger {
   display: none;
