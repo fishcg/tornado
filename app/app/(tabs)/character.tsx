@@ -8,6 +8,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
+import * as Haptics from "expo-haptics";
 import { api } from "@/api/client";
 import { IconHeart, IconGallery, IconSparkle, IconTrophy, IconPhone, IconImage, IconBack } from "@/components/Icons";
 import { confirm, toast, actionSheet } from "@/components/Ui";
@@ -47,6 +48,7 @@ export default function CharacterTab() {
     setSwitching(id);
     try {
       await api("PATCH", `/characters/${id}`, { is_active: true });
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       await load();
     } catch (e: any) {
       toast(e.message || "切换失败", "err");
