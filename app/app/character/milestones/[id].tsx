@@ -31,7 +31,12 @@ export default function MilestoneDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  const player = useVideoPlayer(item?.video_url || null, (p) => { p.loop = false; });
+  // 视频沉浸式自动循环播放（参考网页：autoplay + loop + muted + 无控件）
+  const player = useVideoPlayer(item?.video_url || null, (p) => {
+    p.loop = true;
+    p.muted = true;
+    p.play();
+  });
 
   if (loading) return <View style={s.center}><ActivityIndicator color="#7e6fd0" /></View>;
   if (!item) return (
@@ -49,7 +54,13 @@ export default function MilestoneDetail() {
         <Text style={s.meta}>心动值 {item.affection} · {new Date(item.created_at).toLocaleString("zh-CN")}</Text>
 
       {item.video_url ? (
-        <VideoView style={s.video} player={player} contentFit="contain" nativeControls />
+        <VideoView
+          style={s.video}
+          player={player}
+          contentFit="contain"
+          nativeControls={false}
+          pointerEvents="none"
+        />
       ) : (
         <View style={s.comicWrap}>
           <View style={s.comicCol}>

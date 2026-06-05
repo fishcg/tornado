@@ -4,8 +4,11 @@ import {
   ActivityIndicator, Dimensions, FlatList, Image, Modal, Pressable,
   RefreshControl, ScrollView, StyleSheet, Text, View,
 } from "react-native";
+import * as MediaLibrary from "expo-media-library";
+import * as FileSystem from "expo-file-system/legacy";
 import { api } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
+import { toast } from "@/components/Ui";
 
 type GalleryItem = {
   id: number;
@@ -30,6 +33,24 @@ export default function CharacterGallery() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [preview, setPreview] = useState<GalleryItem | null>(null);
   const [character, setCharacter] = useState<{ name: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const saveToAlbum = async (url: string) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted) { toast("需要相册权限", "err"); return; }
+      const tmp = `${FileSystem.cacheDirectory}gallery-${Date.now()}.jpg`;
+      const r = await FileSystem.downloadAsync(url, tmp);
+      await MediaLibrary.saveToLibraryAsync(r.uri);
+      toast("已保存到相册");
+    } catch (e: any) {
+      toast(e.message || "保存失败", "err");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const buildUrl = useCallback((offset: number, charName: string | null) => {
     const u = `/gallery?offset=${offset}&limit=${PAGE}`;
@@ -92,6 +113,9 @@ export default function CharacterGallery() {
               <View>
                 <Image source={{ uri: preview.image_url }} style={s.previewImg} resizeMode="contain" />
                 {preview.image_prompt ? <Text style={s.previewPrompt}>{preview.image_prompt}</Text> : null}
+                <Pressable style={s.saveBtn} onPress={() => saveToAlbum(preview.image_url)} disabled={saving}>
+                  {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveText}>保存到相册</Text>}
+                </Pressable>
                 <Pressable style={s.gotoBtn} onPress={() => { const id = preview.session_id; setPreview(null); router.push(`/chat/${id}`); }}>
                   <Text style={s.gotoText}>去对话「{preview.title}」</Text>
                 </Pressable>
@@ -114,6 +138,8 @@ const s = StyleSheet.create({
   previewBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.92)" },
   previewImg: { width: "100%", aspectRatio: 1, borderRadius: 8 },
   previewPrompt: { color: "#bbb", fontSize: 13, marginTop: 12 },
-  gotoBtn: { marginTop: 16, backgroundColor: "#7e6fd0", padding: 12, borderRadius: 8, alignItems: "center" },
+  saveBtn: { marginTop: 16, backgroundColor: "rgba(255,255,255,0.12)", padding: 12, borderRadius: 8, alignItems: "center", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)" },
+  saveText: { color: "#fff", fontWeight: "600" },
+  gotoBtn: { marginTop: 10, backgroundColor: "#7e6fd0", padding: 12, borderRadius: 8, alignItems: "center" },
   gotoText: { color: "#fff", fontWeight: "600" },
 });
