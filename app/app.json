@@ -5,6 +5,7 @@
     "scheme": "tornado",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "androidStatusBar": {
       "translucent": true,
@@ -16,7 +17,17 @@
       "bundleIdentifier": "com.tornado.app"
     },
     "android": {
-      "package": "com.tornado.app"
+      "package": "com.tornado.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f0f17"
+      },
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -47,7 +58,11 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiBaseUrl": "http://10.21.41.53:3011"
+      "apiBaseUrl": "https://tornado.acgay.cn",
+      "router": {},
+      "eas": {
+        "projectId": "50d39663-ed47-45f4-98a8-2f72fbb8350a"
+      }
     }
   }
 }
