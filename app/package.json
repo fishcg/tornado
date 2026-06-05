@@ -1,0 +1,54 @@
+{
+  "name": "tornado-app",
+  "version": "0.1.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "lint": "expo lint"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-community/slider": "5.1.2",
+    "expo": "^55.0.26",
+    "expo-asset": "~55.0.17",
+    "expo-audio": "~55.0.14",
+    "expo-constants": "~55.0.16",
+    "expo-document-picker": "~55.0.13",
+    "expo-file-system": "~55.0.22",
+    "expo-image-manipulator": "~55.0.17",
+    "expo-image-picker": "~55.0.20",
+    "expo-linear-gradient": "~55.0.14",
+    "expo-linking": "~55.0.15",
+    "expo-media-library": "~55.0.17",
+    "expo-notifications": "~55.0.23",
+    "expo-router": "~55.0.16",
+    "expo-secure-store": "~55.0.14",
+    "expo-status-bar": "~55.0.6",
+    "expo-video": "~55.0.17",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-gesture-handler": "~2.30.0",
+    "react-native-reanimated": "4.2.1",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0",
+    "react-native-sse": "^1.2.1",
+    "react-native-svg": "15.15.3",
+    "react-native-worklets": "0.7.4",
+    "zustand": "^5.0.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/react": "~19.2.10",
+    "typescript": "~5.9.0"
+  },
+  "expo": {
+    "doctor": {
+      "reactNativeDirectoryCheck": {
+        "exclude": []
+      }
+    }
+  },
+  "private": true
+}
