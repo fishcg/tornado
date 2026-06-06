@@ -1,9 +1,10 @@
 import { useRouter } from "expo-router";
 import { useRef, useState } from "react";
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
+import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system/legacy";
-import { baseUrl, clientHeaders, loadToken } from "@/api/client";
+import { baseUrl, clientHeaders, loadToken, appVersion } from "@/api/client";
 import { api } from "@/api/client";
 import { useAuth } from "@/store/auth";
 import { confirm, toast, actionSheet } from "@/components/Ui";
@@ -108,6 +109,15 @@ export default function Me() {
       <Pressable style={s.btn} onPress={onLogout}>
         <Text style={s.btnText}>退出登录</Text>
       </Pressable>
+
+      <View style={s.aboutCard}>
+        <Text style={s.aboutTitle}>应用信息</Text>
+        <Text style={s.aboutRow}>版本 {appVersion}{" "}
+          <Text style={s.aboutTag}>{Constants.expoConfig?.name || "Tornado"}</Text>
+          {"  "}·{"  "}
+          <Text style={s.aboutTag}>{Platform.OS} {String(Platform.Version ?? "")}</Text>
+        </Text>
+      </View>
     </View>
   );
 }
@@ -140,4 +150,9 @@ const s = StyleSheet.create({
 
   btn: { backgroundColor: "#7e6fd0", padding: 14, borderRadius: 10, alignItems: "center", marginTop: 24 },
   btnText: { color: "#fff", fontWeight: "600" },
+
+  aboutCard: { backgroundColor: "#1c1c2a", borderRadius: 10, padding: 14, marginTop: 20 },
+  aboutTitle: { color: "#888", fontSize: 12, marginBottom: 6 },
+  aboutRow: { color: "#bbb", fontSize: 13 },
+  aboutTag: { color: "#eee" },
 });

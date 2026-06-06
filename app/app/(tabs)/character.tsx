@@ -48,7 +48,7 @@ export default function CharacterTab() {
     setSwitching(id);
     try {
       await api("PATCH", `/characters/${id}`, { is_active: true });
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       await load();
     } catch (e: any) {
       toast(e.message || "切换失败", "err");

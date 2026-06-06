@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Animated, Easing, FlatList, Image, KeyboardAvoidingView,
+  ActivityIndicator, Animated, Easing, FlatList, Image, Keyboard, KeyboardAvoidingView,
   Modal, Platform, Pressable, StyleSheet, Text, TextInput, View,
 } from "react-native";
 import * as MediaLibrary from "expo-media-library";
@@ -264,12 +264,12 @@ export default function ChatScreen() {
     },
   });
 
-  const scrollEnd = () => listRef.current?.scrollToEnd({ animated: true });
+  const scrollEnd = () => listRef.current?.scrollToEnd({ animated: false });
 
   const sendText = async (textOverride?: string) => {
     const text = (textOverride ?? input).trim();
     if (!text || sending) return;
-    if (!textOverride) setInput("");
+    if (!textOverride) { setInput(""); Keyboard.dismiss(); }
     const tempUser: Msg = { id: `tmp-u-${Date.now()}`, role: "user", content: text };
     const tempBot: Msg = { id: `tmp-a-${Date.now()}`, role: "assistant", content: "", pending: true };
     setMessages((m) => [...m, tempUser, tempBot]);
