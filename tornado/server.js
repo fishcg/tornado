@@ -3030,16 +3030,17 @@ async function handleRequest(req, res) {
     }
     const limit = Math.min(100, Math.max(1, Number(limitParam) || 30));
     const beforeId = Number(url.searchParams.get("before_id") || 0);
+    const fetchN = limit + 1; // 已是清洗过的整数，内联进 SQL（mysql2 的 LIMIT 不支持占位符）
     let rows;
     if (beforeId > 0) {
       rows = await dbAll(
-        "SELECT * FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
-        [id, beforeId, limit + 1]
+        `SELECT * FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ${fetchN}`,
+        [id, beforeId]
       );
     } else {
       rows = await dbAll(
-        "SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
-        [id, limit + 1]
+        `SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ${fetchN}`,
+        [id]
       );
     }
     const hasMore = rows.length > limit;

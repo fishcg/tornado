@@ -195,14 +195,16 @@ export default function ChatScreen() {
   const load = useCallback(async () => {
     try {
       const [page, char, sess, settings] = await Promise.all([
-        api<{ items: any[]; hasMore: boolean }>("GET", `/sessions/${sid}/messages?limit=${PAGE}`),
+        api<any>("GET", `/sessions/${sid}/messages?limit=${PAGE}`).catch(() => null),
         api<CharacterInfo>("GET", "/character").catch(() => null),
         api<SessionMood>("GET", `/sessions/${sid}/mood`).catch(() => null),
         api<{ collapseAction: boolean }>("GET", "/settings").catch(() => null),
       ]);
-      const items = normalize(page?.items || []);
+      // 兼容两种返回：分页 { items, hasMore } 或旧版全量数组
+      const rawItems = Array.isArray(page) ? page : (page?.items || []);
+      const items = normalize(rawItems);
       setMessages(items);
-      setHasMore(!!page?.hasMore);
+      setHasMore(Array.isArray(page) ? false : !!page?.hasMore);
       // 取最近一条带图的消息作为背景
       const lastImg = [...items].reverse().find((m) => m.image_url);
       if (lastImg?.image_url) setChatBg(lastImg.image_url);
