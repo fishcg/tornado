@@ -238,12 +238,12 @@ const s = StyleSheet.create({
   toastText: { color: "#fff", fontSize: 13 },
 
   sheetBg: { flex: 1, backgroundColor: "rgba(8,8,14,0.6)", justifyContent: "flex-end" },
-  sheetCard: { padding: 12, gap: 10 },
+  sheetCard: { padding: 12, gap: 6 },
   sheetTitle: { color: "#888", fontSize: 13, textAlign: "center", paddingVertical: 12, backgroundColor: "#1c1c2a", borderRadius: 14, borderWidth: 1, borderColor: "#2a2a3a" },
   sheetItems: { backgroundColor: "#1c1c2a", borderRadius: 14, borderWidth: 1, borderColor: "#2a2a3a", overflow: "hidden" },
   sheetItem: { height: 50, alignItems: "center", justifyContent: "center" },
   sheetItemBorder: { borderTopWidth: 1, borderTopColor: "#2a2a3a" },
   sheetItemText: { color: "#fff", fontSize: 15, includeFontPadding: false as any, lineHeight: 18 },
-  sheetCancel: { backgroundColor: "#1c1c2a", borderRadius: 14, borderWidth: 1, borderColor: "#2a2a3a", height: 50, alignItems: "center", justifyContent: "center", marginBottom: 8 },
+  sheetCancel: { backgroundColor: "#1c1c2a", borderRadius: 14, borderWidth: 1, borderColor: "#2a2a3a", height: 50, alignItems: "center", justifyContent: "center", marginTop: 4, marginBottom: 8 },
   sheetCancelText: { color: "#7e6fd0", fontSize: 15, fontWeight: "600", includeFontPadding: false as any, lineHeight: 18 },
 });

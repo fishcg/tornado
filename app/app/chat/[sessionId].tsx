@@ -134,6 +134,8 @@ export default function ChatScreen() {
   };
   const [autoMode, setAutoMode] = useState(false);
   const [semiAutoMode, setSemiAutoMode] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const semiAutoRef = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [ingesting, setIngesting] = useState(false);
   const [avatarsOpen, setAvatarsOpen] = useState(false);
@@ -286,6 +288,7 @@ export default function ChatScreen() {
     const text = (textOverride ?? input).trim();
     if (!text || sending) return;
     if (!textOverride) { setInput(""); Keyboard.dismiss(); }
+    setSuggestions([]);
     const tempUser: Msg = { id: `tmp-u-${Date.now()}`, role: "user", content: text };
     const tempBot: Msg = { id: `tmp-a-${Date.now()}`, role: "assistant", content: "", pending: true };
     setMessages((m) => [...m, tempUser, tempBot]);
@@ -315,6 +318,8 @@ export default function ChatScreen() {
           setSending(false);
           setTyping(false);
           if (typingTimerRef.current) { clearTimeout(typingTimerRef.current); typingTimerRef.current = null; }
+          // 半自动：回复完成后拉取回复建议
+          if (semiAutoRef.current) fetchSuggestions();
         } else if (e.type === "error") {
           setMessages((m) => m.map((it) => it.id === tempBot.id ? { ...it, content: `（出错：${e.message}）`, pending: false } : it));
           handle.close();
@@ -435,8 +440,8 @@ export default function ChatScreen() {
   const startAutoLoop = () => {
     const tick = async () => {
       try {
-        const r = await api<{ message: string | null }>("POST", `/sessions/${sid}/auto-user-message`);
-        if (r?.message) await sendText(r.message);
+        const r = await api<{ ok: boolean; text?: string }>("POST", `/sessions/${sid}/auto-user-message`);
+        if (r?.ok && r.text) await sendText(r.text);
       } catch {}
       autoLoopRef.current = setTimeout(tick, 8000);
     };
@@ -445,7 +450,20 @@ export default function ChatScreen() {
 
   const toggleSemiAuto = async () => {
     setMenuOpen(false);
-    setSemiAutoMode((v) => !v);
+    setSemiAutoMode((v) => {
+      const next = !v;
+      semiAutoRef.current = next;
+      if (!next) setSuggestions([]);
+      else fetchSuggestions();
+      return next;
+    });
+  };
+
+  const fetchSuggestions = async () => {
+    try {
+      const r = await api<{ suggestions: string[] }>("GET", `/sessions/${sid}/reply-suggestions`);
+      if (semiAutoRef.current && r?.suggestions?.length) setSuggestions(r.suggestions);
+    } catch {}
   };
 
   const onBubbleLongPress = (item: Msg) => {
@@ -651,6 +669,16 @@ export default function ChatScreen() {
           style={{ flex: 1 }}
         />
       </View>
+
+      {semiAutoMode && suggestions.length > 0 ? (
+        <View style={s.suggestionBar}>
+          {suggestions.map((sug, i) => (
+            <Pressable key={i} style={s.suggestionChip} onPress={() => { setSuggestions([]); sendText(sug); }}>
+              <Text style={s.suggestionText} numberOfLines={2}>{sug}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       <View style={[s.inputBar, { paddingBottom: 8 + insets.bottom }]}>
         <Pressable style={s.imgBtn} disabled={imgPosting} onPress={pickImage}>
@@ -997,6 +1025,15 @@ const s = StyleSheet.create({
     paddingHorizontal: 8, paddingTop: 8, gap: 8,
     borderTopWidth: 1, borderTopColor: "#1c1c2a", backgroundColor: "#0f0f17",
   },
+  suggestionBar: {
+    paddingHorizontal: 8, paddingTop: 8, gap: 6,
+    backgroundColor: "#0f0f17",
+  },
+  suggestionChip: {
+    backgroundColor: "#1c1c2a", borderWidth: 1, borderColor: "#3a3450",
+    borderRadius: 16, paddingHorizontal: 14, paddingVertical: 9,
+  },
+  suggestionText: { color: "#cfcfe0", fontSize: 14, lineHeight: 19 },
   imgBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center", borderRadius: 8, backgroundColor: "#1c1c2a" },
   input: { flex: 1, backgroundColor: "#1c1c2a", color: "#fff", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 10, maxHeight: 120, minHeight: 40 },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "#7e6fd0", alignItems: "center", justifyContent: "center" },
