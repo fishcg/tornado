@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View,
 } from "react-native";
@@ -23,6 +23,7 @@ export default function MilestoneDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [item, setItem] = useState<Milestone | null>(null);
   const [loading, setLoading] = useState(true);
+  const videoRef = useRef<VideoView>(null);
 
   useEffect(() => {
     api<Milestone[]>("GET", "/relationship/milestones")
@@ -31,10 +32,10 @@ export default function MilestoneDetail() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  // 视频沉浸式自动循环播放（参考网页：autoplay + loop + muted + 无控件）
+  // 视频自动循环播放（带声音）
   const player = useVideoPlayer(item?.video_url || null, (p) => {
     p.loop = true;
-    p.muted = true;
+    p.muted = false;
     p.play();
   });
 
@@ -54,13 +55,18 @@ export default function MilestoneDetail() {
         <Text style={s.meta}>心动值 {item.affection} · {new Date(item.created_at).toLocaleString("zh-CN")}</Text>
 
       {item.video_url ? (
-        <VideoView
-          style={s.video}
-          player={player}
-          contentFit="contain"
-          nativeControls={false}
-          pointerEvents="none"
-        />
+        <Pressable onPress={() => { videoRef.current?.enterFullscreen?.(); }}>
+          <VideoView
+            ref={videoRef}
+            style={s.video}
+            player={player}
+            contentFit="contain"
+            nativeControls={false}
+          />
+          <View style={s.expandHint} pointerEvents="none">
+            <Text style={s.expandHintText}>点击全屏观看</Text>
+          </View>
+        </Pressable>
       ) : (
         <View style={s.comicWrap}>
           <View style={s.comicCol}>
@@ -93,7 +99,9 @@ const s = StyleSheet.create({
   stage: { color: "#7e6fd0", fontSize: 12, fontWeight: "700" },
   title: { color: "#fff", fontSize: 24, fontWeight: "700", marginTop: 4 },
   meta: { color: "#888", fontSize: 13, marginTop: 6, marginBottom: 18 },
-  video: { width: "100%", aspectRatio: 9/16, borderRadius: 12, backgroundColor: "#1c1c2a" },
+  video: { width: "100%", aspectRatio: 16/9, borderRadius: 12, backgroundColor: "#000" },
+  expandHint: { position: "absolute", right: 10, bottom: 10, backgroundColor: "rgba(0,0,0,0.55)", paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14 },
+  expandHintText: { color: "#fff", fontSize: 12 },
   comicWrap: { gap: 12 },
   comicCol: {},
   chapter: { color: "#888", fontSize: 12, marginBottom: 6 },

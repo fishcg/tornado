@@ -15,7 +15,7 @@ type UiState = {
 
 export const useUi = create<UiState>((set) => ({
   ready: false,
-  chatBgOpacity: 0.35,
+  chatBgOpacity: 0.7,
   bubbleOpacity: 0.92,
 
   hydrate: async () => {
@@ -26,7 +26,7 @@ export const useUi = create<UiState>((set) => ({
       ]);
       set({
         ready: true,
-        chatBgOpacity: bg !== null ? parseFloat(bg) : 0.35,
+        chatBgOpacity: bg !== null ? parseFloat(bg) : 0.7,
         bubbleOpacity: bubble !== null ? parseFloat(bubble) : 0.92,
       });
     } catch {
