@@ -2884,7 +2884,8 @@ async function handleRequest(req, res) {
     const previousScene = await getLastImagePrompt(sessionId);
     const prompt = await generateImagePrompt("", lastAssist.content, recentMsgs, previousScene, userId);
     // 手动插图：始终新建一条独立的空消息承载插图（不附到上一条回复气泡上）
-    const targetMsgId = await appendMessage(sessionId, "assistant", "", null, userId);
+    // character_name 必须带上，否则画廊按角色过滤时查不到这条插图
+    const targetMsgId = await appendMessage(sessionId, "assistant", "", await getCharacterName(userId), userId);
     pushToSession(sessionId, { image_pending: true, msg_id: targetMsgId });
     const reqAspect = url.searchParams.get("aspect") || "";
     const aspect = ["1:1", "2:3", "9:16", "16:9"].includes(reqAspect) ? reqAspect : null;
