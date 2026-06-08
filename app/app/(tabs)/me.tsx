@@ -1,5 +1,5 @@
-import { useRouter } from "expo-router";
-import { useRef, useState } from "react";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useRef, useState } from "react";
 import { ActivityIndicator, Image, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import Constants from "expo-constants";
 import * as ImagePicker from "expo-image-picker";
@@ -7,12 +7,16 @@ import * as FileSystem from "expo-file-system/legacy";
 import { baseUrl, clientHeaders, loadToken, appVersion } from "@/api/client";
 import { api } from "@/api/client";
 import { useAuth } from "@/store/auth";
+import { useAnnouncements } from "@/store/announcements";
 import { confirm, toast, actionSheet, hapticLight } from "@/components/Ui";
 
 export default function Me() {
   const router = useRouter();
   const { username, avatarUrl, logout, setAvatarUrl } = useAuth();
+  const unreadCount = useAnnouncements((s) => s.unreadCount);
+  const loadUnreadCount = useAnnouncements((s) => s.loadUnreadCount);
   const [uploading, setUploading] = useState(false);
+  useFocusEffect(useCallback(() => { loadUnreadCount(); }, [loadUnreadCount]));
   const busyRef = useRef(false);
 
   const onLogout = async () => {
@@ -107,6 +111,16 @@ export default function Me() {
         <Text style={s.hint}>点击头像更换</Text>
       </View>
 
+      <Pressable style={s.entry} onPress={() => router.push("/announcements")}>
+        <Text style={s.entryLabel}>系统通知</Text>
+        <View style={s.entryRight}>
+          {unreadCount > 0 ? (
+            <View style={s.badge}><Text style={s.badgeText}>{unreadCount > 99 ? "99+" : unreadCount}</Text></View>
+          ) : null}
+          <Text style={s.entryArrow}>›</Text>
+        </View>
+      </Pressable>
+
       <Pressable style={s.btn} onPress={onLogout}>
         <Text style={s.btnText}>退出登录</Text>
       </Pressable>
@@ -151,6 +165,13 @@ const s = StyleSheet.create({
 
   btn: { backgroundColor: "#7e6fd0", padding: 14, borderRadius: 10, alignItems: "center", marginTop: 24 },
   btnText: { color: "#fff", fontWeight: "600" },
+
+  entry: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", backgroundColor: "#1c1c2a", borderRadius: 10, paddingHorizontal: 16, paddingVertical: 16 },
+  entryLabel: { color: "#fff", fontSize: 15 },
+  entryRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  entryArrow: { color: "#666", fontSize: 20, lineHeight: 20 },
+  badge: { backgroundColor: "#ef4444", borderRadius: 10, minWidth: 20, height: 20, paddingHorizontal: 6, alignItems: "center", justifyContent: "center" },
+  badgeText: { color: "#fff", fontSize: 11, fontWeight: "700" },
 
   aboutCard: { backgroundColor: "#1c1c2a", borderRadius: 10, padding: 14, marginTop: 20 },
   aboutTitle: { color: "#888", fontSize: 12, marginBottom: 6 },

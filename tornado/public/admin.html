@@ -368,6 +368,13 @@
         <h3>新建公告</h3>
         <input id="annTitle" placeholder="标题">
         <textarea id="annContent" placeholder="内容"></textarea>
+        <div class="toggle-wrap" style="margin:10px 0">
+          <label class="toggle">
+            <input type="checkbox" id="annPopup" checked>
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="annPopup">用户打开软件时弹窗展示</label>
+        </div>
         <button class="btn-sm btn-primary" id="addAnnBtn">发布</button>
       </div>
       <div id="annList"></div>
@@ -759,7 +766,7 @@ async function loadAnnouncements() {
   el.innerHTML = rows.map((a) => `
     <div class="ann-card">
       <div class="ann-info">
-        <div class="ann-title">${a.title}</div>
+        <div class="ann-title">${a.title}${Number(a.popup) ? '<span style="color:var(--accent);font-size:11px;margin-left:8px">弹窗</span>' : ''}</div>
         <div class="ann-meta">${fmtDate(a.created_at)}</div>
         <div style="font-size:13px;color:var(--text-dim);margin-top:6px;white-space:pre-wrap">${a.content}</div>
       </div>
@@ -772,11 +779,13 @@ document.getElementById("addAnnBtn").addEventListener("click", async () => {
   const title = document.getElementById("annTitle").value.trim();
   const content = document.getElementById("annContent").value.trim();
   if (!title || !content) { showMsg("标题和内容不能为空", false); return; }
-  const data = await api("/admin/announcements", { method: "POST", body: JSON.stringify({ title, content }) });
+  const popup = document.getElementById("annPopup").checked;
+  const data = await api("/admin/announcements", { method: "POST", body: JSON.stringify({ title, content, popup }) });
   if (data) {
     showMsg("公告已发布");
     document.getElementById("annTitle").value = "";
     document.getElementById("annContent").value = "";
+    document.getElementById("annPopup").checked = true;
     loadAnnouncements();
     loadStats();
   }

@@ -12,6 +12,7 @@ import { UiHost } from "@/components/Ui";
 import { AchievementHost } from "@/components/AchievementHost";
 import { MilestoneHost } from "@/components/MilestoneHost";
 import { UpdateGate } from "@/components/UpdateGate";
+import { AnnouncementHost } from "@/components/AnnouncementHost";
 
 export default function RootLayout() {
   const { ready, signedIn, hydrate } = useAuth();
@@ -78,11 +79,13 @@ export default function RootLayout() {
         <Stack.Screen name="character/calls/index" />
         <Stack.Screen name="achievements/index" />
         <Stack.Screen name="achievements/[id]" />
+        <Stack.Screen name="announcements/index" />
       </Stack>
       <UiHost />
       <AchievementHost />
       <MilestoneHost />
       <UpdateGate />
+      <AnnouncementHost />
     </SafeAreaProvider>
     </GestureHandlerRootView>
   );

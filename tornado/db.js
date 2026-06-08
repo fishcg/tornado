@@ -370,4 +370,7 @@ export async function initDb() {
 
   // 用户头像
   await ensureColumn(pool, "users", "avatar_url", "TEXT");
+
+  // 公告：是否在用户打开软件时弹窗
+  await ensureColumn(pool, "announcements", "popup", "INT NOT NULL DEFAULT 1");
 }
