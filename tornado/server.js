@@ -1876,13 +1876,45 @@ async function handleRequest(req, res) {
   const userId = authSession.userId;
 
   // ── 公告路由（普通用户）────────────────────────────────────────────────────
+  // 打开软件时弹窗：只取 popup=1 且未读
   if (method === "GET" && pathname === "/announcements/unread") {
     const rows = await dbAll(`
       SELECT a.id, a.title, a.content, a.created_at FROM announcements a
-      WHERE a.id NOT IN (SELECT announcement_id FROM announcement_reads WHERE user_id = ?)
+      WHERE a.popup = 1 AND a.id NOT IN (SELECT announcement_id FROM announcement_reads WHERE user_id = ?)
       ORDER BY a.created_at DESC
     `, [userId]);
     send(res, 200, rows);
+    return;
+  }
+
+  // 系统通知列表：全部公告 + 每条已读状态
+  if (method === "GET" && pathname === "/announcements") {
+    const rows = await dbAll(`
+      SELECT a.id, a.title, a.content, a.created_at, a.popup,
+        (a.id IN (SELECT announcement_id FROM announcement_reads WHERE user_id = ?)) AS is_read
+      FROM announcements a ORDER BY a.created_at DESC
+    `, [userId]);
+    send(res, 200, rows.map((r) => ({ ...r, is_read: !!r.is_read })));
+    return;
+  }
+
+  // 未读数量（给红点用）
+  if (method === "GET" && pathname === "/announcements/unread-count") {
+    const row = await dbGet(`
+      SELECT COUNT(*) AS n FROM announcements a
+      WHERE a.id NOT IN (SELECT announcement_id FROM announcement_reads WHERE user_id = ?)
+    `, [userId]);
+    send(res, 200, { count: row?.n || 0 });
+    return;
+  }
+
+  // 全部标记已读
+  if (method === "POST" && pathname === "/announcements/read-all") {
+    await dbRun(`
+      INSERT IGNORE INTO announcement_reads (user_id, announcement_id)
+      SELECT ?, id FROM announcements
+    `, [userId]);
+    send(res, 200, { ok: true });
     return;
   }
 
@@ -2024,7 +2056,8 @@ async function handleRequest(req, res) {
       const title = String(body.title || "").trim();
       const content = String(body.content || "").trim();
       if (!title || !content) { send(res, 400, { error: "title and content required" }); return; }
-      const result = await dbRun("INSERT INTO announcements (title, content, created_at) VALUES (?, ?, ?)", [title, content, nowIso()]);
+      const popup = body.popup === undefined ? 1 : (body.popup ? 1 : 0);
+      const result = await dbRun("INSERT INTO announcements (title, content, popup, created_at) VALUES (?, ?, ?, ?)", [title, content, popup, nowIso()]);
       send(res, 200, { id: Number(result.insertId) });
       return;
     }
@@ -3327,6 +3360,21 @@ async function handleRequest(req, res) {
     }
     await deleteMessageSingle(msgId);
     send(res, 200, { ok: true });
+    return;
+  }
+
+  // POST /messages/delete-batch — 批量删除消息（画廊批量删图用，限本人会话）
+  if (method === "POST" && pathname === "/messages/delete-batch") {
+    const body = await readBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0) : [];
+    if (ids.length === 0) { send(res, 400, { error: "ids required" }); return; }
+    const placeholders = ids.map(() => "?").join(",");
+    // 只删属于当前用户会话的消息
+    const result = await dbRun(
+      `DELETE m FROM messages m JOIN sessions s ON s.id = m.session_id WHERE m.id IN (${placeholders}) AND s.user_id = ?`,
+      [...ids, userId]
+    );
+    send(res, 200, { ok: true, deleted: result.affectedRows ?? 0 });
     return;
   }
 
