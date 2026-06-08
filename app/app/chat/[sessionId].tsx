@@ -1,9 +1,10 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator, Animated, Easing, FlatList, Image, Keyboard, KeyboardAvoidingView,
-  Modal, Platform, Pressable, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Animated, Easing, FlatList, Image, Keyboard,
+  Modal, Pressable, StyleSheet, Text, TextInput, View,
 } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
@@ -525,8 +526,8 @@ export default function ChatScreen() {
   return (
     <KeyboardAvoidingView
       style={s.container}
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={Platform.OS === "android" ? insets.top : 0}
+      behavior="padding"
+      keyboardVerticalOffset={0}
     >
       <TtsPlayerHost />
       <IncomingCall

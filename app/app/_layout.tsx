@@ -4,6 +4,7 @@ import { ActivityIndicator, Platform, StatusBar as RNStatusBar, View } from "rea
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { KeyboardProvider } from "react-native-keyboard-controller";
 import { useAuth } from "@/store/auth";
 import { useUi } from "@/store/ui";
 import { setupNotifications, ensureNotificationPermission, addNotificationResponseListener } from "@/notify";
@@ -62,6 +63,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#0f0f17" }}>
+      <KeyboardProvider>
       <SafeAreaProvider style={{ backgroundColor: "#0f0f17" }}>
       <StatusBar style="light" translucent backgroundColor="transparent" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#0f0f17" } }}>
@@ -87,6 +89,7 @@ export default function RootLayout() {
       <UpdateGate />
       <AnnouncementHost />
     </SafeAreaProvider>
+      </KeyboardProvider>
     </GestureHandlerRootView>
   );
 }
