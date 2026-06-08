@@ -3018,11 +3018,33 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // GET /sessions/:id/messages
+  // GET /sessions/:id/messages — 支持游标分页：?limit=N&before_id=ID（取该 id 之前的更早消息）
+  // 不带 limit 时返回全部（兼容旧调用）。带 limit 时返回 { items, hasMore }，items 按 id 升序。
   const msgsMatch = pathname.match(/^\/sessions\/(\d+)\/messages$/);
   if (method === "GET" && msgsMatch) {
     const id = Number(msgsMatch[1]);
-    send(res, 200, await getMessages(id));
+    const limitParam = url.searchParams.get("limit");
+    if (!limitParam) {
+      send(res, 200, await getMessages(id));
+      return;
+    }
+    const limit = Math.min(100, Math.max(1, Number(limitParam) || 30));
+    const beforeId = Number(url.searchParams.get("before_id") || 0);
+    let rows;
+    if (beforeId > 0) {
+      rows = await dbAll(
+        "SELECT * FROM messages WHERE session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+        [id, beforeId, limit + 1]
+      );
+    } else {
+      rows = await dbAll(
+        "SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+        [id, limit + 1]
+      );
+    }
+    const hasMore = rows.length > limit;
+    const items = rows.slice(0, limit).reverse(); // 升序返回，前端拼接更直观
+    send(res, 200, { items, hasMore });
     return;
   }
 

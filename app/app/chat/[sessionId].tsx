@@ -172,34 +172,39 @@ export default function ChatScreen() {
   const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
   const listRef = useRef<FlatList<Msg>>(null);
   const autoLoopRef = useRef<any>(null);
-  // 初次加载后短暂允许 onContentSizeChange 把列表定位到底部，之后不再自动拽到底
-  const initialScrollRef = useRef(true);
+  // 分页：是否还有更早消息、是否正在加载更早
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const PAGE = 30;
 
   const moodM = moodInfo(mood);
 
+  // inverted 列表需要新→旧的数据顺序（messages 内部保持旧→新）
+  const invertedData = useMemo(() => [...messages].reverse(), [messages]);
+
+  // 规整后端消息：过滤系统/旁白、补全图片 URL、去掉用户图片占位标记
+  const normalize = useCallback((raw: any[]): Msg[] =>
+    (raw || [])
+      .filter((m) => m.role !== "system" && !(m.content?.startsWith("（") && m.content?.endsWith("）")))
+      .map((m: any) => {
+        if (m.image_url && !m.image_url.startsWith("http")) m.image_url = `${baseUrl}${m.image_url}`;
+        if (m.role === "user" && m.content === "[图片]") m.content = "";
+        return m;
+      }), []);
+
   const load = useCallback(async () => {
     try {
-      const [raw, char, sess, settings] = await Promise.all([
-        api<any[]>("GET", `/sessions/${sid}/messages`),
+      const [page, char, sess, settings] = await Promise.all([
+        api<{ items: any[]; hasMore: boolean }>("GET", `/sessions/${sid}/messages?limit=${PAGE}`),
         api<CharacterInfo>("GET", "/character").catch(() => null),
         api<SessionMood>("GET", `/sessions/${sid}/mood`).catch(() => null),
         api<{ collapseAction: boolean }>("GET", "/settings").catch(() => null),
       ]);
-      const filtered = (raw || [])
-        .filter((m) => m.role !== "system" && !(m.content?.startsWith("（") && m.content?.endsWith("）")))
-        .map((m: any) => {
-          if (m.image_url && !m.image_url.startsWith("http")) {
-            m.image_url = `${baseUrl}${m.image_url}`;
-          }
-          // 用户发的图，content 是 "[图片]"，UI 不显示这个标记
-          if (m.role === "user" && m.content === "[图片]") m.content = "";
-          return m;
-        });
-      setMessages(filtered);
-      // 标记初次加载，让 onContentSizeChange 把列表直接定位到底部（无动画、无可见滚动）
-      initialScrollRef.current = true;
+      const items = normalize(page?.items || []);
+      setMessages(items);
+      setHasMore(!!page?.hasMore);
       // 取最近一条带图的消息作为背景
-      const lastImg = [...filtered].reverse().find((m) => m.image_url);
+      const lastImg = [...items].reverse().find((m) => m.image_url);
       if (lastImg?.image_url) setChatBg(lastImg.image_url);
       if (char) setCharacter({ id: char.id, name: char.name, affection: (char as any).affection ?? 10 });
       if (sess) {
@@ -208,7 +213,24 @@ export default function ChatScreen() {
       }
       if (settings) setCollapseAction(!!settings.collapseAction);
     } catch {} finally { setLoading(false); }
-  }, [sid]);
+  }, [sid, normalize]);
+
+  // 上滑加载更早消息（inverted 列表的 onEndReached）
+  const loadOlder = useCallback(async () => {
+    if (loadingMore || !hasMore) return;
+    const oldest = messages[0];
+    const beforeId = typeof oldest?.id === "number" ? oldest.id : 0;
+    if (!beforeId) return;
+    setLoadingMore(true);
+    try {
+      const page = await api<{ items: any[]; hasMore: boolean }>(
+        "GET", `/sessions/${sid}/messages?limit=${PAGE}&before_id=${beforeId}`
+      );
+      const older = normalize(page?.items || []);
+      if (older.length) setMessages((m) => [...older, ...m]);
+      setHasMore(!!page?.hasMore);
+    } catch {} finally { setLoadingMore(false); }
+  }, [sid, messages, hasMore, loadingMore, normalize]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -254,7 +276,6 @@ export default function ChatScreen() {
         );
         setChatBg(fullUrl);
         setScenePending((cur) => (cur === p.msg_id ? null : cur));
-        initialScrollRef.current = false;
         setTimeout(scrollEnd, 50);
       }
       if (p.image_failed && p.msg_id) {
@@ -276,13 +297,8 @@ export default function ChatScreen() {
     },
   });
 
-  const scrollEnd = () => listRef.current?.scrollToEnd({ animated: false });
-  // 仅初次加载时把列表定位到底部；流式回复/收到消息不再强制拽到底
-  const onContentSize = () => {
-    if (initialScrollRef.current) {
-      listRef.current?.scrollToEnd({ animated: false });
-    }
-  };
+  // inverted 列表：底部 = 偏移 0，滚到最新消息
+  const scrollEnd = () => listRef.current?.scrollToOffset({ offset: 0, animated: false });
 
   const sendText = async (textOverride?: string) => {
     const text = (textOverride ?? input).trim();
@@ -296,8 +312,7 @@ export default function ChatScreen() {
     setTyping(false);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     typingTimerRef.current = setTimeout(() => setTyping(true), 1500);
-    // 用户发出后定位到底部看到自己的消息；之后流式回复不再强制拽到底
-    initialScrollRef.current = false;
+    // 用户发出后定位到底部看到自己的消息
     setTimeout(scrollEnd, 50);
 
     try {
@@ -308,6 +323,8 @@ export default function ChatScreen() {
           if (typing) setTyping(false);
           acc += e.text;
           setMessages((m) => m.map((it) => it.id === tempBot.id ? { ...it, content: acc } : it));
+          // inverted 列表流式增高时保持最新气泡贴底，避免被输入框遮住
+          scrollEnd();
         } else if (e.type === "done") {
           setMessages((m) => m.map((it) =>
             it.id === tempUser.id ? { ...it, id: e.userMsgId } :
@@ -525,7 +542,6 @@ export default function ChatScreen() {
                 ? m.map((it) => it.id === c.msg_id ? { ...it, content } : it)
                 : [...m, { id: c.msg_id!, role: "assistant", content, tts_audio_url: c.audio_url || null }]
             );
-            initialScrollRef.current = false;
             setTimeout(scrollEnd, 50);
           }
         }}
@@ -644,11 +660,13 @@ export default function ChatScreen() {
         {chatBg ? <View style={[s.bgDim, { opacity: 1 - chatBgOpacity * 0.6 }]} pointerEvents="none" /> : null}
         <FlatList
           ref={listRef}
-          data={messages}
+          data={invertedData}
+          inverted
           keyExtractor={(it) => String(it.id)}
-          contentContainerStyle={{ padding: 12, paddingBottom: 20 }}
-          onContentSizeChange={onContentSize}
-          onScrollBeginDrag={() => { initialScrollRef.current = false; }}
+          contentContainerStyle={{ padding: 12 }}
+          onEndReached={loadOlder}
+          onEndReachedThreshold={0.4}
+          ListFooterComponent={loadingMore ? <ActivityIndicator color="#7e6fd0" style={{ marginVertical: 12 }} /> : null}
           renderItem={({ item }) => (
             <Bubble
               item={item}
