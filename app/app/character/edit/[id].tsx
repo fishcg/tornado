@@ -6,7 +6,7 @@ import {
 } from "react-native";
 import { api } from "@/api/client";
 import PageHeader from "@/components/PageHeader";
-import { confirm, toast } from "@/components/Ui";
+import { confirm, toast, hapticLight } from "@/components/Ui";
 
 type CharDetail = {
   id: number;
@@ -69,7 +69,7 @@ export default function EditCharacter() {
       destructive: true,
     });
     if (!ok) return;
-    try { await api("DELETE", `/characters/${cid}`); router.back(); }
+    try { await api("DELETE", `/characters/${cid}`); hapticLight(); router.back(); }
     catch (e: any) { toast(e.message || "删除失败", "err"); }
   };
 

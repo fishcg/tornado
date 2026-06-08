@@ -14,7 +14,7 @@ import { useWS } from "@/hooks/useWS";
 import { playTts, stopTts, TtsPlayerHost, useTtsPlayingId } from "@/audio/tts";
 import IncomingCall, { type IncomingCallData } from "@/components/IncomingCall";
 import AvatarsModal from "@/components/AvatarsModal";
-import { confirm, toast, actionSheet } from "@/components/Ui";
+import { confirm, toast, actionSheet, hapticLight } from "@/components/Ui";
 import { moodInfo } from "@/constants/mood";
 import {
   IconAuto, IconBack, IconBookmark, IconHeart, IconImage, IconMore, IconPlay,
@@ -170,6 +170,8 @@ export default function ChatScreen() {
   const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
   const listRef = useRef<FlatList<Msg>>(null);
   const autoLoopRef = useRef<any>(null);
+  // 初次加载后短暂允许 onContentSizeChange 把列表定位到底部，之后不再自动拽到底
+  const initialScrollRef = useRef(true);
 
   const moodM = moodInfo(mood);
 
@@ -192,6 +194,8 @@ export default function ChatScreen() {
           return m;
         });
       setMessages(filtered);
+      // 标记初次加载，让 onContentSizeChange 把列表直接定位到底部（无动画、无可见滚动）
+      initialScrollRef.current = true;
       // 取最近一条带图的消息作为背景
       const lastImg = [...filtered].reverse().find((m) => m.image_url);
       if (lastImg?.image_url) setChatBg(lastImg.image_url);
@@ -241,9 +245,15 @@ export default function ChatScreen() {
       }
       if (p.image_ready && p.msg_id && p.url) {
         const fullUrl = p.url.startsWith("http") ? p.url : `${baseUrl}${p.url}`;
-        setMessages((m) => m.map((it) => it.id === p.msg_id ? { ...it, image_url: fullUrl } : it));
+        setMessages((m) =>
+          m.some((it) => it.id === p.msg_id)
+            ? m.map((it) => it.id === p.msg_id ? { ...it, image_url: fullUrl } : it)
+            : [...m, { id: p.msg_id, role: "assistant", content: "", image_url: fullUrl }]
+        );
         setChatBg(fullUrl);
         setScenePending((cur) => (cur === p.msg_id ? null : cur));
+        initialScrollRef.current = false;
+        setTimeout(scrollEnd, 50);
       }
       if (p.image_failed && p.msg_id) {
         setScenePending((cur) => (cur === p.msg_id ? null : cur));
@@ -265,6 +275,12 @@ export default function ChatScreen() {
   });
 
   const scrollEnd = () => listRef.current?.scrollToEnd({ animated: false });
+  // 仅初次加载时把列表定位到底部；流式回复/收到消息不再强制拽到底
+  const onContentSize = () => {
+    if (initialScrollRef.current) {
+      listRef.current?.scrollToEnd({ animated: false });
+    }
+  };
 
   const sendText = async (textOverride?: string) => {
     const text = (textOverride ?? input).trim();
@@ -277,6 +293,8 @@ export default function ChatScreen() {
     setTyping(false);
     if (typingTimerRef.current) clearTimeout(typingTimerRef.current);
     typingTimerRef.current = setTimeout(() => setTyping(true), 1500);
+    // 用户发出后定位到底部看到自己的消息；之后流式回复不再强制拽到底
+    initialScrollRef.current = false;
     setTimeout(scrollEnd, 50);
 
     try {
@@ -287,7 +305,6 @@ export default function ChatScreen() {
           if (typing) setTyping(false);
           acc += e.text;
           setMessages((m) => m.map((it) => it.id === tempBot.id ? { ...it, content: acc } : it));
-          scrollEnd();
         } else if (e.type === "done") {
           setMessages((m) => m.map((it) =>
             it.id === tempUser.id ? { ...it, id: e.userMsgId } :
@@ -442,6 +459,7 @@ export default function ChatScreen() {
       label: "删除", destructive: true, onPress: async () => {
         try {
           await api("DELETE", `/messages/${item.id}/single`);
+          hapticLight();
           setMessages((m) => m.filter((it) => it.id !== item.id));
         } catch (e: any) { toast(e.message || "删除失败", "err"); }
       },
@@ -471,13 +489,28 @@ export default function ChatScreen() {
     <KeyboardAvoidingView
       style={s.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={0}
+      keyboardVerticalOffset={Platform.OS === "android" ? insets.top : 0}
     >
       <TtsPlayerHost />
       <IncomingCall
         visible={!!incomingCall}
         data={incomingCall}
-        onClose={() => setIncomingCall(null)}
+        onClose={(answered) => {
+          const c = incomingCall;
+          setIncomingCall(null);
+          // 通话结束后把电话内容插入当前会话末尾（参考网页：📞 [已接听/未接听] 文案）
+          if (c && c.session_id === sid && c.script && c.msg_id != null) {
+            const tag = answered ? "已接听" : "未接听";
+            const content = `📞 [${tag}] ${c.script}`;
+            setMessages((m) =>
+              m.some((it) => it.id === c.msg_id)
+                ? m.map((it) => it.id === c.msg_id ? { ...it, content } : it)
+                : [...m, { id: c.msg_id!, role: "assistant", content, tts_audio_url: c.audio_url || null }]
+            );
+            initialScrollRef.current = false;
+            setTimeout(scrollEnd, 50);
+          }
+        }}
       />
       <AvatarsModal
         visible={avatarsOpen}
@@ -596,7 +629,8 @@ export default function ChatScreen() {
           data={messages}
           keyExtractor={(it) => String(it.id)}
           contentContainerStyle={{ padding: 12, paddingBottom: 20 }}
-          onContentSizeChange={scrollEnd}
+          onContentSizeChange={onContentSize}
+          onScrollBeginDrag={() => { initialScrollRef.current = false; }}
           renderItem={({ item }) => (
             <Bubble
               item={item}

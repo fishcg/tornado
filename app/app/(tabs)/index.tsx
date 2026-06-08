@@ -7,7 +7,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { api } from "@/api/client";
-import { confirm, toast } from "@/components/Ui";
+import { confirm, toast, hapticLight } from "@/components/Ui";
 import { IconBookmark } from "@/components/Icons";
 
 if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -140,6 +140,7 @@ export default function SessionsList() {
     if (!ok) { closeSwipe(id); return; }
     try {
       await api("DELETE", `/sessions/${id}`);
+      hapticLight();
       setSessions((arr) => arr.filter((x) => x.id !== id));
       toast("已删除");
     } catch (e: any) {

@@ -78,7 +78,7 @@ function AchievementModal({ data, onClose }: { data: AchievementData; onClose: (
       toValue: 1, duration: 350, easing: Easing.bezier(0.34, 1.56, 0.64, 1), useNativeDriver: true,
     }).start();
     Animated.timing(selfieAnim, {
-      toValue: 1, duration: 500, delay: 200, easing: Easing.bezier(0.34, 1.56, 0.64, 1), useNativeDriver: true,
+      toValue: 1, duration: 500, delay: 200, easing: Easing.bezier(0.34, 1.56, 0.64, 1), useNativeDriver: false,
     }).start();
     Animated.timing(fadeHeader, { toValue: 1, duration: 400, delay: 150, useNativeDriver: true }).start();
     Animated.timing(fadeName, { toValue: 1, duration: 400, delay: 350, useNativeDriver: true }).start();

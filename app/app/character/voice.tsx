@@ -10,7 +10,7 @@ import {
 import * as DocumentPicker from "expo-document-picker";
 import { baseUrl, clientHeaders, loadToken } from "@/api/client";
 import { api } from "@/api/client";
-import { confirm, toast } from "@/components/Ui";
+import { confirm, toast, hapticLight } from "@/components/Ui";
 import { playTts, stopTts, TtsPlayerHost } from "@/audio/tts";
 import PageHeader from "@/components/PageHeader";
 
@@ -148,7 +148,7 @@ export default function VoiceClone() {
       destructive: true,
     });
     if (!ok) return;
-    try { await api("DELETE", "/character/voice"); await load(); }
+    try { await api("DELETE", "/character/voice"); hapticLight(); await load(); }
     catch (e: any) { toast(e.message || "删除失败", "err"); }
   };
 

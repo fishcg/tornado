@@ -2850,12 +2850,8 @@ async function handleRequest(req, res) {
     recentMsgs.reverse();
     const previousScene = await getLastImagePrompt(sessionId);
     const prompt = await generateImagePrompt("", lastAssist.content, recentMsgs, previousScene, userId);
-    // 在最近 assistant 消息上附图（若已有图则新建一条空消息）
-    let targetMsgId = lastAssist.id;
-    const existing = await dbGet("SELECT image_url FROM messages WHERE id = ?", [targetMsgId]);
-    if (existing?.image_url) {
-      targetMsgId = await appendMessage(sessionId, "assistant", "", null, userId);
-    }
+    // 手动插图：始终新建一条独立的空消息承载插图（不附到上一条回复气泡上）
+    const targetMsgId = await appendMessage(sessionId, "assistant", "", null, userId);
     pushToSession(sessionId, { image_pending: true, msg_id: targetMsgId });
     const reqAspect = url.searchParams.get("aspect") || "";
     const aspect = ["1:1", "2:3", "9:16", "16:9"].includes(reqAspect) ? reqAspect : null;

@@ -7,7 +7,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import { baseUrl, clientHeaders, loadToken, appVersion } from "@/api/client";
 import { api } from "@/api/client";
 import { useAuth } from "@/store/auth";
-import { confirm, toast, actionSheet } from "@/components/Ui";
+import { confirm, toast, actionSheet, hapticLight } from "@/components/Ui";
 
 export default function Me() {
   const router = useRouter();
@@ -62,6 +62,7 @@ export default function Me() {
     if (!ok) return;
     try {
       await api("DELETE", "/user/avatar");
+      hapticLight();
       setAvatarUrl(null);
       toast("已移除");
     } catch (e: any) {

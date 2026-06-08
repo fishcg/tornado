@@ -9,6 +9,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Haptics from "expo-haptics";
+import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { api } from "@/api/client";
 import { IconHeart, IconGallery, IconSparkle, IconTrophy, IconPhone, IconImage, IconBack } from "@/components/Icons";
 import { confirm, toast, actionSheet } from "@/components/Ui";
@@ -27,6 +29,36 @@ export default function CharacterTab() {
   const [refreshing, setRefreshing] = useState(false);
   const [switching, setSwitching] = useState<number | null>(null);
   const [cardsOpen, setCardsOpen] = useState(false);
+  const swipeRefs = useRef<Map<number, SwipeableMethods>>(new Map());
+
+  const closeSwipe = (id: number) => swipeRefs.current.get(id)?.close();
+
+  const removeCharacter = async (c: Character) => {
+    if (c.is_active) { toast("无法删除当前激活的角色", "err"); closeSwipe(c.id); return; }
+    const ok = await confirm({
+      title: "确认删除",
+      message: `删除「${c.name}」后无法恢复`,
+      confirmText: "删除",
+      destructive: true,
+    });
+    if (!ok) { closeSwipe(c.id); return; }
+    try {
+      await api("DELETE", `/characters/${c.id}`);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setList((arr) => arr.filter((x) => x.id !== c.id));
+      toast("已删除");
+    } catch (e: any) {
+      toast(e.message || "删除失败", "err");
+      closeSwipe(c.id);
+    }
+  };
+
+  const renderRightActions = (c: Character) => () => (
+    <Pressable style={s.swipeDelete} onPress={() => removeCharacter(c)}>
+      <Text style={s.swipeDeleteX}>×</Text>
+      <Text style={s.swipeDeleteText}>删除</Text>
+    </Pressable>
+  );
 
   const load = useCallback(async () => {
     try {
@@ -149,24 +181,32 @@ export default function CharacterTab() {
             <Text style={s.empty}>暂无角色</Text>
           ) : (
             list.map((c) => (
-              <Pressable key={c.id} style={[s.row, c.is_active ? s.rowActive : null]}
-                onPress={() => activate(c.id)}>
-                <View style={[s.avatarSm, !c.avatar_url && { backgroundColor: c.is_active ? "#7e6fd0" : "#2a2a3a" }]}>
-                  {c.avatar_url ? (
-                    <Image source={{ uri: c.avatar_url }} style={s.avatarSmImg} />
+              <Swipeable
+                key={c.id}
+                ref={((r: SwipeableMethods | null) => { if (r) swipeRefs.current.set(c.id, r); else swipeRefs.current.delete(c.id); }) as any}
+                renderRightActions={renderRightActions(c)}
+                overshootRight={false}
+                containerStyle={s.swipeContainer}
+              >
+                <Pressable style={[s.row, c.is_active ? s.rowActive : null]}
+                  onPress={() => activate(c.id)}>
+                  <View style={[s.avatarSm, !c.avatar_url && { backgroundColor: c.is_active ? "#7e6fd0" : "#2a2a3a" }]}>
+                    {c.avatar_url ? (
+                      <Image source={{ uri: c.avatar_url }} style={s.avatarSmImg} />
+                    ) : (
+                      <Text style={s.avatarSmText}>{c.name?.[0] || "?"}</Text>
+                    )}
+                  </View>
+                  <Text style={s.rowName}>{c.name}</Text>
+                  {c.is_active ? (
+                    <Text style={s.activeTag}>激活中</Text>
+                  ) : switching === c.id ? (
+                    <ActivityIndicator color="#7e6fd0" />
                   ) : (
-                    <Text style={s.avatarSmText}>{c.name?.[0] || "?"}</Text>
+                    <Text style={s.switchHint}>切换</Text>
                   )}
-                </View>
-                <Text style={s.rowName}>{c.name}</Text>
-                {c.is_active ? (
-                  <Text style={s.activeTag}>激活中</Text>
-                ) : switching === c.id ? (
-                  <ActivityIndicator color="#7e6fd0" />
-                ) : (
-                  <Text style={s.switchHint}>切换</Text>
-                )}
-              </Pressable>
+                </Pressable>
+              </Swipeable>
             ))
           )}
 
@@ -204,7 +244,7 @@ function CardsModal({ visible, onClose, onChanged }: {
   const load = useCallback(async () => {
     setLoading(true);
     const r = await fetchCards();
-    if (r) setCards(r);
+    if (r) setCards([...r].sort((a, b) => Number(b.is_active) - Number(a.is_active)));
     setLoading(false);
   }, [fetchCards]);
 
@@ -233,7 +273,7 @@ function CardsModal({ visible, onClose, onChanged }: {
       if (!r) return;
       if (r.length > baseCount) {
         stopPoll();
-        setCards(r);
+        setCards([...r].sort((a, b) => Number(b.is_active) - Number(a.is_active)));
         setGenerating(false);
         onChanged();
       } else if (Date.now() - startAt > 180_000) {
@@ -275,7 +315,7 @@ function CardsModal({ visible, onClose, onChanged }: {
     items.push({ label: "下载到相册", onPress: () => download(item.image_url) });
     items.push({
       label: "删除", destructive: true, onPress: async () => {
-        try { await api("DELETE", `/character/cards/${item.id}`); await load(); onChanged(); }
+        try { await api("DELETE", `/character/cards/${item.id}`); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); await load(); onChanged(); }
         catch (e: any) { toast(e.message || "删除失败", "err"); }
       },
     });
@@ -375,8 +415,12 @@ const s = StyleSheet.create({
 
   section: { paddingHorizontal: 16, marginTop: 24 },
   sectionTitle: { color: "#888", fontSize: 13, marginBottom: 8 },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 10, backgroundColor: "#1c1c2a", marginBottom: 6 },
+  row: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: 10, backgroundColor: "#1c1c2a" },
   rowActive: { borderWidth: 1, borderColor: "#7e6fd0" },
+  swipeContainer: { marginBottom: 6, borderRadius: 10 },
+  swipeDelete: { backgroundColor: "#ef4444", justifyContent: "center", alignItems: "center", width: 72, borderTopRightRadius: 10, borderBottomRightRadius: 10 },
+  swipeDeleteX: { color: "#fff", fontSize: 22, lineHeight: 24 },
+  swipeDeleteText: { color: "#fff", fontSize: 12, fontWeight: "600" },
   avatarSm: { width: 36, height: 36, borderRadius: 18, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avatarSmImg: { width: "100%", height: "100%" },
   avatarSmText: { color: "#fff", fontSize: 14, fontWeight: "600" },

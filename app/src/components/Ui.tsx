@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   Animated, Easing, Modal, Pressable, StyleSheet, Text, View,
 } from "react-native";
+import * as Haptics from "expo-haptics";
+
+// 轻触觉反馈（删除/确认等操作），不支持的设备静默忽略
+export function hapticLight() {
+  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+}
 
 // ────────────────────────────────────────────────────────────
 // confirm() / alert() / toast() — 全局调用，告别原生 Alert.alert
