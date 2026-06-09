@@ -3,32 +3,16 @@ import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import OSS from "../node_modules/ali-oss/lib/client.js";
 import { getDb, closeDb, initDb } from "./db.js";
 import {
   PORT, MEMORY_API, OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
   DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL, IMAGE_API_URL, IMAGE_API_KEY,
   SOUL_PATH, PUBLIC_DIR, UPLOADS_DIR, PROACTIVE_IDLE_MINUTES, WEATHER_CITY,
   PASSWORD_SALT, DEFAULT_INVITE_CODE,
-  OSS_REGION, OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_BUCKET, OSS_BASE_URL,
   NEWAPI_API_KEY, NEWAPI_MODEL, openai, deepseek, newapi,
 } from "./lib/config.js";
-
-function getOssClient() {
-  return new OSS({
-    region: OSS_REGION,
-    accessKeyId: OSS_ACCESS_KEY_ID,
-    accessKeySecret: OSS_ACCESS_KEY_SECRET,
-    bucket: OSS_BUCKET
-  });
-}
-
-async function uploadToOss(buffer, filename, mimeType) {
-  const client = getOssClient();
-  const opts = mimeType ? { mime: mimeType } : {};
-  await client.put(`tornado/${filename}`, buffer, opts);
-  return `${OSS_BASE_URL}/tornado/${filename}`;
-}
+import { dbGet, dbAll, dbRun } from "./lib/dbutil.js";
+import { uploadToOss } from "./lib/oss.js";
 
 // ── 鉴权 ──────────────────────────────────────────────────────────────────────
 
@@ -160,21 +144,7 @@ async function getLatestAppVersion(platform = "android") {
 }
 
 // ── MySQL 辅助函数 ─────────────────────────────────────────────────────────────
-
-async function dbGet(sql, params = []) {
-  const [rows] = await getDb().execute(sql, params);
-  return rows[0] ?? null;
-}
-
-async function dbAll(sql, params = []) {
-  const [rows] = await getDb().execute(sql, params);
-  return rows;
-}
-
-async function dbRun(sql, params = []) {
-  const [result] = await getDb().execute(sql, params);
-  return result;
-}
+// dbGet/dbAll/dbRun 已抽到 lib/dbutil.js
 
 // ── 用户设置（替代 globalSettings 文件）────────────────────────────────────────
 
