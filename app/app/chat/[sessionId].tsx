@@ -32,6 +32,7 @@ type Msg = {
   pending?: boolean;
   tts_audio_url?: string | null;
   image_url?: string | null;
+  favorited?: number;
 };
 
 type CharacterInfo = { id: number; name: string; affection: number };
@@ -492,6 +493,17 @@ export default function ChatScreen() {
     const items: any[] = [];
     if (isAssistant) {
       items.push({ label: "重新生成", onPress: () => regenerate(item) });
+      const faved = !!item.favorited;
+      items.push({
+        label: faved ? "取消收藏" : "收藏", onPress: async () => {
+          try {
+            await api(faved ? "DELETE" : "POST", `/messages/${item.id}/favorite`);
+            hapticLight();
+            setMessages((m) => m.map((it) => it.id === item.id ? { ...it, favorited: faved ? 0 : 1 } : it));
+            toast(faved ? "已取消收藏" : "已收藏");
+          } catch (e: any) { toast(e.message || "操作失败", "err"); }
+        },
+      });
     }
     items.push({
       label: "删除", destructive: true, onPress: async () => {

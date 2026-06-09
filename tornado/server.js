@@ -842,7 +842,7 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
         // 用实际画面描述更新场景记录，比生成时的 prompt 更准确
         await updateMessageImagePrompt(msgId, desc);
         if (!silent) {
-          await appendMessage(sessionId, "assistant", `（我刚拍的照片里是这样的：${desc}）`, null, userId);
+          await appendMessage(sessionId, "assistant", `（我刚拍的照片里是这样的：${desc}）`, await getCharacterName(userId), userId);
           console.log(`图片识别 [msg ${msgId}]: ${desc}`);
         }
       }
@@ -1062,7 +1062,7 @@ async function pregenerateMoodAvatars(characterName, moodsToGenerate = null, use
   console.log(`情绪头像预生成完成 [${characterName}]`);
 }
 
-async function updateMood(sessionId, recentMsgs, userId) {
+async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
   const charName = await getCharacterName(userId);
   // 优先取角色最后一条回复作为主要判断依据
   const lastAssistantMsg = [...recentMsgs].reverse().find((m) => m.role === "assistant");
@@ -1096,6 +1096,15 @@ async function updateMood(sessionId, recentMsgs, userId) {
     const valid = ["neutral", "shy", "annoyed", "soft", "flustered", "playful", "cold", "happy", "angry"];
     const finalMood = valid.includes(mood) ? mood : "neutral";
     await dbRun("UPDATE sessions SET mood = ? WHERE id = ?", [finalMood, sessionId]);
+    // 把当时情绪快照写到目标 assistant 消息上（供收藏展示）；未指定则取最近一条
+    if (targetMsgId) {
+      await dbRun("UPDATE messages SET mood = ? WHERE id = ?", [finalMood, targetMsgId]);
+    } else {
+      await dbRun(
+        "UPDATE messages SET mood = ? WHERE id = (SELECT id FROM (SELECT id FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1) t)",
+        [finalMood, sessionId]
+      );
+    }
     generateMoodAvatar(finalMood, userId).then((avatarUrl) => {
       pushToSession(sessionId, { mood_update: true, mood: finalMood, avatar_url: avatarUrl });
     }).catch(() => {
@@ -1545,6 +1554,8 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
 }
 
 async function detectLowMood(text) {
+  // 太短的消息不足以判断情绪，直接跳过，避免「哎」「累」这类随口话误触发
+  if (!text || text.trim().length < 8) return false;
   try {
     const res = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -1552,7 +1563,7 @@ async function detectLowMood(text) {
       messages: [
         {
           role: "system",
-          content: "判断用户的消息是否表现出情绪低落、疲惫、难过、叹气、压力大等负面情绪。只回答 yes 或 no，不要解释。"
+          content: "你要判断用户是否正经历**明显且强烈**的负面情绪困扰（如难过到需要安慰、遭遇打击、情绪崩溃、长期压抑倾诉）。注意：日常的随口抱怨、轻微疲惫（如「有点累」「无聊」「饿了」）、玩笑、平静叙述都**不算**。宁可漏判也不要误判，只有非常确定时才回答 yes。只回答 yes 或 no，不要解释。"
         },
         { role: "user", content: text }
       ]
@@ -1630,8 +1641,8 @@ async function listSessions(userId) {
   const sql =
     "SELECT s.*, " +
     "(SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_message, " +
-    "(SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) as character_name, " +
-    "(SELECT image_url FROM mood_avatars WHERE `character` = (SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' ORDER BY id DESC LIMIT 1) AND (user_id = s.user_id OR user_id IS NULL) ORDER BY (mood='neutral') DESC, id DESC LIMIT 1) as character_avatar " +
+    "(SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name IS NOT NULL ORDER BY id DESC LIMIT 1) as character_name, " +
+    "(SELECT image_url FROM mood_avatars WHERE `character` = (SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name IS NOT NULL ORDER BY id DESC LIMIT 1) AND (user_id = s.user_id OR user_id IS NULL) ORDER BY (mood='neutral') DESC, id DESC LIMIT 1) as character_avatar " +
     "FROM sessions s WHERE s.archived = 0 AND s.user_id = ? ORDER BY updated_at DESC";
   return dbAll(sql, [userId]);
 }
@@ -3129,9 +3140,9 @@ async function handleRequest(req, res) {
       const cooldownOk = !lastEmotionCallAt || Date.now() - new Date(lastEmotionCallAt).getTime() >= emotionCooldownMs;
       if (cooldownOk) {
         const isLow = await detectLowMood(userText);
-        console.log(`[情绪来电] user=${userId} affection=${affection} 情绪检测=${isLow ? "低落" : "正常"}`);
         if (isLow) {
           await dbRun("UPDATE sessions SET last_emotion_call_at = ? WHERE id = ?", [nowIso(), sessionId]);
+          console.log(`[情绪来电] user=${userId} affection=${affection} 触发安慰来电`);
           // 跳过 LLM 回复，直接触发来电
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
           res.write(`data: ${JSON.stringify({ done: true, msg_id: null, user_msg_id: Number(userMsgId), skip_reply: true })}\n\n`);
@@ -3139,8 +3150,6 @@ async function handleRequest(req, res) {
           triggerSpecialCall(sessionId, userId, "emotion", null, { skipSessionCooldown: true }).catch((e) => console.error("[情绪来电] 触发失败:", e.message));
           return;
         }
-      } else {
-        console.log(`[情绪来电] user=${userId} 冷却中（上次=\${toLocal(lastEmotionCallAt)}），跳过`);
       }
     }
 
@@ -3248,7 +3257,7 @@ async function handleRequest(req, res) {
 
     // 异步更新情绪和话题摘要（不阻塞响应）
     const updatedMsgs = await getMessages(sessionId);
-    updateMood(sessionId, updatedMsgs, userId).catch(() => {});
+    updateMood(sessionId, updatedMsgs, userId, Number(msgId)).catch(() => {});
     // 每 6 轮更新一次话题摘要
     const userMsgCount = updatedMsgs.filter((m) => m.role === "user").length;
     if (userMsgCount % 6 === 0 || userMsgCount <= 2) {
@@ -3402,7 +3411,51 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // GET /sessions/:id/events — 已迁移到 WebSocket，保留空路由兼容旧客户端
+  // POST /messages/:id/favorite — 收藏 / 取消收藏（限本人会话的消息）
+  const favMatch = pathname.match(/^\/messages\/(\d+)\/favorite$/);
+  if ((method === "POST" || method === "DELETE") && favMatch) {
+    const msgId = Number(favMatch[1]);
+    const own = await dbGet(
+      "SELECT m.id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE m.id = ? AND s.user_id = ?",
+      [msgId, userId]
+    );
+    if (!own) { send(res, 404, { error: "message not found" }); return; }
+    if (method === "POST") {
+      await dbRun("UPDATE messages SET favorited = 1, favorited_at = ? WHERE id = ?", [nowIso(), msgId]);
+      send(res, 200, { ok: true, favorited: 1 });
+    } else {
+      await dbRun("UPDATE messages SET favorited = 0, favorited_at = NULL WHERE id = ?", [msgId]);
+      send(res, 200, { ok: true, favorited: 0 });
+    }
+    return;
+  }
+
+  // GET /favorites?character=NAME — 收藏的消息列表（仅角色回复，按收藏时间倒序）
+  if (method === "GET" && pathname === "/favorites") {
+    const character = url.searchParams.get("character") || null;
+    let rows;
+    if (character) {
+      rows = await dbAll(
+        `SELECT m.id, m.session_id, m.content, m.image_url, m.character_name, m.created_at, m.favorited_at, m.tts_audio_url, m.mood, s.title
+         FROM messages m JOIN sessions s ON s.id = m.session_id
+         WHERE m.favorited = 1 AND m.role = 'assistant' AND m.character_name = ? AND s.user_id = ?
+         ORDER BY m.favorited_at DESC, m.id DESC`,
+        [character, userId]
+      );
+    } else {
+      rows = await dbAll(
+        `SELECT m.id, m.session_id, m.content, m.image_url, m.character_name, m.created_at, m.favorited_at, m.tts_audio_url, m.mood, s.title
+         FROM messages m JOIN sessions s ON s.id = m.session_id
+         WHERE m.favorited = 1 AND m.role = 'assistant' AND s.user_id = ?
+         ORDER BY m.favorited_at DESC, m.id DESC`,
+        [userId]
+      );
+    }
+    send(res, 200, rows);
+    return;
+  }
+
+
   const eventsMatch = pathname.match(/^\/sessions\/(\d+)\/events$/);
   if (method === "GET" && eventsMatch) {
     send(res, 410, { error: "SSE events endpoint removed, use WebSocket /ws" });
@@ -3642,7 +3695,7 @@ setInterval(async () => {
     }
     pushToSession(session.id, payload);
     const updatedMsgs = await getMessages(session.id);
-    updateMood(session.id, updatedMsgs, sessionUserId).catch(() => {});
+    updateMood(session.id, updatedMsgs, sessionUserId, Number(msgId)).catch(() => {});
   }
 
   // ── 日记生成：空闲 > 2 小时且未生成过日记的 session ──
@@ -3686,7 +3739,6 @@ setInterval(async () => {
   const activeSessionIds = [...sessionClients.entries()]
     .filter(([, set]) => set.size > 0)
     .map(([sid]) => Number(sid));
-  console.log(`[来电检测] activeSessionIds=${JSON.stringify(activeSessionIds)}`);
   if (activeSessionIds.length === 0) return;
 
   for (const sessionId of activeSessionIds) {
@@ -3719,13 +3771,13 @@ setInterval(async () => {
       [sessionId]
     );
     const lastUserAt = lastUserMsg?.last_user_at;
-    if (!lastUserAt) { console.log(`[来电跳过] session=${sessionId} 无用户消息`); continue; }
+    if (!lastUserAt) continue;
 
     const idleMs = now - new Date(lastUserAt).getTime();
-    if (idleMs < callIdleMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 空闲不足 ${Math.round(idleMs/60000)}/${callIdleMinutes}分钟`); continue; }
+    if (idleMs < callIdleMs) continue;
 
     // 冷却期
-    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 冷却中 last_call_at=${toLocal(session.last_call_at)}`); continue; }
+    if (session.last_call_at && (now - new Date(session.last_call_at).getTime()) < callCooldownMs) continue;
 
     // 今日该角色对话中的用户消息数
     const todayMsgs = await dbGet(`
@@ -3734,7 +3786,7 @@ setInterval(async () => {
       WHERE s.user_id = ? AND m.role = 'user' AND m.created_at LIKE ?
         AND EXISTS (SELECT 1 FROM messages WHERE session_id = m.session_id AND role = 'assistant' AND character_name = ?)
     `, [userId, `${today}%`, char.name]);
-    if ((todayMsgs?.n || 0) < callMinMessages) { console.log(`[来电跳过] session=${sessionId} char=${char.name} 今日消息数不足 ${todayMsgs?.n}/${callMinMessages}`); continue; }
+    if ((todayMsgs?.n || 0) < callMinMessages) continue;
 
       console.log(`[来电] user=${userId} char=${char.name} session=${session.id} reason=空闲 今日消息=${todayMsgs.n} 空闲=${Math.round(idleMs / 60000)}分钟 tts=${char.tts_enabled ? "on" : "off"}`);
       await dbRun("UPDATE sessions SET last_call_at = ? WHERE id = ?", [nowIso(), session.id]);
@@ -3919,6 +3971,57 @@ const DEFAULT_CHARACTER = {
   description: "《一拳超人》动漫中的地狱龙卷",
 };
 
+// 默认角色「龙卷」的预生成资产（来自 char id=49），新用户直接复用，避免重复生成浪费资源
+const DEFAULT_CHARACTER_ASSETS = {
+  voice_id: "cosyvoice-v3.5-plus-char49-57500d52c2e6416f8fb1c6975aa6738b",
+  voice_channel: "cosyvoice",
+  tts_enabled: 1,
+  appearance_hash: "38061f87",
+  avatars: {
+    angry: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780598286084_f5884408db7bad69.png",
+    annoyed: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780598096200_412f04c37c1e039b.png",
+    cold: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780599062023_6b709f230d411645.png",
+    flustered: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780597460042_00a03eb356eddf78.png",
+    happy: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780598759575_586b957361973fd8.png",
+    neutral: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780630837937_af3cf7884b65b1b5.png",
+    playful: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780584087271_598d1717ebe42c15.png",
+    shy: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780598975397_cb68afe0e70943b7.png",
+    soft: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780599843771_3d03d621bc884baf.png",
+  },
+  cards: [
+    { url: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780577832990_b6838a64b7051427.png", active: 0 },
+    { url: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780592412968_d5f56b9703322c90.png", active: 0 },
+    { url: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780592855792_5f73e48338da60cc.png", active: 1 },
+  ],
+};
+
+// 为默认角色（龙卷）写入预生成的头像/卡片/音色，避免新用户重复生成
+async function seedDefaultCharacterAssets(name, userId) {
+  if (name !== DEFAULT_CHARACTER.name) return; // 仅默认角色
+  const A = DEFAULT_CHARACTER_ASSETS;
+  const now = nowIso();
+  // 情绪头像
+  for (const [mood, url] of Object.entries(A.avatars)) {
+    await dbRun(
+      "INSERT IGNORE INTO mood_avatars (`character`, mood, image_url, appearance_hash, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [name, mood, url, A.appearance_hash, now, userId ?? null]
+    );
+  }
+  // 角色卡片
+  for (const c of A.cards) {
+    await dbRun(
+      "INSERT INTO character_cards (`character`, image_url, is_active, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+      [name, c.url, c.active ? 1 : 0, now, userId ?? null]
+    );
+  }
+  // 音色
+  await dbRun(
+    "UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = ? WHERE name = ? AND (user_id = ? OR (user_id IS NULL AND ? IS NULL))",
+    [A.voice_id, A.voice_channel, A.tts_enabled, name, userId ?? null, userId ?? null]
+  );
+}
+
+
 async function ensureDefaultCharacter(userId) {
   let countRow;
   if (userId != null) {
@@ -3948,6 +4051,8 @@ async function ensureDefaultCharacter(userId) {
     "INSERT IGNORE INTO characters (name, appearance, personality, description, soul_content, is_active, created_at, user_id) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
     [name, appearance, personality, description, remainingSoul, nowIso(), userId ?? null]
   );
+  // 默认角色「龙卷」：写入预生成的头像/卡片/音色，跳过生成
+  await seedDefaultCharacterAssets(name, userId);
   console.log(`已初始化默认角色：${name}`);
 }
 

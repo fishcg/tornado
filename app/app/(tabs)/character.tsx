@@ -12,7 +12,7 @@ import * as Haptics from "expo-haptics";
 import Swipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { api } from "@/api/client";
-import { IconHeart, IconGallery, IconSparkle, IconTrophy, IconPhone, IconImage, IconBack } from "@/components/Icons";
+import { IconHeart, IconGallery, IconSparkle, IconTrophy, IconPhone, IconImage, IconBack, IconBookmark } from "@/components/Icons";
 import { confirm, toast, actionSheet } from "@/components/Ui";
 
 type Character = { id: number; name: string; is_active: number; created_at: string; avatar_url?: string | null };
@@ -161,6 +161,10 @@ export default function CharacterTab() {
               <Pressable style={s.entry} onPress={() => router.push("/character/calls")}>
                 <View style={s.entryIconWrap}><IconPhone size={22} color="#7e6fd0" /></View>
                 <Text style={s.entryLabel}>来电</Text>
+              </Pressable>
+              <Pressable style={s.entry} onPress={() => router.push("/character/favorites")}>
+                <View style={s.entryIconWrap}><IconBookmark size={22} color="#f5b942" /></View>
+                <Text style={s.entryLabel}>收藏</Text>
               </Pressable>
             </View>
 

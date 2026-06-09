@@ -76,6 +76,7 @@ export default function RootLayout() {
         <Stack.Screen name="character/voice" />
         <Stack.Screen name="character/affection" />
         <Stack.Screen name="character/gallery" />
+        <Stack.Screen name="character/favorites" />
         <Stack.Screen name="character/milestones/index" />
         <Stack.Screen name="character/milestones/[id]" />
         <Stack.Screen name="character/calls/index" />

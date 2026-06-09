@@ -60,7 +60,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiBaseUrl": "https://tornado.acgay.cn",
+      "apiBaseUrl": "http://10.21.37.37:3011",
       "router": {},
       "eas": {
         "projectId": "50d39663-ed47-45f4-98a8-2f72fbb8350a"

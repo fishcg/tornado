@@ -373,4 +373,10 @@ export async function initDb() {
 
   // 公告：是否在用户打开软件时弹窗
   await ensureColumn(pool, "announcements", "popup", "INT NOT NULL DEFAULT 1");
+
+  // 消息收藏
+  await ensureColumn(pool, "messages", "favorited", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "messages", "favorited_at", "VARCHAR(64)");
+  // 消息生成时的情绪快照（用于收藏展示当时情绪）
+  await ensureColumn(pool, "messages", "mood", "VARCHAR(32)");
 }
