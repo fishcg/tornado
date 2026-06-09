@@ -2,42 +2,17 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import OpenAI from "../node_modules/openai/index.js";
 import OSS from "../node_modules/ali-oss/lib/client.js";
 import { getDb, closeDb, initDb } from "./db.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// ── 配置 ──────────────────────────────────────────────────────────────────────
-
-const PORT = Number(process.env.TORNADO_PORT || 3011);
-const MEMORY_API = process.env.MEMORY_API || "http://localhost:8880";
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.DASHSCOPE_API_KEY || "";
-const OPENAI_API_URL =
-  process.env.TORNADO_API_URL ||
-  "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const OPENAI_MODEL = process.env.TORNADO_MODEL || process.env.OPENAI_MODEL || "deepseek-v3.2";
-const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY || "";
-const DEEPSEEK_API_URL = process.env.DEEPSEEK_API_URL || "https://api.deepseek.com";
-const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || "deepseek-v4-pro";
-const IMAGE_API_URL = process.env.IMAGE_API_URL || "https://api.test.ai/openapi/v1/generate";
-const IMAGE_API_KEY = process.env.IMAGE_API_KEY || "";
-const SOUL_PATH = path.join(__dirname, "soul.md");
-const PUBLIC_DIR = path.join(__dirname, "public");
-const UPLOADS_DIR = path.join(PUBLIC_DIR, "uploads");
-// 主动发消息：空闲多久后触发（分钟），可通过环境变量覆盖
-const PROACTIVE_IDLE_MINUTES = Number(process.env.PROACTIVE_IDLE_MINUTES || 30);
-const WEATHER_CITY = process.env.WEATHER_CITY || "";
-const PASSWORD_SALT = process.env.PASSWORD_SALT || "tornado-default-salt-2025";
-const DEFAULT_INVITE_CODE = process.env.DEFAULT_INVITE_CODE || "tornado2025";
-
-const OSS_REGION = process.env.OSS_REGION || "";
-const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID || "";
-const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET || "";
-const OSS_BUCKET = process.env.OSS_BUCKET || "";
-const OSS_BASE_URL = process.env.OSS_BASE_URL || "";
+import {
+  PORT, MEMORY_API, OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
+  DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL, IMAGE_API_URL, IMAGE_API_KEY,
+  SOUL_PATH, PUBLIC_DIR, UPLOADS_DIR, PROACTIVE_IDLE_MINUTES, WEATHER_CITY,
+  PASSWORD_SALT, DEFAULT_INVITE_CODE,
+  OSS_REGION, OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_BUCKET, OSS_BASE_URL,
+  NEWAPI_API_KEY, NEWAPI_MODEL, openai, deepseek, newapi,
+} from "./lib/config.js";
 
 function getOssClient() {
   return new OSS({
@@ -258,25 +233,6 @@ async function saveUserSettings(userId, patch) {
     await dbRun("UPDATE characters SET voice_preview_url = NULL WHERE user_id = ?", [userId]);
   }
 }
-
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-  baseURL: OPENAI_API_URL
-});
-
-// DeepSeek 官方 API，用于主聊天对话
-const deepseek = new OpenAI({
-  apiKey: DEEPSEEK_API_KEY,
-  baseURL: DEEPSEEK_API_URL
-});
-
-// NewAPI — 仅 admin 可使用
-const NEWAPI_API_KEY = process.env.NEWAPI_API_KEY || "";
-const NEWAPI_MODEL = process.env.NEWAPI_MODEL || "grok-4.20-0309";
-const newapi = new OpenAI({
-  apiKey: NEWAPI_API_KEY,
-  baseURL: "https://api.glmbigmodel.me/v1"
-});
 
 // ── 工具 ──────────────────────────────────────────────────────────────────────
 
