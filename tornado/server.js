@@ -8,83 +8,22 @@ import {
   PORT, MEMORY_API, OPENAI_API_KEY, OPENAI_API_URL, OPENAI_MODEL,
   DEEPSEEK_API_KEY, DEEPSEEK_API_URL, DEEPSEEK_MODEL, IMAGE_API_URL, IMAGE_API_KEY,
   SOUL_PATH, PUBLIC_DIR, UPLOADS_DIR, PROACTIVE_IDLE_MINUTES, WEATHER_CITY,
-  PASSWORD_SALT, DEFAULT_INVITE_CODE,
+  DEFAULT_INVITE_CODE,
   NEWAPI_API_KEY, NEWAPI_MODEL, openai, deepseek, newapi,
 } from "./lib/config.js";
 import { dbGet, dbAll, dbRun } from "./lib/dbutil.js";
 import { uploadToOss } from "./lib/oss.js";
+import {
+  hashPassword, loadAuthSession, createAuthSession, deleteAuthSession,
+  getAuthSession, requireAuth, requireAdmin,
+} from "./lib/auth.js";
+import { getGlobalSetting, setGlobalSetting } from "./lib/settings.js";
+import { readBody, send, sendFile, sendHtmlWithAssetVersion } from "./lib/http.js";
 
 // ── 鉴权 ──────────────────────────────────────────────────────────────────────
-
-const authSessions = new Map(); // sid -> { userId, username }  内存缓存
-
-function hashPassword(password) {
-  return crypto.createHash("sha256").update(password + PASSWORD_SALT).digest("hex");
-}
-
-async function loadAuthSession(sid) {
-  if (!sid) return null;
-  const cached = authSessions.get(sid);
-  if (cached) return cached;
-  const row = await dbGet("SELECT user_id, username FROM auth_sessions WHERE sid = ?", [sid]);
-  if (!row) return null;
-  const sess = { userId: row.user_id, username: row.username };
-  authSessions.set(sid, sess);
-  return sess;
-}
-
-async function createAuthSession(userId, username) {
-  const sid = crypto.randomBytes(32).toString("hex");
-  const sess = { userId, username };
-  authSessions.set(sid, sess);
-  await dbRun("INSERT INTO auth_sessions (sid, user_id, username, created_at) VALUES (?, ?, ?, ?)",
-    [sid, userId, username, nowIso()]);
-  return sid;
-}
-
-async function deleteAuthSession(sid) {
-  if (!sid) return;
-  authSessions.delete(sid);
-  await dbRun("DELETE FROM auth_sessions WHERE sid = ?", [sid]);
-}
-
-async function getAuthSession(req) {
-  const auth = req.headers.authorization || req.headers.Authorization;
-  if (auth) {
-    const m = auth.match(/^Bearer\s+([A-Za-z0-9]+)$/i);
-    if (m) {
-      const sess = await loadAuthSession(m[1]);
-      if (sess) return sess;
-    }
-  }
-  const cookie = req.headers.cookie || "";
-  const match = cookie.match(/(?:^|;\s*)sid=([^;]+)/);
-  if (!match) return null;
-  return await loadAuthSession(match[1]);
-}
-
-async function requireAuth(req, res) {
-  const session = await getAuthSession(req);
-  if (!session) { send(res, 401, { error: "unauthorized" }); return null; }
-  return session;
-}
-
-async function requireAdmin(req, res) {
-  const session = await getAuthSession(req);
-  if (!session) { send(res, 401, { error: "unauthorized" }); return null; }
-  const user = await dbGet("SELECT is_admin FROM users WHERE id = ?", [session.userId]);
-  if (!user?.is_admin) { send(res, 403, { error: "forbidden" }); return null; }
-  return session;
-}
-
-async function getGlobalSetting(key, defaultValue = null) {
-  const row = await dbGet("SELECT value FROM global_settings WHERE `key` = ?", [key]);
-  return row ? row.value : defaultValue;
-}
-
-async function setGlobalSetting(key, value) {
-  await dbRun("INSERT INTO global_settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value=?", [key, String(value), String(value)]);
-}
+// hashPassword/loadAuthSession/createAuthSession/deleteAuthSession/getAuthSession/
+// requireAuth/requireAdmin 已抽到 lib/auth.js
+// getGlobalSetting/setGlobalSetting 已抽到 lib/settings.js
 
 // ── 客户端 UA 解析 & 版本比较 ──────────────────────────────────────────────────
 // 解析形如 "tornadoApp/0.1.0 (android 14)" 的 UA；非 App 客户端返回 null。
@@ -270,65 +209,6 @@ function extractSectionFromSoul(soul, header) {
     }
   }
   return buf.join("，") || null;
-}
-
-async function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk) => (data += chunk));
-    req.on("end", () => {
-      try {
-        resolve(data ? JSON.parse(data) : {});
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
-    });
-    req.on("error", reject);
-  });
-}
-
-function send(res, status, body) {
-  const payload = typeof body === "string" ? body : JSON.stringify(body);
-  const ct = typeof body === "string" ? "text/plain; charset=utf-8" : "application/json";
-  res.writeHead(status, { "Content-Type": ct, "Access-Control-Allow-Origin": "*" });
-  res.end(payload);
-}
-
-function sendFile(res, filePath) {
-  const ext = path.extname(filePath);
-  const mime = { ".html": "text/html", ".js": "application/javascript", ".css": "text/css" };
-  if (!fs.existsSync(filePath)) {
-    send(res, 404, "Not found");
-    return;
-  }
-  // HTML 完全不缓存（含静态资源版本号），JS/CSS 用强校验避免 iOS Safari 激进缓存
-  const cacheControl = ext === ".html"
-    ? "no-store, no-cache, must-revalidate"
-    : "no-cache, must-revalidate";
-  res.writeHead(200, { "Content-Type": mime[ext] || "text/plain", "Cache-Control": cacheControl });
-  fs.createReadStream(filePath).pipe(res);
-}
-
-function sendHtmlWithAssetVersion(res, htmlPath, publicDir) {
-  if (!fs.existsSync(htmlPath)) {
-    send(res, 404, "Not found");
-    return;
-  }
-  let html = fs.readFileSync(htmlPath, "utf8");
-  // 给 app.js / styles.css / auth.js 等本地静态资源注入 mtime 作为版本号，绕过浏览器缓存
-  const assets = ["app.js", "styles.css", "auth.js"];
-  for (const asset of assets) {
-    const assetPath = path.join(publicDir, asset);
-    if (!fs.existsSync(assetPath)) continue;
-    const v = Math.floor(fs.statSync(assetPath).mtimeMs);
-    const re = new RegExp(`(["'/])${asset.replace(".", "\\.")}(["'?])`, "g");
-    html = html.replace(re, (m, p1, p2) => p2 === "?" ? m : `${p1}${asset}?v=${v}${p2}`);
-  }
-  res.writeHead(200, {
-    "Content-Type": "text/html",
-    "Cache-Control": "no-store, no-cache, must-revalidate"
-  });
-  res.end(html);
 }
 
 // ── memory-ai ─────────────────────────────────────────────────────────────────
