@@ -2621,3 +2621,43 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   color: rgba(255,255,255,0.55);
   letter-spacing: 0.03em;
 }
+
+/* ── 小鱼干（积分） ── */
+.sidebar-points-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 0 12px 10px; padding: 8px 12px;
+  background: var(--accent-dim); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer; color: var(--text);
+  font-size: 14px; transition: background 0.15s;
+}
+.sidebar-points-bar:hover { background: var(--accent); color: #fff; }
+.points-bar-balance { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.points-bar-icon { font-size: 15px; }
+.points-bar-checkin {
+  font-size: 12px; padding: 2px 9px; border-radius: 10px;
+  background: var(--accent); color: #fff;
+}
+.points-bar-checkin.done { background: var(--surface2); color: var(--text-dim); }
+.sidebar-points-bar:hover .points-bar-checkin { background: #fff; color: var(--accent); }
+
+.checkin-summary {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 18px 0 22px; border-bottom: 1px solid var(--border);
+}
+.checkin-balance { font-size: 30px; font-weight: 700; color: var(--accent); display: flex; align-items: center; gap: 8px; }
+.checkin-streak { font-size: 13px; color: var(--text-dim); }
+.checkin-btn {
+  margin-top: 6px; padding: 9px 28px; border: none; border-radius: 10px;
+  background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.checkin-btn:disabled { background: var(--surface2); color: var(--text-dim); cursor: default; }
+.checkin-history-title { font-size: 13px; color: var(--text-dim); margin: 14px 0 8px; }
+.checkin-history { display: flex; flex-direction: column; gap: 6px; }
+.checkin-history-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; background: var(--surface2); border-radius: 8px; font-size: 13px;
+}
+.checkin-history-row .date { color: var(--text); }
+.checkin-history-row .streak { color: var(--text-dim); }
+.checkin-history-row .pts { color: var(--accent); font-weight: 600; }
+.checkin-history-empty { color: var(--text-dim); font-size: 13px; text-align: center; padding: 16px; }

@@ -10,6 +10,7 @@ import { confirm, toast } from "@/components/Ui";
 
 type AvatarMap = Record<string, string>;
 type Quota = { dailyLimit: number; usedToday: number; remaining: number };
+type PointsInfo = { enabled: boolean; balance: number; cost_avatar: number };
 
 type AvatarsResp = {
   character: string;
@@ -17,6 +18,7 @@ type AvatarsResp = {
   moods: string[];
   stale: boolean;
   quota: Quota;
+  points?: PointsInfo;
 };
 
 export default function AvatarsModal({
@@ -42,9 +44,12 @@ export default function AvatarsModal({
 
   const regenOne = async (mood: string) => {
     if (busyMood || !data) return;
+    const pts = data.points;
     const ok = await confirm({
       title: "重生成头像",
-      message: `将消耗 1 次配额（今日剩 ${data.quota.remaining}）。`,
+      message: pts?.enabled
+        ? `将消耗 ${pts.cost_avatar} 小鱼干（当前余额 ${pts.balance}）。`
+        : `将消耗 1 次配额（今日剩 ${data.quota.remaining}）。`,
     });
     if (!ok) return;
     setBusyMood(mood);
@@ -68,20 +73,24 @@ export default function AvatarsModal({
       }, 2500);
     } catch (e: any) {
       setBusyMood(null);
-      toast(e.message || "重生成失败", "err");
+      if (e?.status === 402) toast("小鱼干不足，去【我的】签到获取", "err");
+      else toast(e.message || "重生成失败", "err");
     }
   };
 
   const resetAll = async () => {
     if (!data) return;
     const cost = data.moods.length;
-    if (data.quota.remaining < cost) {
+    const pts = data.points;
+    if (!pts?.enabled && data.quota.remaining < cost) {
       toast(`配额不足，今日剩 ${data.quota.remaining}`, "err");
       return;
     }
     const ok = await confirm({
       title: "一键重置",
-      message: `将删除全部 ${cost} 张并重新生成（消耗 ${cost} 次配额）。`,
+      message: pts?.enabled
+        ? `将删除全部 ${cost} 张并重新生成（消耗 ${cost * pts.cost_avatar} 小鱼干，当前余额 ${pts.balance}）。`
+        : `将删除全部 ${cost} 张并重新生成（消耗 ${cost} 次配额）。`,
       confirmText: "重置",
       destructive: true,
     });
@@ -92,7 +101,8 @@ export default function AvatarsModal({
       await load();
       toast("已开始重新生成");
     } catch (e: any) {
-      toast(e.message || "失败", "err");
+      if (e?.status === 402) toast("小鱼干不足，去【我的】签到获取", "err");
+      else toast(e.message || "失败", "err");
     } finally { setResetting(false); }
   };
 
@@ -113,7 +123,9 @@ export default function AvatarsModal({
           <>
             <View style={s.quotaBar}>
               <Text style={s.quotaText}>
-                {data.character} · 今日剩 {data.quota.remaining}/{data.quota.dailyLimit}
+                {data.points?.enabled
+                  ? `${data.character} · 🐟 ${data.points.balance}（每张 ${data.points.cost_avatar}）`
+                  : `${data.character} · 今日剩 ${data.quota.remaining}/${data.quota.dailyLimit}`}
               </Text>
               <Pressable
                 onPress={resetAll}

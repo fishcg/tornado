@@ -4,4 +4,6 @@ memory.db
 tmp
 .claude/
 .idea/
-.codegrqaph/
+.codegraph/
+tornado/public/uploads/
+tornado/public/images/logo.orig.png

@@ -83,6 +83,7 @@ export default function RootLayout() {
         <Stack.Screen name="achievements/index" />
         <Stack.Screen name="achievements/[id]" />
         <Stack.Screen name="announcements/index" />
+        <Stack.Screen name="points/history" />
       </Stack>
       <UiHost />
       <AchievementHost />

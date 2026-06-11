@@ -8,6 +8,7 @@ import { baseUrl, clientHeaders, loadToken, appVersion } from "@/api/client";
 import { api } from "@/api/client";
 import { useAuth } from "@/store/auth";
 import { useAnnouncements } from "@/store/announcements";
+import { usePoints } from "@/store/points";
 import { confirm, toast, actionSheet, hapticLight } from "@/components/Ui";
 
 export default function Me() {
@@ -15,9 +16,27 @@ export default function Me() {
   const { username, avatarUrl, logout, setAvatarUrl } = useAuth();
   const unreadCount = useAnnouncements((s) => s.unreadCount);
   const loadUnreadCount = useAnnouncements((s) => s.loadUnreadCount);
+  const { balance, enabled, checkedToday, streak, todayReward, loadCheckinStatus, checkin } = usePoints();
+  const [checkingIn, setCheckingIn] = useState(false);
   const [uploading, setUploading] = useState(false);
-  useFocusEffect(useCallback(() => { loadUnreadCount(); }, [loadUnreadCount]));
+  useFocusEffect(useCallback(() => { loadUnreadCount(); loadCheckinStatus(); }, [loadUnreadCount, loadCheckinStatus]));
   const busyRef = useRef(false);
+
+  const onCheckin = async () => {
+    if (checkingIn || checkedToday) return;
+    setCheckingIn(true);
+    try {
+      const r = await checkin();
+      if (r.ok) {
+        hapticLight();
+        toast(`签到成功，+${r.points} 小鱼干`);
+      } else {
+        toast(r.error || "签到失败", "err");
+      }
+    } finally {
+      setCheckingIn(false);
+    }
+  };
 
   const onLogout = async () => {
     await logout();
@@ -111,6 +130,32 @@ export default function Me() {
         <Text style={s.hint}>点击头像更换</Text>
       </View>
 
+      {enabled ? (
+        <View style={s.pointsCard}>
+          <View style={s.pointsTop}>
+            <View>
+              <Text style={s.pointsLabel}>🐟 小鱼干余额</Text>
+              <Text style={s.pointsBalance}>{balance}</Text>
+            </View>
+            <Pressable
+              style={[s.checkinBtn, checkedToday && s.checkinBtnDone]}
+              onPress={onCheckin}
+              disabled={checkedToday || checkingIn}
+            >
+              {checkingIn
+                ? <ActivityIndicator color="#fff" size="small" />
+                : <Text style={s.checkinBtnText}>{checkedToday ? "今日已签" : `签到 +${todayReward}`}</Text>}
+            </Pressable>
+          </View>
+          <View style={s.pointsBottom}>
+            <Text style={s.streakText}>已连续签到 {streak} 天</Text>
+            <Pressable onPress={() => router.push("/points/history")}>
+              <Text style={s.recordLink}>签到记录 ›</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
       <Pressable style={s.entry} onPress={() => router.push("/announcements")}>
         <Text style={s.entryLabel}>系统通知</Text>
         <View style={s.entryRight}>
@@ -162,6 +207,17 @@ const s = StyleSheet.create({
   editBadgeText: { color: "#fff", fontSize: 11, fontWeight: "600" },
   username: { color: "#fff", fontSize: 18, fontWeight: "600" },
   hint: { color: "#888", fontSize: 12, marginTop: 4 },
+
+  pointsCard: { backgroundColor: "#1c1c2a", borderRadius: 12, padding: 18, marginBottom: 16 },
+  pointsTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  pointsLabel: { color: "#888", fontSize: 13 },
+  pointsBalance: { color: "#7e6fd0", fontSize: 30, fontWeight: "700", marginTop: 4 },
+  checkinBtn: { backgroundColor: "#7e6fd0", paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10, minWidth: 96, alignItems: "center" },
+  checkinBtnDone: { backgroundColor: "#2a2a3a" },
+  checkinBtnText: { color: "#fff", fontWeight: "600", fontSize: 14 },
+  pointsBottom: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 14 },
+  streakText: { color: "#bbb", fontSize: 13 },
+  recordLink: { color: "#7e6fd0", fontSize: 13 },
 
   btn: { backgroundColor: "#7e6fd0", padding: 14, borderRadius: 10, alignItems: "center", marginTop: 24 },
   btnText: { color: "#fff", fontWeight: "600" },

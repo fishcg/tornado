@@ -31,7 +31,11 @@ export default function NewCharacter() {
       });
       router.back();
     } catch (e: any) {
-      toast(e.message || "创建失败", "err");
+      if (e?.status === 402) {
+        toast("小鱼干不足，去【我的】签到获取", "err");
+      } else {
+        toast(e.message || "创建失败", "err");
+      }
     } finally { setBusy(false); }
   };
 

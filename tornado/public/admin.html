@@ -131,6 +131,14 @@
       border-color: var(--accent, #7c6fcd);
     }
     .admin-form .row { display: flex; gap: 8px; align-items: flex-end; }
+    .points-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, max-content)); gap: 8px 24px; }
+    .points-grid label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim, #888); }
+    .points-grid label input { width: 64px; flex: none; margin-bottom: 0; }
+    .points-query-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+    .points-query-tab { padding: 6px 16px; border: 1px solid var(--border, #2a2a35); background: var(--surface2, #1a1a1e); color: var(--text-dim, #888); border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .points-query-tab.active { background: var(--accent, #7c6fcd); border-color: var(--accent, #7c6fcd); color: #fff; }
+    .points-query-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+    .points-query-pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 12px; }
     .admin-form .row input { margin-bottom: 0; }
     .btn-sm {
       padding: 6px 14px;
@@ -291,6 +299,7 @@
       <button class="admin-nav-item" data-section="announcements">公告管理</button>
       <button class="admin-nav-item" data-section="achievements">成就管理</button>
       <button class="admin-nav-item" data-section="app-versions">App 版本</button>
+      <button class="admin-nav-item" data-section="points">积分管理</button>
       <button class="admin-nav-item" data-section="system">系统设置</button>
     </div>
   </nav>
@@ -438,6 +447,88 @@
         <thead><tr><th>版本号</th><th>强制</th><th>大小</th><th>发布时间</th><th>启用</th><th>操作</th></tr></thead>
         <tbody id="ver-list"></tbody>
       </table>
+    </section>
+
+    <section id="section-points" class="admin-section">
+      <h2>积分管理</h2>
+      <div class="admin-form">
+        <h3>小鱼干系统总开关</h3>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="pointsEnabledToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="pointsEnabledToggle">开启积分系统（关闭后全系统旁路，不扣费不拦截）</label>
+        </div>
+        <h3 style="margin-top:16px">消耗规则（每次扣除的小鱼干）</h3>
+        <div class="points-grid">
+          <label>普通聊天 <input type="number" id="costChat" min="0" max="9999"></label>
+          <label>带语音聊天 <input type="number" id="costChatVoice" min="0" max="9999"></label>
+          <label>场景插图 / 角色卡片 <input type="number" id="costImage" min="0" max="9999"></label>
+          <label>情绪头像（每张） <input type="number" id="costAvatar" min="0" max="9999"></label>
+          <label>创建角色 <input type="number" id="costCreateCharacter" min="0" max="9999"></label>
+        </div>
+        <h3 style="margin-top:16px">获取规则</h3>
+        <div class="points-grid">
+          <label>注册赠送 <input type="number" id="signupBonus" min="0" max="99999"></label>
+          <label>每日签到基础分 <input type="number" id="checkinBase" min="0" max="9999"></label>
+          <label>连续签到每天加成 <input type="number" id="checkinStreakBonus" min="0" max="9999"></label>
+          <label>连续加成封顶天数 <input type="number" id="checkinStreakCap" min="0" max="999"></label>
+        </div>
+        <button class="btn-sm btn-primary" id="savePointsBtn" style="margin-top:14px">保存</button>
+      </div>
+
+      <div class="admin-form">
+        <h3>用户积分查询 / 调整</h3>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <input type="text" id="pointsLookupUsername" placeholder="用户名" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <button class="btn-sm btn-primary" id="pointsLookupBtn">查询</button>
+        </div>
+        <div id="pointsUserResult" style="margin-top:14px;display:none">
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <span style="font-size:15px">余额：<strong id="pointsUserBalance" style="color:var(--accent,#7c6fcd)">—</strong> 🐟</span>
+            <input type="number" id="pointsAdjustDelta" placeholder="加/减（如 50 或 -20）" style="width:160px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <button class="btn-sm" id="pointsAdjustBtn">调整</button>
+          </div>
+          <h4 style="margin:14px 0 6px;color:var(--text-dim);font-size:13px">近期流水</h4>
+          <table class="admin-table"><tbody id="pointsTxList"></tbody></table>
+        </div>
+      </div>
+
+      <div class="admin-form">
+        <h3>全局查询</h3>
+        <div class="points-query-tabs">
+          <button class="points-query-tab active" data-qtab="tx">流水</button>
+          <button class="points-query-tab" data-qtab="checkin">签到记录</button>
+        </div>
+        <div class="points-query-filters">
+          <input type="text" id="pqUsername" placeholder="用户名（可空）" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <select id="pqReason" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+            <option value="">全部类型</option>
+            <option value="chat">聊天</option>
+            <option value="chat_voice">语音聊天</option>
+            <option value="image">插图/卡片</option>
+            <option value="avatar">情绪头像</option>
+            <option value="create_character">创建角色</option>
+            <option value="checkin">签到</option>
+            <option value="signup">注册赠送</option>
+            <option value="admin_adjust">管理员调整</option>
+            <option value="refund_image">插图退款</option>
+            <option value="refund_avatar">头像退款</option>
+            <option value="refund_create_character">创建退款</option>
+          </select>
+          <button class="btn-sm btn-primary" id="pqSearchBtn">查询</button>
+        </div>
+        <table class="admin-table">
+          <thead id="pqHead"></thead>
+          <tbody id="pqList"></tbody>
+        </table>
+        <div class="points-query-pager">
+          <button class="btn-sm" id="pqPrev">上一页</button>
+          <span id="pqPageInfo" style="color:var(--text-dim);font-size:13px">第 1 页</span>
+          <button class="btn-sm" id="pqNext">下一页</button>
+        </div>
+      </div>
     </section>
 
     <section id="section-system" class="admin-section">
@@ -593,6 +684,7 @@ function loadSection(name) {
   else if (name === "announcements") loadAnnouncements();
   else if (name === "achievements") loadAchievements();
   else if (name === "app-versions") loadAppVersions();
+  else if (name === "points") loadPoints();
   else if (name === "system") loadSystem();
 }
 
@@ -856,6 +948,138 @@ document.getElementById("saveSoulBtn").addEventListener("click", async () => {
   const data = await api("/admin/soul", { method: "PATCH", body: JSON.stringify({ soul }) });
   if (data) showMsg("Soul 已保存");
 });
+
+// ── 积分管理 ──────────────────────────────────────────────────────────────────
+const POINT_REASON_LABELS = {
+  chat: "聊天", chat_voice: "语音聊天", image: "插图/卡片", avatar: "情绪头像",
+  create_character: "创建角色", checkin: "签到", signup: "注册赠送",
+  admin_adjust: "管理员调整", refund_image: "插图退款", refund_avatar: "头像退款",
+  refund_create_character: "创建退款",
+};
+
+async function loadPoints() {
+  const s = await api("/admin/global-settings");
+  if (!s) return;
+  document.getElementById("pointsEnabledToggle").checked = s.points_enabled !== "0";
+  document.getElementById("costChat").value = s.cost_chat ?? "1";
+  document.getElementById("costChatVoice").value = s.cost_chat_voice ?? "3";
+  document.getElementById("costImage").value = s.cost_image ?? "5";
+  document.getElementById("costAvatar").value = s.cost_avatar ?? "3";
+  document.getElementById("costCreateCharacter").value = s.cost_create_character ?? "20";
+  document.getElementById("signupBonus").value = s.signup_bonus ?? "100";
+  document.getElementById("checkinBase").value = s.checkin_base ?? "10";
+  document.getElementById("checkinStreakBonus").value = s.checkin_streak_bonus ?? "2";
+  document.getElementById("checkinStreakCap").value = s.checkin_streak_cap ?? "7";
+  _pqOffset = 0;
+  runPointsQuery();
+}
+
+document.getElementById("savePointsBtn").addEventListener("click", async () => {
+  const body = {
+    points_enabled: document.getElementById("pointsEnabledToggle").checked,
+    cost_chat: Number(document.getElementById("costChat").value) || 0,
+    cost_chat_voice: Number(document.getElementById("costChatVoice").value) || 0,
+    cost_image: Number(document.getElementById("costImage").value) || 0,
+    cost_avatar: Number(document.getElementById("costAvatar").value) || 0,
+    cost_create_character: Number(document.getElementById("costCreateCharacter").value) || 0,
+    signup_bonus: Number(document.getElementById("signupBonus").value) || 0,
+    checkin_base: Number(document.getElementById("checkinBase").value) || 0,
+    checkin_streak_bonus: Number(document.getElementById("checkinStreakBonus").value) || 0,
+    checkin_streak_cap: Number(document.getElementById("checkinStreakCap").value) || 0,
+  };
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify(body) });
+  if (data) showMsg("已保存");
+});
+
+let _pointsLookupUser = null;
+async function doPointsLookup() {
+  const username = document.getElementById("pointsLookupUsername").value.trim();
+  if (!username) return;
+  const data = await api("/admin/points/user?username=" + encodeURIComponent(username));
+  if (!data || data.error) { showMsg("用户不存在", false); document.getElementById("pointsUserResult").style.display = "none"; return; }
+  _pointsLookupUser = data.user_id;
+  document.getElementById("pointsUserResult").style.display = "block";
+  document.getElementById("pointsUserBalance").textContent = data.balance;
+  const tx = data.transactions || [];
+  const tbody = document.getElementById("pointsTxList");
+  tbody.innerHTML = tx.length
+    ? tx.map((t) => `<tr><td>${(t.created_at || "").slice(0, 19).replace("T", " ")}</td><td>${POINT_REASON_LABELS[t.reason] || t.reason}</td><td style="color:${t.delta >= 0 ? "#56c596" : "#e07b54"}">${t.delta >= 0 ? "+" : ""}${t.delta}</td><td style="color:var(--text-dim)">${t.balance_after}</td></tr>`).join("")
+    : '<tr><td colspan="4" style="color:var(--text-dim);text-align:center;padding:12px">暂无流水</td></tr>';
+}
+document.getElementById("pointsLookupBtn").addEventListener("click", doPointsLookup);
+document.getElementById("pointsLookupUsername").addEventListener("keydown", (e) => { if (e.key === "Enter") doPointsLookup(); });
+
+document.getElementById("pointsAdjustBtn").addEventListener("click", async () => {
+  if (!_pointsLookupUser) return;
+  const delta = Number(document.getElementById("pointsAdjustDelta").value);
+  if (!delta) { showMsg("请输入调整数值", false); return; }
+  const data = await api("/admin/points/adjust", { method: "POST", body: JSON.stringify({ user_id: _pointsLookupUser, delta }) });
+  if (data && data.ok) {
+    showMsg("已调整");
+    document.getElementById("pointsAdjustDelta").value = "";
+    doPointsLookup();
+  } else {
+    showMsg(data && data.error === "balance_insufficient" ? "余额不足，无法扣减" : "调整失败", false);
+  }
+});
+
+// 全局流水 / 签到查询
+let _pqTab = "tx";
+let _pqOffset = 0;
+const PQ_LIMIT = 50;
+
+function pqRenderHead() {
+  const head = document.getElementById("pqHead");
+  head.innerHTML = _pqTab === "tx"
+    ? "<tr><th>时间</th><th>用户</th><th>类型</th><th>变动</th><th>余额</th></tr>"
+    : "<tr><th>时间</th><th>用户</th><th>签到日</th><th>积分</th><th>连续</th></tr>";
+}
+
+async function runPointsQuery() {
+  pqRenderHead();
+  const username = document.getElementById("pqUsername").value.trim();
+  const tbody = document.getElementById("pqList");
+  const colspan = 5;
+  let rows = [];
+  if (_pqTab === "tx") {
+    const reason = document.getElementById("pqReason").value;
+    const qs = new URLSearchParams({ limit: PQ_LIMIT, offset: _pqOffset });
+    if (username) qs.set("username", username);
+    if (reason) qs.set("reason", reason);
+    const data = await api("/admin/points/transactions?" + qs.toString());
+    rows = (data && data.rows) || [];
+    tbody.innerHTML = rows.length
+      ? rows.map((t) => `<tr><td>${fmtDate(t.created_at)}</td><td>${t.username || "#" + t.user_id}</td><td>${POINT_REASON_LABELS[t.reason] || t.reason}</td><td style="color:${t.delta >= 0 ? "#56c596" : "#e07b54"}">${t.delta >= 0 ? "+" : ""}${t.delta}</td><td style="color:var(--text-dim)">${t.balance_after}</td></tr>`).join("")
+      : `<tr><td colspan="${colspan}" style="color:var(--text-dim);text-align:center;padding:16px">暂无数据</td></tr>`;
+  } else {
+    const qs = new URLSearchParams({ limit: PQ_LIMIT, offset: _pqOffset });
+    if (username) qs.set("username", username);
+    const data = await api("/admin/points/checkins?" + qs.toString());
+    rows = (data && data.rows) || [];
+    tbody.innerHTML = rows.length
+      ? rows.map((c) => `<tr><td>${fmtDate(c.created_at)}</td><td>${c.username || "#" + c.user_id}</td><td>${c.checkin_date}</td><td style="color:#56c596">+${c.points}</td><td style="color:var(--text-dim)">${c.streak} 天</td></tr>`).join("")
+      : `<tr><td colspan="${colspan}" style="color:var(--text-dim);text-align:center;padding:16px">暂无数据</td></tr>`;
+  }
+  const page = Math.floor(_pqOffset / PQ_LIMIT) + 1;
+  document.getElementById("pqPageInfo").textContent = `第 ${page} 页`;
+  document.getElementById("pqPrev").disabled = _pqOffset === 0;
+  document.getElementById("pqNext").disabled = rows.length < PQ_LIMIT;
+}
+
+document.querySelectorAll(".points-query-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".points-query-tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    _pqTab = btn.dataset.qtab;
+    _pqOffset = 0;
+    document.getElementById("pqReason").style.display = _pqTab === "tx" ? "" : "none";
+    runPointsQuery();
+  });
+});
+document.getElementById("pqSearchBtn").addEventListener("click", () => { _pqOffset = 0; runPointsQuery(); });
+document.getElementById("pqUsername").addEventListener("keydown", (e) => { if (e.key === "Enter") { _pqOffset = 0; runPointsQuery(); } });
+document.getElementById("pqPrev").addEventListener("click", () => { if (_pqOffset > 0) { _pqOffset -= PQ_LIMIT; runPointsQuery(); } });
+document.getElementById("pqNext").addEventListener("click", () => { _pqOffset += PQ_LIMIT; runPointsQuery(); });
 
 // ── 成就管理 ──────────────────────────────────────────────────────────────────
 const ACH_TYPE_LABELS = { message_count: "消息数", affection: "心动值", streak_days: "连续天数" };

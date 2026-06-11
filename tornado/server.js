@@ -29,6 +29,13 @@ import {
   translateToJapanese, synthesizeSpeech,
   cloneVoiceQwenOmni, deleteVoiceQwenOmni, synthesizeSpeechQwenOmni,
 } from "./lib/voice.js";
+import {
+  POINT_DEFAULTS, getConfig as getPointConfig, isEnabled as pointsEnabled,
+  getAllConfig as getAllPointConfig, ensureAccount as ensurePointAccount,
+  getBalance as getPointBalance, spend as spendPoints, grant as grantPoints,
+  refund as refundPoints, getCheckinStatus, checkin as doCheckin,
+  listCheckins, listCheckinsByMonth, listTransactions,
+} from "./lib/points.js";
 
 // ── 鉴权 ──────────────────────────────────────────────────────────────────────
 // hashPassword/loadAuthSession/createAuthSession/deleteAuthSession/getAuthSession/
@@ -479,7 +486,7 @@ async function getAvatarQuotaInfo(userId) {
   return { dailyLimit, usedToday, remaining: Math.max(0, dailyLimit - usedToday) };
 }
 
-async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId, aspectRatio = null } = {}) {
+async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId, aspectRatio = null, refund = null } = {}) {
   pendingImages.add(msgId);
   await updateMessageImagePrompt(msgId, prompt);
   const sanitized = sanitizeImagePrompt(prompt);
@@ -501,9 +508,19 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
         }
       }
     })
-    .catch((err) => {
+    .catch(async (err) => {
       console.error(`生图失败 [msg ${msgId}]:`, err.message);
       pushToSession(sessionId, { image_failed: true, msg_id: msgId });
+      // 异步生成失败 → 退还已扣的小鱼干（按 reason+ref 幂等）
+      if (refund && userId) {
+        try {
+          await refundPoints(userId, refund.amount, refund.reason, refund.ref);
+          console.log(`[退款] 生图失败退还 ${refund.amount} 小鱼干 [msg ${msgId}]`);
+          pushToUser(userId, { points_refunded: true, amount: refund.amount });
+        } catch (e) {
+          console.error(`[退款] 失败 [msg ${msgId}]:`, e.message);
+        }
+      }
     })
     .finally(() => {
       pendingImages.delete(msgId);
@@ -1437,6 +1454,7 @@ async function handleRequest(req, res) {
     const userId = result.insertId;
     await dbRun("INSERT INTO user_settings (user_id) VALUES (?)", [userId]);
     await ensureDefaultCharacter(userId);
+    await ensurePointAccount(userId); // 注册赠送初始小鱼干（写 signup 流水）
     const sid = await createAuthSession(userId, username);
     res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": `sid=${sid}; HttpOnly; Path=/; SameSite=Lax` });
     res.end(JSON.stringify({ ok: true, username, is_new_user: true, token: sid }));
@@ -1828,7 +1846,8 @@ async function handleRequest(req, res) {
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
         call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
         multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0"),
-        app_min_version: await getGlobalSetting("app_min_version", "")
+        app_min_version: await getGlobalSetting("app_min_version", ""),
+        ...(await getAllPointConfig())
       });
       return;
     }
@@ -1886,6 +1905,16 @@ async function handleRequest(req, res) {
           await setGlobalSetting("app_min_version", v);
         }
       }
+      // 积分管理配置
+      if ("points_enabled" in body) {
+        await setGlobalSetting("points_enabled", body.points_enabled ? "1" : "0");
+      }
+      for (const key of ["cost_chat", "cost_chat_voice", "cost_image", "cost_avatar", "cost_create_character", "signup_bonus", "checkin_base", "checkin_streak_bonus", "checkin_streak_cap"]) {
+        if (key in body) {
+          const n = Math.max(0, Math.floor(Number(body[key]) || 0));
+          await setGlobalSetting(key, String(n));
+        }
+      }
       send(res, 200, {
         chat_image_enabled: await getGlobalSetting("chat_image_enabled", "1"),
         daily_scene_image_limit: await getGlobalSetting("daily_scene_image_limit", "5"),
@@ -1901,7 +1930,8 @@ async function handleRequest(req, res) {
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
         call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
         multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0"),
-        app_min_version: await getGlobalSetting("app_min_version", "")
+        app_min_version: await getGlobalSetting("app_min_version", ""),
+        ...(await getAllPointConfig())
       });
       return;
     }
@@ -1961,6 +1991,82 @@ async function handleRequest(req, res) {
       }
     }
 
+    // GET /admin/points/user?username= — 查某用户余额 + 近期流水
+    if (method === "GET" && pathname === "/admin/points/user") {
+      const username = String(url.searchParams.get("username") || "").trim();
+      if (!username) { send(res, 400, { error: "username required" }); return; }
+      const user = await dbGet("SELECT id, username FROM users WHERE username = ?", [username]);
+      if (!user) { send(res, 404, { error: "user not found" }); return; }
+      const balance = await getPointBalance(user.id);
+      const transactions = await listTransactions(user.id, 50);
+      const checkins = await listCheckins(user.id, 15);
+      send(res, 200, { user_id: user.id, username: user.username, balance, transactions, checkins });
+      return;
+    }
+
+    // POST /admin/points/adjust — 手动加减积分（reason=admin_adjust，写流水）
+    if (method === "POST" && pathname === "/admin/points/adjust") {
+      const body = await readBody(req);
+      let targetUserId = Number(body.user_id) || null;
+      if (!targetUserId && body.username) {
+        const u = await dbGet("SELECT id FROM users WHERE username = ?", [String(body.username).trim()]);
+        targetUserId = u?.id || null;
+      }
+      const delta = Math.floor(Number(body.delta) || 0);
+      if (!targetUserId) { send(res, 400, { error: "user_id or username required" }); return; }
+      if (!delta) { send(res, 400, { error: "delta required" }); return; }
+      if (delta < 0) {
+        // 扣减：余额不足时拒绝（避免负余额）
+        const r = await spendPoints(targetUserId, -delta, "admin_adjust", null);
+        if (!r.ok && !r.bypassed) { send(res, 400, { error: "balance_insufficient", balance: r.balance }); return; }
+      } else {
+        await grantPoints(targetUserId, delta, "admin_adjust", null);
+      }
+      const balance = await getPointBalance(targetUserId);
+      send(res, 200, { ok: true, balance });
+      return;
+    }
+
+    // GET /admin/points/transactions — 全局流水查询（可选 reason / username 过滤 + 分页）
+    if (method === "GET" && pathname === "/admin/points/transactions") {
+      const reason = String(url.searchParams.get("reason") || "").trim();
+      const username = String(url.searchParams.get("username") || "").trim();
+      const limit = Math.max(1, Math.min(200, Math.floor(Number(url.searchParams.get("limit")) || 50)));
+      const offset = Math.max(0, Math.floor(Number(url.searchParams.get("offset")) || 0));
+      const where = [];
+      const params = [];
+      if (reason) { where.push("t.reason = ?"); params.push(reason); }
+      if (username) { where.push("u.username = ?"); params.push(username); }
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const rows = await dbAll(
+        `SELECT t.id, t.user_id, u.username, t.delta, t.balance_after, t.reason, t.ref, t.created_at
+         FROM point_transactions t LEFT JOIN users u ON u.id = t.user_id
+         ${whereSql} ORDER BY t.id DESC LIMIT ${limit} OFFSET ${offset}`,
+        params
+      );
+      send(res, 200, { rows, limit, offset });
+      return;
+    }
+
+    // GET /admin/points/checkins — 全局签到记录查询（可选 username 过滤 + 分页）
+    if (method === "GET" && pathname === "/admin/points/checkins") {
+      const username = String(url.searchParams.get("username") || "").trim();
+      const limit = Math.max(1, Math.min(200, Math.floor(Number(url.searchParams.get("limit")) || 50)));
+      const offset = Math.max(0, Math.floor(Number(url.searchParams.get("offset")) || 0));
+      const where = [];
+      const params = [];
+      if (username) { where.push("u.username = ?"); params.push(username); }
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const rows = await dbAll(
+        `SELECT c.id, c.user_id, u.username, c.checkin_date, c.points, c.streak, c.created_at
+         FROM daily_checkins c LEFT JOIN users u ON u.id = c.user_id
+         ${whereSql} ORDER BY c.id DESC LIMIT ${limit} OFFSET ${offset}`,
+        params
+      );
+      send(res, 200, { rows, limit, offset });
+      return;
+    }
+
     send(res, 404, { error: "not found" });
     return;
   }
@@ -2000,19 +2106,21 @@ async function handleRequest(req, res) {
       if (row.appearance_hash !== appearanceHash) stale = true;
     }
     const quota = await getAvatarQuotaInfo(userId);
-    send(res, 200, { character: name, avatars, stale, moods: Object.keys(MOOD_AVATAR_PROMPTS), quota });
+    const points = { enabled: await pointsEnabled(), balance: await getPointBalance(userId), cost_avatar: await getPointConfig("cost_avatar") };
+    send(res, 200, { character: name, avatars, stale, moods: Object.keys(MOOD_AVATAR_PROMPTS), quota, points });
     return;
   }
 
-  // POST /avatars/regenerate — 一键重置：删除全部头像 + 重新生成（消耗对应数量配额）
+  // POST /avatars/regenerate — 一键重置：删除全部头像 + 重新生成（按张数 × cost_avatar 扣）
   if (method === "POST" && pathname === "/avatars/regenerate") {
     const name = await getCharacterName(userId);
     if (!name) { send(res, 400, { error: "no character" }); return; }
     const moods = Object.keys(MOOD_AVATAR_PROMPTS);
-    const ok = await consumeDailyAvatarQuota(userId, moods.length);
-    if (!ok) {
-      const q = await getAvatarQuotaInfo(userId);
-      send(res, 429, { error: `今日头像配额不足（${q.usedToday}/${q.dailyLimit}）` });
+    const avatarCost = await getPointConfig("cost_avatar");
+    const totalCost = avatarCost * moods.length;
+    const spendRes = await spendPoints(userId, totalCost, "avatar", `regen_all:${name}`);
+    if (!spendRes.ok) {
+      send(res, 402, { error: "points_insufficient", need: totalCost, balance: spendRes.balance });
       return;
     }
     await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
@@ -2028,16 +2136,24 @@ async function handleRequest(req, res) {
     if (!MOOD_AVATAR_PROMPTS[mood]) { send(res, 400, { error: "unknown mood" }); return; }
     const name = await getCharacterName(userId);
     if (!name) { send(res, 400, { error: "no character" }); return; }
-    const ok = await consumeDailyAvatarQuota(userId, 1);
-    if (!ok) {
-      const q = await getAvatarQuotaInfo(userId);
-      send(res, 429, { error: `今日头像配额不足（${q.usedToday}/${q.dailyLimit}）` });
+    const avatarCost = await getPointConfig("cost_avatar");
+    const spendRes = await spendPoints(userId, avatarCost, "avatar", `regen:${name}:${mood}`);
+    if (!spendRes.ok) {
+      send(res, 402, { error: "points_insufficient", need: avatarCost, balance: spendRes.balance });
       return;
     }
     await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [name, mood, userId]);
-    generateMoodAvatar(mood, userId).then((url) => {
-      if (url) pushToUser(userId, { mood_avatar_update: true, mood, avatar_url: url });
-    }).catch(() => {});
+    generateMoodAvatar(mood, userId).then(async (url) => {
+      if (url) {
+        pushToUser(userId, { mood_avatar_update: true, mood, avatar_url: url });
+      } else {
+        await refundPoints(userId, avatarCost, "refund_avatar", `regen:${name}:${mood}:${Date.now()}`);
+        pushToUser(userId, { points_refunded: true, amount: avatarCost });
+      }
+    }).catch(async () => {
+      await refundPoints(userId, avatarCost, "refund_avatar", `regen:${name}:${mood}:${Date.now()}`);
+      pushToUser(userId, { points_refunded: true, amount: avatarCost });
+    });
     send(res, 202, { ok: true });
     return;
   }
@@ -2060,9 +2176,21 @@ async function handleRequest(req, res) {
 
   // POST /character/cards/generate — 强制生成新卡片
   if (method === "POST" && pathname === "/character/cards/generate") {
+    const imageCost = await getPointConfig("cost_image");
+    const spendRes = await spendPoints(userId, imageCost, "image", "card");
+    if (!spendRes.ok) {
+      send(res, 402, { error: "points_insufficient", need: imageCost, balance: spendRes.balance });
+      return;
+    }
     send(res, 202, { ok: true, message: "生成中" });
-    generateCharacterCard(true, userId).then((url) => {
-      if (url) pushToUser(userId, { card_update: true, card_url: url });
+    generateCharacterCard(true, userId).then(async (url) => {
+      if (url) {
+        pushToUser(userId, { card_update: true, card_url: url });
+      } else {
+        // 生成失败 → 退款
+        await refundPoints(userId, imageCost, "refund_image", `card:${Date.now()}`);
+        pushToUser(userId, { points_refunded: true, amount: imageCost });
+      }
     });
     return;
   }
@@ -2377,11 +2505,28 @@ async function handleRequest(req, res) {
   if (method === "POST" && pathname === "/characters") {
     const body = await readBody(req);
     if (!body.name?.trim()) { send(res, 400, { error: "name required" }); return; }
+    // 创建角色扣费（已含首次卡片+全部情绪头像生成，激活时触发，不再额外扣图片费）
+    const createCost = await getPointConfig("cost_create_character");
+    const spendRes = await spendPoints(userId, createCost, "create_character", null);
+    if (!spendRes.ok) {
+      send(res, 402, { error: "points_insufficient", need: createCost, balance: spendRes.balance });
+      return;
+    }
     const soul = body.soul_content || `# 角色名称\n\n${body.name.trim()}\n\n# 外貌\n\n# 性格\n\n# 说话方式\n\n`;
-    const result = await dbRun(
-      "INSERT INTO characters (name, soul_content, is_active, created_at, user_id) VALUES (?, ?, 0, ?, ?)",
-      [body.name.trim(), soul, nowIso(), userId]
-    );
+    let result;
+    try {
+      result = await dbRun(
+        "INSERT INTO characters (name, soul_content, is_active, created_at, user_id) VALUES (?, ?, 0, ?, ?)",
+        [body.name.trim(), soul, nowIso(), userId]
+      );
+    } catch (e) {
+      // 写入失败（如重名）→ 退还创建费
+      await refundPoints(userId, createCost, "refund_create_character", `create:${Date.now()}`);
+      send(res, 400, { error: e.code === "ER_DUP_ENTRY" ? "角色名已存在" : "创建失败" });
+      return;
+    }
+    // 标记本角色的卡片/头像生成在 cost_create_character 内已含，激活时不再扣图片费
+    // （激活走 pregenerateMoodAvatars / generateCharacterCard，这两个内部函数本就不扣费）
     send(res, 200, { id: result.insertId, name: body.name.trim() });
     return;
   }
@@ -2532,10 +2677,11 @@ async function handleRequest(req, res) {
     const sessionId = Number(sceneImgMatch[1]);
     if (!await getSession(sessionId, userId)) { send(res, 404, { error: "session not found" }); return; }
 
-    // 每日配额检查
-    if (!await consumeDailyImageQuota(userId)) {
-      const dailyLimit = Number(await getGlobalSetting("daily_scene_image_limit", "5"));
-      send(res, 429, { error: "daily_limit_reached", limit: dailyLimit });
+    // 小鱼干扣费（取代每日张数上限）：提交成功即扣，异步失败退款
+    const imageCost = await getPointConfig("cost_image");
+    const spendRes = await spendPoints(userId, imageCost, "image", `session:${sessionId}`);
+    if (!spendRes.ok) {
+      send(res, 402, { error: "points_insufficient", need: imageCost, balance: spendRes.balance });
       return;
     }
 
@@ -2543,7 +2689,11 @@ async function handleRequest(req, res) {
     const imageFallbackEnabled = settings.imageFallbackEnabled;
     // 找最近一条 assistant 消息作为场景依据
     const lastAssist = await dbGet("SELECT id, content FROM messages WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", [sessionId]);
-    if (!lastAssist) { send(res, 400, { error: "no assistant message" }); return; }
+    if (!lastAssist) {
+      await refundPoints(userId, imageCost, "refund_image", `session:${sessionId}:noassist:${Date.now()}`);
+      send(res, 400, { error: "no assistant message" });
+      return;
+    }
     const recentMsgs = await dbAll("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT 10", [sessionId]);
     recentMsgs.reverse();
     const previousScene = await getLastImagePrompt(sessionId);
@@ -2554,7 +2704,7 @@ async function handleRequest(req, res) {
     pushToSession(sessionId, { image_pending: true, msg_id: targetMsgId });
     const reqAspect = url.searchParams.get("aspect") || "";
     const aspect = ["1:1", "2:3", "9:16", "16:9"].includes(reqAspect) ? reqAspect : null;
-    fireImageGeneration(targetMsgId, prompt, sessionId, { silent: false, imageFallbackEnabled, userId, aspectRatio: aspect });
+    fireImageGeneration(targetMsgId, prompt, sessionId, { silent: false, imageFallbackEnabled, userId, aspectRatio: aspect, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${targetMsgId}` } });
     send(res, 200, { ok: true, msg_id: targetMsgId });
     return;
   }
@@ -2732,6 +2882,20 @@ async function handleRequest(req, res) {
       return;
     }
 
+    // ── 小鱼干扣费预校验：成功落库后才扣，但开扣前先确认余额够，不够直接拒绝（不发起 LLM、不存用户消息）──
+    const ttsChar = await getActiveCharacter(userId);
+    const ttsSettings = await getUserSettings(userId);
+    const willVoice = !!(ttsSettings.ttsEnabled && ttsChar?.voice_id);
+    const chatCost = willVoice ? await getPointConfig("cost_chat_voice") : await getPointConfig("cost_chat");
+    const chatReason = willVoice ? "chat_voice" : "chat";
+    if (await pointsEnabled()) {
+      const bal = await getPointBalance(userId);
+      if (bal < chatCost) {
+        send(res, 402, { error: "points_insufficient", need: chatCost, balance: bal });
+        return;
+      }
+    }
+
     // 存用户消息
     const userMsgId = await appendMessage(sessionId, "user", userText, null, userId);
     const t_total = Date.now();
@@ -2822,8 +2986,6 @@ async function handleRequest(req, res) {
 
     try {
     let fullReply = "";
-    const ttsChar = await getActiveCharacter(userId);
-    const ttsSettings = await getUserSettings(userId);
     try {
       console.log(`[chat] 开始 LLM 请求 provider=${ttsSettings.llmProvider}`);
       const { stream, t0 } = await llmChatStream(messages, ttsSettings.llmProvider);
@@ -2890,23 +3052,29 @@ async function handleRequest(req, res) {
 
     const msgId = await appendMessage(sessionId, "assistant", cleanText, await getCharacterName(userId), userId);
 
+    // 回复已落库 → 扣聊天费（带语音按 cost_chat_voice，否则 cost_chat；总开关关时旁路）
+    await spendPoints(userId, chatCost, chatReason, `session:${sessionId}`);
+
     // 通知前端文字完成，附带图片状态
     const donePayload = { done: true, msg_id: Number(msgId), user_msg_id: Number(userMsgId) };
-    let quotaAllowed = false;
+    let imgAllowed = false;
+    const imageCost = await getPointConfig("cost_image");
     if (imgPrompt) {
-      quotaAllowed = await consumeDailyImageQuota(userId);
-      if (quotaAllowed) {
+      // 聊天内嵌自动插图额外按 cost_image 扣；余额不足则跳过插图（不影响文字回复）
+      const r = await spendPoints(userId, imageCost, "image", `msg:${msgId}`);
+      imgAllowed = r.ok;
+      if (imgAllowed) {
         donePayload.image_pending = true;
         donePayload.image_silent = imgSilent;
       } else {
-        console.log(`[自动插图] 用户 ${userId} 今日配额已用完，跳过`);
+        console.log(`[自动插图] 用户 ${userId} 小鱼干不足，跳过插图`);
       }
     }
 
     res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
 
-    if (imgPrompt && quotaAllowed) {
-      fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: ttsSettings.imageFallbackEnabled, userId });
+    if (imgPrompt && imgAllowed) {
+      fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: ttsSettings.imageFallbackEnabled, userId, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${msgId}` } });
     }
 
     // 异步更新情绪和话题摘要（不阻塞响应）
@@ -3228,6 +3396,46 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // ── 小鱼干（积分）用户侧接口 ──
+  // GET /points — 当前余额
+  if (method === "GET" && pathname === "/points") {
+    const balance = await getPointBalance(userId);
+    send(res, 200, { balance, enabled: await pointsEnabled() });
+    return;
+  }
+
+  // GET /points/transactions?limit=N — 流水列表
+  if (method === "GET" && pathname === "/points/transactions") {
+    const limit = Number(url.searchParams.get("limit")) || 50;
+    const rows = await listTransactions(userId, limit);
+    send(res, 200, rows);
+    return;
+  }
+
+  // GET /checkin/status — 今日是否已签、连续天数、今日预计奖励、签到记录
+  // 可选 ?month=YYYY-MM 查询某自然月的全部记录；不带则返回最近 30 条
+  if (method === "GET" && pathname === "/checkin/status") {
+    const status = await getCheckinStatus(userId);
+    const month = url.searchParams.get("month");
+    const history = month
+      ? (await listCheckinsByMonth(userId, month)) ?? await listCheckins(userId, 30)
+      : await listCheckins(userId, 30);
+    const balance = await getPointBalance(userId);
+    send(res, 200, { ...status, balance, history });
+    return;
+  }
+
+  // POST /checkin — 执行签到
+  if (method === "POST" && pathname === "/checkin") {
+    const r = await doCheckin(userId);
+    if (!r.ok) {
+      send(res, 400, { error: "already_checked_in" });
+      return;
+    }
+    send(res, 200, r);
+    return;
+  }
+
   // GET /settings — 全局设置
   if (method === "GET" && pathname === "/settings") {
     send(res, 200, await getUserSettings(userId));
@@ -3329,22 +3537,35 @@ setInterval(async () => {
     // 只推给有活跃连接的 session
     const clients = sessionClients.get(session.id);
     if (!clients || clients.size === 0) continue;
+    const sessionUserId = session.user_id ?? null;
+    // 主动消息扣费（§9.4）：余额不足时跳过该次主动消息（不发送、不扣、不报错）
+    const proactiveCost = await getPointConfig("cost_chat");
+    if (await pointsEnabled() && sessionUserId) {
+      const bal = await getPointBalance(sessionUserId);
+      if (bal < proactiveCost) {
+        console.log(`[主动消息] 用户 ${sessionUserId} 小鱼干不足，跳过本次主动消息`);
+        continue;
+      }
+    }
     console.log(`主动发消息 [session ${session.id}]，已空闲 ${Math.round(idleMs / 60000)} 分钟`);
     // 记录本次主动发消息时间，防止用户未回复时重复触发
     await dbRun("UPDATE sessions SET last_proactive_at = ? WHERE id = ?", [nowIso(), session.id]);
-    const sessionUserId = session.user_id ?? null;
     const text = await generateProactiveMessage(session.id, sessionUserId).catch(() => null);
     if (!text) continue;
     const { cleanText, prompt: imgPrompt } = extractImageTag(text);
     const msgId = await appendMessage(session.id, "assistant", cleanText, await getCharacterName(sessionUserId), sessionUserId);
+    // 主动消息落库成功 → 扣聊天费
+    await spendPoints(sessionUserId, proactiveCost, "chat", `proactive:${session.id}`);
     const payload = { proactive: true, msg_id: Number(msgId), text: cleanText };
     if (imgPrompt) {
       const previousScene = await getLastImagePrompt(session.id);
-      if (await consumeDailyImageQuota(sessionUserId)) {
+      const imageCost = await getPointConfig("cost_image");
+      const r = await spendPoints(sessionUserId, imageCost, "image", `msg:${msgId}`);
+      if (r.ok) {
         payload.image_pending = true;
-        fireImageGeneration(Number(msgId), imgPrompt, session.id, { silent: true, previousScene, userId: sessionUserId });
+        fireImageGeneration(Number(msgId), imgPrompt, session.id, { silent: true, previousScene, userId: sessionUserId, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${msgId}` } });
       } else {
-        console.log(`[主动插图] 用户 ${sessionUserId} 今日配额已用完，跳过`);
+        console.log(`[主动插图] 用户 ${sessionUserId} 小鱼干不足，跳过插图`);
       }
     }
     pushToSession(session.id, payload);

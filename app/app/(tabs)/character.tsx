@@ -265,7 +265,8 @@ function CardsModal({ visible, onClose, onChanged }: {
       await api("POST", "/character/cards/generate");
     } catch (e: any) {
       setGenerating(false);
-      toast(e.message || "生成失败", "err");
+      if (e?.status === 402) toast("小鱼干不足，去【我的】签到获取", "err");
+      else toast(e.message || "生成失败", "err");
       return;
     }
     // 服务端是异步：返回 202，生成完通过 WS card_update 推。

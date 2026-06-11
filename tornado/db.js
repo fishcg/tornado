@@ -294,6 +294,35 @@ const CREATE_TABLES = [
     username VARCHAR(64) NOT NULL,
     created_at VARCHAR(64) NOT NULL,
     KEY idx_auth_user (user_id)
+  ) CHARACTER SET utf8mb4`,
+
+  // ── 小鱼干（积分）系统 ──
+  `CREATE TABLE IF NOT EXISTS user_points (
+    user_id INT NOT NULL PRIMARY KEY,
+    balance INT NOT NULL DEFAULT 0,
+    updated_at VARCHAR(64)
+  ) CHARACTER SET utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS point_transactions (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    delta INT NOT NULL,
+    balance_after INT NOT NULL,
+    reason VARCHAR(64) NOT NULL,
+    ref VARCHAR(128),
+    created_at VARCHAR(64) NOT NULL,
+    KEY idx_pt_user_created (user_id, created_at)
+  ) CHARACTER SET utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS daily_checkins (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    checkin_date VARCHAR(16) NOT NULL,
+    points INT NOT NULL,
+    streak INT NOT NULL,
+    created_at VARCHAR(64) NOT NULL,
+    UNIQUE KEY uq_user_date (user_id, checkin_date),
+    KEY idx_dc_user_created (user_id, created_at)
   ) CHARACTER SET utf8mb4`
 ];
 
@@ -379,4 +408,8 @@ export async function initDb() {
   await ensureColumn(pool, "messages", "favorited_at", "VARCHAR(64)");
   // 消息生成时的情绪快照（用于收藏展示当时情绪）
   await ensureColumn(pool, "messages", "mood", "VARCHAR(32)");
+
+  // 签到状态冗余到 user_settings，便于快速读取（历史明细仍查 daily_checkins）
+  await ensureColumn(pool, "user_settings", "last_checkin_date", "VARCHAR(16)");
+  await ensureColumn(pool, "user_settings", "checkin_streak", "INT NOT NULL DEFAULT 0");
 }

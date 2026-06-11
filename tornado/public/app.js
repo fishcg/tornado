@@ -942,7 +942,11 @@ async function doStream(sessionId, text, replyBubble) {
   if (!res.ok) {
     if (res.status === 401) { location.href = "/auth"; return; }
     const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error || res.statusText);
+    const e = new Error(err.error || res.statusText);
+    e.status = res.status;
+    e.need = err.need;
+    e.balance = err.balance;
+    throw e;
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -1030,6 +1034,7 @@ async function sendMessage() {
   try {
     await doStream(currentSessionId, text, replyBubble);
     if (_pendingCallBubble) return; // 情绪来电等待中，不执行后续逻辑
+    refreshPointsBalance();
     await loadSessions();
     // 情绪更新是异步的，稍等后再取
     setTimeout(() => refreshMood(currentSessionId), 1500);
@@ -1042,6 +1047,17 @@ async function sendMessage() {
       showReplySuggestions();
     }
   } catch (err) {
+    // 小鱼干不足：服务端未存任何消息，移除乐观气泡并提示去签到
+    if (err.status === 402) {
+      replyBubble.remove();
+      const userBubble = replyBubble.previousElementSibling;
+      if (userBubble && userBubble.classList.contains("user")) userBubble.remove();
+      input.value = text;
+      autoResize();
+      showToast("🐟 小鱼干不足，去【我的】签到获取");
+      refreshPointsBalance();
+      return;
+    }
     // 网络错误时重试一次
     if (err.message.includes("fetch") || err.message.includes("network") || err.message.includes("Failed")) {
       try {
@@ -1244,6 +1260,11 @@ btnSceneImage.addEventListener("click", async () => {
   btnSceneImage.disabled = true;
   try {
     const res = await fetch(API + `/sessions/${currentSessionId}/scene-image`, { method: "POST" });
+    if (res.status === 402) {
+      showToast("🐟 小鱼干不足，去【我的】签到获取");
+      btnSceneImage.disabled = false;
+      return;
+    }
     if (res.status === 429) {
       const err = await res.json().catch(() => ({}));
       const limit = err.limit ?? "N";
@@ -1253,6 +1274,7 @@ btnSceneImage.addEventListener("click", async () => {
     }
     const data = await res.json();
     if (data?.msg_id) {
+      refreshPointsBalance();
       _sceneImagePendingMsgId = data.msg_id;
       let wrap = messages.querySelector(`[data-msg-id="${data.msg_id}"]`);
       if (!wrap) {
@@ -1401,6 +1423,10 @@ function handleWsPayload(payload) {
     renderCharacterCard(payload.card_url);
     const btn = document.getElementById("rp-card-regen");
     if (btn) btn.disabled = false;
+  }
+  if (payload.points_refunded) {
+    showToast(`生成失败，已退还 ${payload.amount} 小鱼干`);
+    refreshPointsBalance();
   }
   if (payload.mood_update && payload.mood) {
     if (payload.avatar_url) {
@@ -3389,7 +3415,16 @@ document.getElementById("rp-card-regen").addEventListener("click", async () => {
   // 60s 超时兜底，防止 SSE 未到达时按钮永久禁用
   const fallback = setTimeout(() => { btn.disabled = false; }, 60000);
   try {
-    await api("POST", "/character/cards/generate");
+    const r = await api("POST", "/character/cards/generate");
+    if (r && r.error === "points_insufficient") {
+      clearTimeout(fallback);
+      btn.disabled = false;
+      if (img) img.classList.remove("hidden");
+      if (skeleton) skeleton.classList.add("hidden");
+      showToast("🐟 小鱼干不足，去【我的】签到获取");
+      return;
+    }
+    refreshPointsBalance();
     // 结果通过 SSE card_update 推送；SSE 到达时会清除 disabled
     // 同时在 SSE handler 里 clearTimeout(fallback) 是做不到的，靠超时兜底即可
   } catch {
@@ -3566,6 +3601,94 @@ function showAnnouncementModal(list, index) {
   document.body.appendChild(overlay);
 }
 
+// ── 小鱼干（积分） ──────────────────────────────────────────────────────────
+let _pointsEnabled = true;
+const POINT_REASON_LABELS = {
+  chat: "聊天", chat_voice: "语音聊天", image: "插图/卡片", avatar: "情绪头像",
+  create_character: "创建角色", checkin: "签到", signup: "注册赠送",
+  admin_adjust: "调整", refund_image: "插图退款", refund_avatar: "头像退款",
+  refund_create_character: "创建退款",
+};
+
+async function refreshPointsBalance() {
+  try {
+    const r = await api("GET", "/points");
+    _pointsEnabled = r.enabled !== false;
+    const bar = document.getElementById("points-bar");
+    if (!bar) return;
+    if (!_pointsEnabled) { bar.classList.add("hidden"); return; }
+    bar.classList.remove("hidden");
+    document.getElementById("points-balance").textContent = r.balance;
+  } catch {}
+}
+
+async function refreshCheckinTag() {
+  try {
+    const st = await api("GET", "/checkin/status");
+    const tag = document.getElementById("points-checkin-tag");
+    if (tag) {
+      tag.textContent = st.checked_today ? "已签" : "签到";
+      tag.classList.toggle("done", !!st.checked_today);
+    }
+  } catch {}
+}
+
+async function openCheckinModal() {
+  const modal = document.getElementById("checkin-modal");
+  modal.classList.remove("hidden");
+  await renderCheckin();
+}
+
+async function renderCheckin() {
+  const st = await api("GET", "/checkin/status").catch(() => null);
+  if (!st) return;
+  document.getElementById("checkin-balance").textContent = st.balance;
+  document.getElementById("checkin-streak").textContent = `连续签到 ${st.streak} 天`;
+  const btn = document.getElementById("checkin-btn");
+  if (st.checked_today) {
+    btn.textContent = "今日已签到";
+    btn.disabled = true;
+  } else {
+    btn.textContent = `签到 +${st.today_reward_preview}`;
+    btn.disabled = false;
+  }
+  const list = document.getElementById("checkin-history");
+  const history = st.history || [];
+  list.innerHTML = history.length
+    ? history.map((h) => `<div class="checkin-history-row"><span class="date">${h.checkin_date}</span><span class="streak">连续 ${h.streak} 天</span><span class="pts">+${h.points}</span></div>`).join("")
+    : '<div class="checkin-history-empty">还没有签到记录</div>';
+}
+
+function initPoints() {
+  const bar = document.getElementById("points-bar");
+  if (bar) bar.addEventListener("click", openCheckinModal);
+  const close = document.getElementById("checkin-modal-close");
+  if (close) close.addEventListener("click", () => document.getElementById("checkin-modal").classList.add("hidden"));
+  const modal = document.getElementById("checkin-modal");
+  if (modal) modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.add("hidden"); });
+  const btn = document.getElementById("checkin-btn");
+  if (btn) btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const r = await api("POST", "/checkin");
+      if (r && r.ok) {
+        showToast(`签到成功，+${r.points} 小鱼干`);
+        await renderCheckin();
+        await refreshPointsBalance();
+        await refreshCheckinTag();
+      } else {
+        showToast("今日已签到");
+        btn.disabled = false;
+      }
+    } catch {
+      showToast("签到失败");
+      btn.disabled = false;
+    }
+  });
+  refreshPointsBalance();
+  refreshCheckinTag();
+}
+
 (async () => {
   await loadCharacter();
   try {
@@ -3578,6 +3701,7 @@ function showAnnouncementModal(list, index) {
   initMoodGrid();
   initBottomNav();
   initChatTitleEdit();
+  initPoints();
   loadSessions();
   checkAnnouncements();
   checkVoicemail();

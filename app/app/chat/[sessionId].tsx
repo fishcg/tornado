@@ -342,11 +342,18 @@ export default function ChatScreen() {
           // 半自动：回复完成后拉取回复建议
           if (semiAutoRef.current) fetchSuggestions();
         } else if (e.type === "error") {
-          setMessages((m) => m.map((it) => it.id === tempBot.id ? { ...it, content: `（出错：${e.message}）`, pending: false } : it));
           handle.close();
           setSending(false);
           setTyping(false);
           if (typingTimerRef.current) { clearTimeout(typingTimerRef.current); typingTimerRef.current = null; }
+          if (e.status === 402) {
+            // 小鱼干不足：服务端未存任何消息，移除乐观插入的气泡并引导签到
+            setMessages((m) => m.filter((it) => it.id !== tempUser.id && it.id !== tempBot.id));
+            if (!textOverride) setInput(text);
+            toast("小鱼干不足，去【我的】签到获取", "err");
+          } else {
+            setMessages((m) => m.map((it) => it.id === tempBot.id ? { ...it, content: `（出错：${e.message}）`, pending: false } : it));
+          }
         }
       });
     } catch (err: any) {
@@ -427,6 +434,7 @@ export default function ChatScreen() {
       const t = await r.text();
       let data: any = null;
       try { data = JSON.parse(t); } catch {}
+      if (r.status === 402) { toast("小鱼干不足，去【我的】签到获取", "err"); return; }
       if (!r.ok) throw new Error(data?.error || t || `HTTP ${r.status}`);
       if (data?.msg_id) setScenePending(data.msg_id);
     } catch (e: any) {

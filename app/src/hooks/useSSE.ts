@@ -4,7 +4,7 @@ import { baseUrl, clientHeaders, loadToken } from "@/api/client";
 export type ChatStreamEvent =
   | { type: "text"; text: string }
   | { type: "done"; msgId: number | null; userMsgId: number }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; status?: number };
 
 export type ChatStreamHandle = { close: () => void };
 
@@ -38,7 +38,16 @@ export async function streamChat(
   });
 
   es.addEventListener("error", (e: any) => {
-    onEvent({ type: "error", message: e?.message || "stream error" });
+    const status = e?.xhrStatus ?? e?.status;
+    let message = e?.message || "stream error";
+    // 非 200（如 402 小鱼干不足）时尝试解析响应体里的 error
+    if (e?.xhrBody) {
+      try {
+        const body = JSON.parse(e.xhrBody);
+        if (body?.error) message = String(body.error);
+      } catch {}
+    }
+    onEvent({ type: "error", message, status });
     es.close();
   });
 

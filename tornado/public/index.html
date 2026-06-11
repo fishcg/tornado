@@ -21,6 +21,11 @@
         </div>
       </div>
 
+      <button class="sidebar-points-bar hidden" id="points-bar" title="点击签到 / 查看小鱼干">
+        <span class="points-bar-balance"><span class="points-bar-icon">🐟</span> <span id="points-balance">—</span></span>
+        <span class="points-bar-checkin" id="points-checkin-tag">签到</span>
+      </button>
+
       <div class="search-bar">
         <input id="search-input" type="text" placeholder="搜索会话/消息 (Ctrl+K)">
       </div>
@@ -591,6 +596,24 @@
         <button id="achievements-modal-close">✕</button>
       </div>
       <div id="achievements-list" class="companion-body"></div>
+    </div>
+  </div>
+
+  <div id="checkin-modal" class="modal-overlay hidden">
+    <div class="companion-box" style="width:min(96vw,460px)">
+      <div class="companion-header">
+        <span>每日签到</span>
+        <button id="checkin-modal-close">✕</button>
+      </div>
+      <div class="companion-body">
+        <div class="checkin-summary">
+          <div class="checkin-balance"><span style="font-size:22px">🐟</span> <span id="checkin-balance">—</span></div>
+          <div class="checkin-streak" id="checkin-streak">连续签到 0 天</div>
+          <button class="checkin-btn" id="checkin-btn">签到</button>
+        </div>
+        <div class="checkin-history-title">签到记录</div>
+        <div id="checkin-history" class="checkin-history"></div>
+      </div>
     </div>
   </div>
 
