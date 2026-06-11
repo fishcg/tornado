@@ -481,10 +481,11 @@
       <div class="admin-form">
         <h3>用户积分查询 / 调整</h3>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <input type="text" id="pointsLookupUsername" placeholder="用户名" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+          <input type="text" id="pointsLookupUsername" placeholder="用户名 或 用户ID" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
           <button class="btn-sm btn-primary" id="pointsLookupBtn">查询</button>
         </div>
         <div id="pointsUserResult" style="margin-top:14px;display:none">
+          <div style="margin-bottom:8px;font-size:14px"><span style="color:var(--text-dim)">用户：</span><strong id="pointsUserName">—</strong></div>
           <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
             <span style="font-size:15px">余额：<strong id="pointsUserBalance" style="color:var(--accent,#7c6fcd)">—</strong> 🐟</span>
             <input type="number" id="pointsAdjustDelta" placeholder="加/减（如 50 或 -20）" style="width:160px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
@@ -993,12 +994,13 @@ document.getElementById("savePointsBtn").addEventListener("click", async () => {
 
 let _pointsLookupUser = null;
 async function doPointsLookup() {
-  const username = document.getElementById("pointsLookupUsername").value.trim();
-  if (!username) return;
-  const data = await api("/admin/points/user?username=" + encodeURIComponent(username));
+  const q = document.getElementById("pointsLookupUsername").value.trim();
+  if (!q) return;
+  const data = await api("/admin/points/user?q=" + encodeURIComponent(q));
   if (!data || data.error) { showMsg("用户不存在", false); document.getElementById("pointsUserResult").style.display = "none"; return; }
   _pointsLookupUser = data.user_id;
   document.getElementById("pointsUserResult").style.display = "block";
+  document.getElementById("pointsUserName").textContent = `${data.username}（ID ${data.user_id}）`;
   document.getElementById("pointsUserBalance").textContent = data.balance;
   const tx = data.transactions || [];
   const tbody = document.getElementById("pointsTxList");

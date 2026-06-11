@@ -1991,11 +1991,18 @@ async function handleRequest(req, res) {
       }
     }
 
-    // GET /admin/points/user?username= — 查某用户余额 + 近期流水
+    // GET /admin/points/user?q= — 按用户名或用户 ID 查余额 + 近期流水（兼容旧参数 username）
     if (method === "GET" && pathname === "/admin/points/user") {
-      const username = String(url.searchParams.get("username") || "").trim();
-      if (!username) { send(res, 400, { error: "username required" }); return; }
-      const user = await dbGet("SELECT id, username FROM users WHERE username = ?", [username]);
+      const q = String(url.searchParams.get("q") || url.searchParams.get("username") || "").trim();
+      if (!q) { send(res, 400, { error: "query required" }); return; }
+      // 纯数字优先按 id 查，未命中再按用户名查（兼容用数字当用户名的情况）
+      let user = null;
+      if (/^\d+$/.test(q)) {
+        user = await dbGet("SELECT id, username FROM users WHERE id = ?", [Number(q)]);
+      }
+      if (!user) {
+        user = await dbGet("SELECT id, username FROM users WHERE username = ?", [q]);
+      }
       if (!user) { send(res, 404, { error: "user not found" }); return; }
       const balance = await getPointBalance(user.id);
       const transactions = await listTransactions(user.id, 50);
