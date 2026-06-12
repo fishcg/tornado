@@ -303,7 +303,7 @@
     <div class="modal">
       <p style="margin-bottom:4px;font-weight:600">下载 Tornado App</p>
       <p id="download-app-version" style="font-size:12px;color:var(--text-dim);margin-bottom:14px"></p>
-      <img id="download-app-qr" alt="下载二维码" style="width:180px;height:180px;border-radius:8px;background:#fff;display:none;margin:0 auto 12px">
+      <div id="download-app-qr" style="width:180px;height:180px;border-radius:8px;background:#fff;display:none;margin:0 auto 12px;padding:8px;box-sizing:border-box"></div>
       <p id="download-app-empty" style="font-size:13px;color:var(--text-dim);display:none">暂无可用版本</p>
       <div class="modal-actions">
         <a id="download-app-link" href="#" target="_blank" rel="noopener" style="display:none">直接下载</a>
@@ -618,6 +618,7 @@
   </div>
 
   <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+  <script src="qrcode.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

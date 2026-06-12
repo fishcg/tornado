@@ -1238,8 +1238,21 @@ if (btnDownloadApp) {
       versionEl.textContent = `Android · 版本 ${data.latest_version}`;
       link.href = data.download_url;
       link.style.display = "inline-block";
-      qr.src = "https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=" + encodeURIComponent(data.download_url);
-      qr.style.display = "block";
+      // 本地离线生成二维码（qrcode.min.js），不依赖外部服务
+      qr.innerHTML = "";
+      try {
+        new QRCode(qr, {
+          text: data.download_url,
+          width: 164,
+          height: 164,
+          colorDark: "#000000",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+        qr.style.display = "block";
+      } catch (e) {
+        qr.style.display = "none";
+      }
     } catch {
       versionEl.textContent = "";
       empty.style.display = "block";

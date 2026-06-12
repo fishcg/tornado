@@ -1528,7 +1528,7 @@ async function handleRequest(req, res) {
     sendHtmlWithAssetVersion(res, path.join(PUBLIC_DIR, "index.html"), PUBLIC_DIR);
     return;
   }
-  if (method === "GET" && (pathname === "/app.js" || pathname === "/styles.css" || pathname === "/auth.js")) {
+  if (method === "GET" && (pathname === "/app.js" || pathname === "/styles.css" || pathname === "/auth.js" || pathname === "/qrcode.min.js")) {
     sendFile(res, path.join(PUBLIC_DIR, pathname.slice(1)));
     return;
   }
