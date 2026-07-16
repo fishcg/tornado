@@ -591,7 +591,7 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
     familiarityBlock = stages[achievementStage];
   }
 
-  const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复不超过 30 字\n- 用户消息 11-50字 → 你的回复不超过 80 字\n- 用户消息 >50字 → 你的回复不超过 150 字\n- 用户明确要求长篇内容（如「写一段…」「不少于…」）时除外\n跟着对方的节奏来，对方说一句你也说一两句，不要主动展开长篇叙述。"];
+  const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复不超过 30 字\n- 用户消息 11-50字 → 你的回复不超过 80 字\n- 用户消息 >50字 → 你的回复不超过 150 字\n- 用户明确要求长篇内容（如「写一段…」「不少于…」）时除外\n跟着对方的节奏来，对方说一句你也说一两句，不要主动展开长篇叙述。\n\n**话题要自然流动**（必须遵守）：\n- 像真人一样，话题会随对话发散、跳转，不要死抓着某一个话题反复提。\n- 一个具体的东西（某种食物、某件小事）提过一次就够了，除非用户主动接话，否则别在后续回复里反复带出来。\n- 不要把同一个具体例子当口头禅（比如老说布丁、蛋糕），换着说或干脆不举例。\n- 紧扣用户当下这句话的重点，用户换方向就跟着换，别硬把话题拉回旧的。"];
   if (relationBlock) {
     parts.push("", "# 当前关系阶段（最高优先级，覆盖角色人设中的情感倾向）", relationBlock);
   }
@@ -615,7 +615,7 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
   }
   if (previousScene) parts.push("", "# 上一张图片的场景", `${previousScene}\n写 [IMG:] 标记时，默认延续这个场景的地点、服装、时段，除非对话里出现明显转场。`);
   if (mood && mood !== "neutral") parts.push("", "# 当前情绪状态", `你现在的情绪是：${mood}。回复时自然流露这个情绪，不要刻意说出来。`);
-  if (topicSummary) parts.push("", "# 当前话题", topicSummary);
+  // 注：topicSummary 仅用于前端侧栏展示，不再注入到系统提示词，避免角色被钉死在某个话题上反复提及。
   return parts.join("\n");
 }
 
@@ -2916,8 +2916,9 @@ async function handleRequest(req, res) {
     // 记录用户最后活跃时间
     await touchLastUserAt(sessionId);
 
-    // 组装上下文（最近 20 条）
-    const recent = allMsgs;
+    // 组装上下文：只带最近的对话，让旧话题自然淡出（长期记忆由记忆系统/实体图谱/日记承接）
+    const CONTEXT_WINDOW = 30;
+    const recent = allMsgs.slice(-CONTEXT_WINDOW);
 
     // 先判断是否需要查长期记忆，需要时再发请求
     let memoryContext = null;
