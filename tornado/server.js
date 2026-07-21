@@ -21,7 +21,7 @@ import { getGlobalSetting, setGlobalSetting } from "./lib/settings.js";
 import { readBody, send, sendFile, sendHtmlWithAssetVersion } from "./lib/http.js";
 import {
   extractImageTag, callImageApi, callImageApiFallback,
-  generateImage, recognizeImage, sanitizeImagePrompt,
+  generateImage, recognizeImage, sanitizeImagePrompt, fetchImageAsDataUrl,
 } from "./lib/image.js";
 import {
   cloneVoiceCosyVoice, deleteVoiceCosyVoice, synthesizeSpeechCosyVoice,
@@ -368,6 +368,23 @@ async function buildCharacterPromptPrefix(userId) {
   return desc ? `${desc}，${appearance}` : appearance;
 }
 
+// 激活角色的参考图 URL（用于图生图，保持形象统一）；无则返回 null
+async function getCharacterReferenceImageUrl(userId) {
+  try {
+    const char = await getActiveCharacter(userId);
+    return char?.reference_image_url || null;
+  } catch {
+    return null;
+  }
+}
+
+// 拉取激活角色参考图并转成 Data URL；无参考图或拉取失败返回 null
+async function getCharacterReferenceDataUrl(userId) {
+  const url = await getCharacterReferenceImageUrl(userId);
+  if (!url) return null;
+  return await fetchImageAsDataUrl(url);
+}
+
 async function generateImagePrompt(userText, assistantReply, recentMsgs, previousScene, userId) {
   const charName = await getCharacterName(userId);
   const context = recentMsgs.slice(-6).map((m) =>
@@ -492,8 +509,9 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
   const sanitized = sanitizeImagePrompt(prompt);
   const sceneAnchor = previousScene ? `（延续上一张的场景设定：${sanitizeImagePrompt(previousScene)}；若对话里没有明显转场请保持地点、服装、时段一致）` : "";
   const fullPrompt = `${await buildCharacterPromptPrefix(userId)}，${sanitized}${sceneAnchor}`;
-  console.log(`${silent ? "自动" : "显式"}生图 [msg ${msgId}]: ${fullPrompt}`);
-  generateImage(fullPrompt, sceneAnchor, { imageFallbackEnabled, aspectRatio })
+  const referenceDataUrl = await getCharacterReferenceDataUrl(userId);
+  console.log(`${silent ? "自动" : "显式"}生图 [msg ${msgId}]${referenceDataUrl ? "（图生图）" : ""}: ${fullPrompt}`);
+  generateImage(fullPrompt, sceneAnchor, { imageFallbackEnabled, aspectRatio, referenceDataUrl })
     .then(async (url) => {
       await updateMessageImage(msgId, url);
       console.log(`生图完成 [msg ${msgId}]: ${url}`);
@@ -650,17 +668,28 @@ async function generateCharacterCard(force = false, userId) {
 
   const settings = userId ? await getUserSettings(userId) : { imageFallbackEnabled: true };
   const prompt = `${await buildCharacterPromptPrefix(userId)}，半身照，竖版构图，精美动漫插画风格，单人，仅一个人物，人物居中，高质量`;
+  const referenceDataUrl = await getCharacterReferenceDataUrl(userId);
   let url = null;
-  try {
-    url = await callImageApi(prompt, { hd: true, aspectRatio: "2:3" });
-  } catch (err) {
-    if (!settings.imageFallbackEnabled) { console.error(`角色卡片生成失败 [${character}]:`, err.message); return null; }
-    console.log(`角色卡片主 API 失败，切换 DashScope 重试: ${err.message}`);
+  // 有参考图先走图生图；失败降级为普通文生图
+  if (referenceDataUrl) {
     try {
-      url = await callImageApiFallback(prompt, { aspectRatio: "2:3" });
-    } catch (err2) {
-      console.error(`角色卡片生成失败 [${character}]:`, err2.message);
-      return null;
+      url = await callImageApi(prompt, { hd: true, aspectRatio: "2:3", referenceDataUrl });
+    } catch (err) {
+      console.log(`角色卡片图生图失败，降级文生图: ${err.message}`);
+    }
+  }
+  if (!url) {
+    try {
+      url = await callImageApi(prompt, { hd: true, aspectRatio: "2:3" });
+    } catch (err) {
+      if (!settings.imageFallbackEnabled) { console.error(`角色卡片生成失败 [${character}]:`, err.message); return null; }
+      console.log(`角色卡片主 API 失败，切换 DashScope 重试: ${err.message}`);
+      try {
+        url = await callImageApiFallback(prompt, { aspectRatio: "2:3" });
+      } catch (err2) {
+        console.error(`角色卡片生成失败 [${character}]:`, err2.message);
+        return null;
+      }
     }
   }
   // 新卡片入库，设为激活
@@ -673,7 +702,9 @@ async function generateCharacterCard(force = false, userId) {
 async function generateMoodAvatar(mood, userId) {
   const character = await getCharacterName(userId);
   const appearance = await getCharacterAppearance(userId);
-  const appearanceHash = crypto.createHash("md5").update(appearance).digest("hex").slice(0, 8);
+  const referenceUrl = await getCharacterReferenceImageUrl(userId);
+  // 参考图 URL 纳入 hash：设置/更换参考图后旧头像缓存自动失效
+  const appearanceHash = crypto.createHash("md5").update(appearance + "|" + (referenceUrl || "")).digest("hex").slice(0, 8);
   const existing = await dbGet("SELECT image_url, appearance_hash FROM mood_avatars WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [character, mood, userId ?? null]);
   if (existing && existing.appearance_hash === appearanceHash) return existing.image_url;
 
@@ -681,10 +712,15 @@ async function generateMoodAvatar(mood, userId) {
   const moodDesc = MOOD_AVATAR_PROMPTS[mood] || "neutral expression";
   const prefix = await buildCharacterPromptPrefix(userId);
   const prompt = `${prefix}，头像特写，${moodDesc}，纯色背景，动漫风格，高质量`;
+  const referenceDataUrl = referenceUrl ? await fetchImageAsDataUrl(referenceUrl) : null;
   let url = null;
   for (let attempt = 0; attempt <= 2; attempt++) {
     try {
-      url = await callImageApi(prompt, { hd: false, aspectRatio: "1:1" });
+      // 有参考图走图生图；最后一次仍失败时退回普通文生图
+      url = await callImageApi(prompt, {
+        hd: false, aspectRatio: "1:1",
+        referenceDataUrl: attempt < 2 ? referenceDataUrl : null
+      });
       break;
     } catch (err) {
       console.log(`情绪头像生成失败 [${character}:${mood}] 第${attempt + 1}次: ${err.message}`);
@@ -2502,7 +2538,7 @@ async function handleRequest(req, res) {
   const charGetMatch = pathname.match(/^\/characters\/(\d+)$/);
   if (method === "GET" && charGetMatch) {
     const charId = Number(charGetMatch[1]);
-    const row = await dbGet("SELECT id, name, appearance, personality, description, soul_content, is_active, created_at FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
+    const row = await dbGet("SELECT id, name, appearance, personality, description, soul_content, reference_image_url, is_active, created_at FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
     if (!row) { send(res, 404, { error: "not found" }); return; }
     send(res, 200, row);
     return;
@@ -2588,6 +2624,56 @@ async function handleRequest(req, res) {
     const mimeMap = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp" };
     res.writeHead(200, { "Content-Type": mimeMap[ext] || "application/octet-stream", "Cache-Control": "public, max-age=86400" });
     fs.createReadStream(filePath).pipe(res);
+    return;
+  }
+
+  // POST /characters/:id/reference-image — 上传角色参考图（二进制流 → OSS → 写 characters.reference_image_url）
+  // 后续该角色的所有生图都会以此图做图生图，保持形象统一
+  const charRefImgMatch = pathname.match(/^\/characters\/(\d+)\/reference-image$/);
+  if (method === "POST" && charRefImgMatch) {
+    const charId = Number(charRefImgMatch[1]);
+    const char = await dbGet("SELECT id FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
+    if (!char) { send(res, 404, { error: "not found" }); return; }
+    const MAX_REF_BYTES = 10 * 1024 * 1024;
+    const declared = Number(req.headers["content-length"] || 0);
+    if (declared && declared > MAX_REF_BYTES) {
+      send(res, 413, { error: "图片过大，最大 10MB" });
+      return;
+    }
+    const chunks = [];
+    let total = 0;
+    let aborted = false;
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (total > MAX_REF_BYTES) { aborted = true; try { req.destroy(); } catch {} break; }
+      chunks.push(chunk);
+    }
+    if (aborted) { send(res, 413, { error: "图片过大，最大 10MB" }); return; }
+    const buf = Buffer.concat(chunks);
+    if (buf.length === 0) { send(res, 400, { error: "empty body" }); return; }
+    const ext = (req.headers["content-type"] || "").includes("png") ? ".png" : ".jpg";
+    const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
+    const filename = `char-ref-${userId}-${charId}-${Date.now()}${ext}`;
+    let refUrl;
+    try {
+      refUrl = await uploadToOss(buf, filename, mimeType);
+    } catch (err) {
+      console.error(`[char-ref] OSS 上传失败: ${err.message}`);
+      send(res, 500, { error: "上传失败" });
+      return;
+    }
+    await dbRun("UPDATE characters SET reference_image_url = ? WHERE id = ? AND user_id = ?", [refUrl, charId, userId]);
+    send(res, 200, { ok: true, reference_image_url: refUrl });
+    return;
+  }
+
+  // DELETE /characters/:id/reference-image — 清除角色参考图
+  if (method === "DELETE" && charRefImgMatch) {
+    const charId = Number(charRefImgMatch[1]);
+    const char = await dbGet("SELECT id FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
+    if (!char) { send(res, 404, { error: "not found" }); return; }
+    await dbRun("UPDATE characters SET reference_image_url = NULL WHERE id = ? AND user_id = ?", [charId, userId]);
+    send(res, 200, { ok: true });
     return;
   }
 

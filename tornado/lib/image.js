@@ -61,24 +61,53 @@ export async function callImageApiFallback(prompt, { aspectRatio = "16:9" } = {}
 }
 // __APPEND_MARKER__
 
-export async function callImageApi(prompt, { hd = true, aspectRatio = "16:9" } = {}) {
+// 把图片 URL 拉取并转成完整 Data URL（img2img 接口要求），失败返回 null
+export async function fetchImageAsDataUrl(imageUrl) {
+  if (!imageUrl) return null;
+  if (imageUrl.startsWith("data:")) return imageUrl;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(imageUrl, { signal: controller.signal });
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length === 0) return null;
+    return `data:${contentType};base64,${buf.toString("base64")}`;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function callImageApi(prompt, { hd = true, aspectRatio = "16:9", referenceDataUrl = null } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 360_000);
   try {
+    const body = referenceDataUrl
+      ? {
+          prompt,
+          mode: "img2img",
+          modelId: "gpt-image",
+          n: 1,
+          images: [{ name: "reference.jpg", dataUrl: referenceDataUrl }]
+        }
+      : {
+          prompt,
+          mode: "txt2img",
+          modelId: "gpt-image",
+          n: 1,
+          hd,
+          aspectRatio
+        };
     const res = await fetch(IMAGE_API_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${IMAGE_API_KEY}`,
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        prompt,
-        mode: "txt2img",
-        modelId: "gpt-image",
-        n: 1,
-        hd,
-        aspectRatio
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal
     });
     if (!res.ok) {
@@ -113,8 +142,16 @@ export async function rewriteSafePrompt(originalPrompt) {
   return (res.choices?.[0]?.message?.content || "").trim();
 }
 
-export async function generateImage(prompt, sceneAnchor = "", { imageFallbackEnabled = true, aspectRatio = null } = {}) {
+export async function generateImage(prompt, sceneAnchor = "", { imageFallbackEnabled = true, aspectRatio = null, referenceDataUrl = null } = {}) {
   const ratio = aspectRatio || "16:9";
+  if (referenceDataUrl) {
+    // 图生图：保持角色形象统一。失败则降级为普通文生图
+    try {
+      return await callImageApi(prompt, { aspectRatio: ratio, referenceDataUrl });
+    } catch (err) {
+      console.log(`图生图失败，降级文生图: ${err.message}`);
+    }
+  }
   try {
     return await callImageApi(prompt, { aspectRatio: ratio });
   } catch (err) {
