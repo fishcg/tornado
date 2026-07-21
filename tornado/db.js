@@ -357,6 +357,7 @@ export async function initDb() {
   await ensureColumn(pool, "characters", "description", "TEXT");
   await ensureColumn(pool, "characters", "affection", "INT NOT NULL DEFAULT 10");
   await ensureColumn(pool, "characters", "user_id", "INT");
+  await ensureColumn(pool, "characters", "reference_image_url", "TEXT");
   await ensureColumn(pool, "affection_log", "mood", "VARCHAR(32)");
   await ensureColumn(pool, "users", "is_admin", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "user_settings", "flags", "INT NOT NULL DEFAULT 6");
