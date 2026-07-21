@@ -3,7 +3,7 @@
     "name": "Tornado",
     "slug": "tornado",
     "scheme": "tornado",
-    "version": "0.3.3",
+    "version": "0.3.4",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -50,7 +50,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "允许 Tornado 访问相册以上传头像"
+          "photosPermission": "允许 Tornado 访问相册以上传头像和角色参考图"
         }
       ],
       "expo-asset",
