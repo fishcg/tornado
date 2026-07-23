@@ -592,9 +592,9 @@
         <h3 style="margin-top:16px">TTS 复刻渠道</h3>
         <div style="display:flex;align-items:center;gap:10px">
           <select id="ttsChannel" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
-            <option value="qwen">阿里云 Qwen3-TTS-Flash（推荐）</option>
-            <option value="qwen-omni">阿里云 Qwen3.5-Omni（实时）</option>
-            <option value="cosyvoice">阿里云 CosyVoice</option>
+            <option value="cosyvoice">阿里云 CosyVoice（推荐）</option>
+            <option value="qwen-audio">阿里云 Qwen-Audio-TTS Flash（情感/标签）</option>
+            <option value="qwen-audio-plus">阿里云 Qwen-Audio-TTS Plus（情感/标签）</option>
           </select>
           <span style="color:var(--text-dim);font-size:13px">影响新上传音色使用的复刻渠道，已复刻的角色不受影响</span>
         </div>
@@ -906,7 +906,7 @@ async function loadSystem() {
     document.getElementById("videoDurationRow").style.display = settings.milestone_mode === "video" ? "flex" : "none";
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
     document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
-    document.getElementById("ttsChannel").value = settings.tts_channel ?? "qwen";
+    document.getElementById("ttsChannel").value = settings.tts_channel ?? "cosyvoice";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
     document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
