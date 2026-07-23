@@ -25,9 +25,10 @@ import {
 } from "./lib/image.js";
 import {
   cloneVoiceCosyVoice, deleteVoiceCosyVoice, synthesizeSpeechCosyVoice,
-  cloneVoice, deleteVoice, summarizePlot, generateTtsInstruction,
-  translateToJapanese, synthesizeSpeech,
-  cloneVoiceQwenOmni, deleteVoiceQwenOmni, synthesizeSpeechQwenOmni,
+  summarizePlot, generateTtsInstruction,
+  translateToJapanese, injectAudioTags,
+  cloneVoiceQwenAudio, deleteVoiceQwenAudio, synthesizeSpeechQwenAudio,
+  QWEN_AUDIO_TTS_FLASH, QWEN_AUDIO_TTS_PLUS,
 } from "./lib/voice.js";
 import {
   POINT_DEFAULTS, getConfig as getPointConfig, isEnabled as pointsEnabled,
@@ -178,6 +179,32 @@ function toLocal(isoStr) {
 function loadSoulFromFile() {
   if (!fs.existsSync(SOUL_PATH)) return null;
   return fs.readFileSync(SOUL_PATH, "utf8").trim();
+}
+
+// 按声音渠道选择合成 / 克隆 / 删除函数，新增渠道只需在此登记
+// 默认渠道为 cosyvoice（支持流式，多数角色在用）
+// qwen-audio = Qwen-Audio-TTS flash，qwen-audio-plus = plus（仅模型名不同）
+const TTS_CHANNELS = ["cosyvoice", "qwen-audio", "qwen-audio-plus"];
+const QWEN_AUDIO_CHANNELS = new Set(["qwen-audio", "qwen-audio-plus"]);
+function qwenAudioModel(channel) {
+  return channel === "qwen-audio-plus" ? QWEN_AUDIO_TTS_PLUS : QWEN_AUDIO_TTS_FLASH;
+}
+function pickSynthFn(channel) {
+  if (QWEN_AUDIO_CHANNELS.has(channel)) {
+    const model = qwenAudioModel(channel);
+    return (text, voiceId, lang, instruction) => synthesizeSpeechQwenAudio(text, voiceId, lang, instruction, model);
+  }
+  return synthesizeSpeechCosyVoice;
+}
+function pickDeleteVoiceFn(channel) {
+  return QWEN_AUDIO_CHANNELS.has(channel) ? deleteVoiceQwenAudio : deleteVoiceCosyVoice;
+}
+function pickCloneVoiceFn(channel) {
+  if (QWEN_AUDIO_CHANNELS.has(channel)) {
+    const model = qwenAudioModel(channel);
+    return (audioUrl, charId) => cloneVoiceQwenAudio(audioUrl, charId, model);
+  }
+  return cloneVoiceCosyVoice;
 }
 
 async function getActiveCharacter(userId) {
@@ -1227,12 +1254,17 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
         .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
         .replace(/\*[^*]{0,80}\*/g, "")
         .replace(/\s{2,}/g, " ").trim();
-      const ttsInput = lang === "ja" ? await translateToJapanese(ttsScript) : ttsScript;
-      const ch = char.voice_channel || "qwen";
-      const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
-      const callInstruction = (type === "emotion" || type?.startsWith("holiday") || type === "streak")
+      let ttsInput = lang === "ja" ? await translateToJapanese(ttsScript) : ttsScript;
+      const ch = char.voice_channel || "cosyvoice";
+      const synthFn = pickSynthFn(ch);
+      const gentle = (type === "emotion" || type?.startsWith("holiday") || type === "streak");
+      const callInstruction = gentle
         ? "带电话音效果，语气温柔，声音轻柔关切"
         : "带电话音效果，语气有点生气，带着一丝委屈";
+      if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+        ttsInput = await injectAudioTags(ttsInput, { mood: gentle ? "温柔关切" : "委屈生气", personality: char.personality || "" });
+      }
+      console.log(`[tts][特殊来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
       const { url } = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
       audioUrl = url;
     } catch (err) {
@@ -1876,7 +1908,7 @@ async function handleRequest(req, res) {
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
-        tts_channel: await getGlobalSetting("tts_channel", "qwen"),
+        tts_channel: await getGlobalSetting("tts_channel", "cosyvoice"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
@@ -1916,7 +1948,7 @@ async function handleRequest(req, res) {
       if ("deepseek_thinking" in body) {
         await setGlobalSetting("deepseek_thinking", body.deepseek_thinking ? "1" : "0");
       }
-      if ("tts_channel" in body && ["qwen", "qwen-omni", "cosyvoice"].includes(body.tts_channel)) {
+      if ("tts_channel" in body && TTS_CHANNELS.includes(body.tts_channel)) {
         await setGlobalSetting("tts_channel", body.tts_channel);
       }
       if ("call_min_messages" in body) {
@@ -1960,7 +1992,7 @@ async function handleRequest(req, res) {
         milestone_mode: await getGlobalSetting("milestone_mode", "comic"),
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
-        tts_channel: await getGlobalSetting("tts_channel", "qwen"),
+        tts_channel: await getGlobalSetting("tts_channel", "cosyvoice"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
@@ -2423,8 +2455,8 @@ async function handleRequest(req, res) {
   // GET /character/voice
   if (method === "GET" && pathname === "/character/voice") {
     const char = await getActiveCharacter(userId);
-    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0, voice_channel: "qwen" }); return; }
-    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0, voice_channel: char.voice_channel || "qwen" });
+    if (!char) { send(res, 200, { voice_id: null, tts_enabled: 0, voice_channel: "cosyvoice" }); return; }
+    send(res, 200, { voice_id: char.voice_id || null, tts_enabled: char.tts_enabled || 0, voice_channel: char.voice_channel || "cosyvoice" });
     return;
   }
 
@@ -2468,18 +2500,14 @@ async function handleRequest(req, res) {
     const ct = req.headers["content-type"] || "";
     const extMap = { "audio/wav": ".wav", "audio/wave": ".wav", "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".mp4", "audio/m4a": ".m4a", "audio/ogg": ".ogg", "audio/webm": ".webm" };
     const ext = extMap[ct.split(";")[0].trim()] || ".wav";
-    const channel = await getGlobalSetting("tts_channel", "qwen");
+    const channel = await getGlobalSetting("tts_channel", "cosyvoice");
     const filename = `voice-sample-${char.id}-${Date.now()}${ext}`;
     const ossUrl = await uploadToOss(buf, filename);
-    const voiceId = channel === "cosyvoice"
-      ? await cloneVoiceCosyVoice(ossUrl, char.id)
-      : channel === "qwen-omni"
-        ? await cloneVoiceQwenOmni(ossUrl, char.id)
-        : await cloneVoice(ossUrl, char.id);
+    const voiceId = await pickCloneVoiceFn(channel)(ossUrl, char.id);
     // 若已有旧音色，异步删除
     if (char.voice_id) {
-      const oldChannel = char.voice_channel || "qwen";
-      (oldChannel === "cosyvoice" ? deleteVoiceCosyVoice : oldChannel === "qwen-omni" ? deleteVoiceQwenOmni : deleteVoice)(char.voice_id).catch(() => {});
+      const oldChannel = char.voice_channel || "cosyvoice";
+      pickDeleteVoiceFn(oldChannel)(char.voice_id).catch(() => {});
     }
     await dbRun("UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = 1, voice_preview_url = NULL WHERE id = ?", [voiceId, channel, char.id]);
     send(res, 200, { voice_id: voiceId, voice_channel: channel });
@@ -2491,8 +2519,8 @@ async function handleRequest(req, res) {
     const char = await getActiveCharacter(userId);
     if (!char) { send(res, 404, { error: "no active character" }); return; }
     if (char.voice_id) {
-      const ch = char.voice_channel || "qwen";
-      (ch === "cosyvoice" ? deleteVoiceCosyVoice : ch === "qwen-omni" ? deleteVoiceQwenOmni : deleteVoice)(char.voice_id).catch(() => {});
+      const ch = char.voice_channel || "cosyvoice";
+      pickDeleteVoiceFn(ch)(char.voice_id).catch(() => {});
     }
     await dbRun("UPDATE characters SET voice_id = NULL, tts_enabled = 0, voice_preview_url = NULL WHERE id = ?", [char.id]);
     send(res, 200, { ok: true });
@@ -2512,7 +2540,8 @@ async function handleRequest(req, res) {
     let text = "你好，我是你的专属伴侣，很高兴认识你。";
     if (lang === "ja") text = await translateToJapanese(text);
     try {
-      const synthFn = (char.voice_channel || "qwen") === "cosyvoice" ? synthesizeSpeechCosyVoice : (char.voice_channel || "qwen") === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
+      const synthFn = pickSynthFn(char.voice_channel || "cosyvoice");
+      console.log(`[tts][预览] 合成文本 ch=${char.voice_channel || "cosyvoice"} >>>\n${text}\n<<<`);
       const { url: audioUrl } = await synthFn(text, char.voice_id, lang);
       await dbRun("UPDATE characters SET voice_preview_url = ? WHERE id = ?", [audioUrl, char.id]);
       send(res, 200, { audio_url: audioUrl });
@@ -3203,12 +3232,18 @@ async function handleRequest(req, res) {
           let ttsInput = stripped;
           if (lang === "ja") ttsInput = await translateToJapanese(stripped);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
-          console.log(`[tts] 开始合成 lang=${lang} chars=${ttsInput.length} instruction="${instruction}"`);
-          // 客户端声明不支持流式 PCM（如 RN App）时强制走非流式渠道
+          const ch = ttsChar.voice_channel || "cosyvoice";
+          // 客户端声明不支持流式 PCM（如 RN App）时不推 chunk，直接等最终音频
           const allowStreamTts = req.headers["x-stream-tts"] !== "0";
-          const ch = (allowStreamTts ? (ttsChar.voice_channel || "qwen") : (ttsChar.voice_channel === "cosyvoice" ? "qwen" : (ttsChar.voice_channel || "qwen")));
+          // qwen-audio 支持情感/富语言标签，结合情绪在中文台词里智能插标签
+          if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+            ttsInput = await injectAudioTags(ttsInput, { mood, personality: char?.personality || "" });
+          }
+          console.log(`[tts] 开始合成 lang=${lang} ch=${ch} chars=${ttsInput.length} instruction="${instruction}"`);
+          console.log(`[tts] 合成文本 >>>\n${ttsInput}\n<<<`);
           let audioUrl;
-          if (ch === "cosyvoice") {
+          if (ch === "cosyvoice" && allowStreamTts) {
+            // 流式：边合成边推 PCM chunk
             pushToUser(userId, { tts_stream_start: true, msg_id: Number(msgId) });
             const { url } = await synthesizeSpeechCosyVoice(
               ttsInput, ttsChar.voice_id, lang, instruction,
@@ -3217,9 +3252,8 @@ async function handleRequest(req, res) {
             audioUrl = url;
             pushToUser(userId, { tts_stream_end: true, msg_id: Number(msgId), audio_url: audioUrl });
           } else {
-            const { url } = ch === "qwen-omni"
-              ? await synthesizeSpeechQwenOmni(ttsInput, ttsChar.voice_id, lang, instruction)
-              : await synthesizeSpeech(ttsInput, ttsChar.voice_id, lang, instruction);
+            // 非流式：cosyvoice 不传 onChunk 回调即等最终 wav；qwen-audio 走 HTTP
+            const { url } = await pickSynthFn(ch)(ttsInput, ttsChar.voice_id, lang, instruction);
             audioUrl = url;
             pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
           }
@@ -3776,8 +3810,12 @@ setInterval(async () => {
             .replace(/\s{2,}/g, " ").trim();
           let ttsInput = ttsScript;
           if (lang === "ja") ttsInput = await translateToJapanese(ttsScript);
-          const ch = char.voice_channel || "qwen";
-          const synthFn = ch === "cosyvoice" ? synthesizeSpeechCosyVoice : ch === "qwen-omni" ? synthesizeSpeechQwenOmni : synthesizeSpeech;
+          const ch = char.voice_channel || "cosyvoice";
+          const synthFn = pickSynthFn(ch);
+          if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+            ttsInput = await injectAudioTags(ttsInput, { mood: "委屈生气", personality: char.personality || "" });
+          }
+          console.log(`[tts][来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
           const { url } = await synthFn(ttsInput, char.voice_id, lang, "带电话音效果，语气有点生气，带着一丝委屈");
           audioUrl = url;
         } catch (err) {
