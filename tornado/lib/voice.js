@@ -151,7 +151,8 @@ export async function generateTtsInstruction(charName, personality, mood, recent
 }
 
 // Qwen-Audio-TTS 支持的标签白名单（仅这些会被模型识别，其余会被读成文字）
-const AUDIO_CONTROL_TAGS = ["sad", "amazed", "deep and loud shouting", "trembling", "angry", "excited", "sarcastic", "curious", "like dracula", "bored", "tired", "scornful", "shouting", "asmr", "panicked", "mischievously", "empathetic", "whispers", "reluctantly", "crying", "serious", "very slowly", "very fast"];
+// 已剔除会明显拖慢语速/不适合聊天陪伴场景的标签：very slowly、tired、bored、very fast、deep and loud shouting、shouting、like dracula
+const AUDIO_CONTROL_TAGS = ["sad", "amazed", "trembling", "angry", "excited", "sarcastic", "curious", "panicked", "mischievously", "empathetic", "whispers", "reluctantly", "crying", "serious"];
 const AUDIO_RICH_TAGS = ["gasp", "sighing", "clears throat", "giggles", "laughing", "cough", "snorts"];
 const ALL_AUDIO_TAGS = new Set([...AUDIO_CONTROL_TAGS, ...AUDIO_RICH_TAGS]);
 
@@ -177,9 +178,9 @@ export async function injectAudioTags(text, { mood = "", personality = "" } = {}
             "",
             "规则：",
             "1. 只能使用上面列出的标签，一个字都不能改动标签内的英文，禁止发明新标签。",
-            "2. 【必须】开头一定要放一个控制类标签定情绪基调，不允许整段没有控制类标签。根据“当前情绪”选最贴切的一个。例如：害羞→[whispers]、生气→[angry]、温柔→[empathetic]、俏皮→[mischievously]、难过→[sad]、疲惫→[tired]、认真→[serious]、兴奋→[excited]、好奇→[curious]、惊讶→[amazed]、无聊→[bored]、讽刺→[sarcastic]。",
-            "3. 【积极切换】台词里情绪一有变化（如从关心转俏皮、从平静转激动、疑问转肯定），就在转折处换一个新的控制类标签。一段两三句的话通常会有 2~3 个控制类标签，让语气有起伏。",
-            "4. 富语言标签（笑声/叹息/清嗓/倒吸气等）在台词语义合适处积极插入，让声音更生动：说到开心俏皮处可加 [giggles]，感慨无奈处加 [sighing]，惊讶处加 [gasp]。但每种拟声不要连续重复，也不要凭空插入与语义无关的拟声。",
+            "2. 标签必须真实贴合台词语义和“当前情绪”，宁可不加也不要硬凑。语气明确时在开头放一个最贴切的控制类标签定基调；语气平淡的日常对话可以不加控制类标签。参考：害羞/亲昵→[whispers]、生气→[angry]、温柔关切→[empathetic]、俏皮调侃→[mischievously]、难过→[sad]、认真→[serious]、兴奋→[excited]、好奇→[curious]、惊讶→[amazed]、讽刺→[sarcastic]、委屈不情愿→[reluctantly]。选不准就不加。",
+            "3. 只有台词中情绪确实发生明显转折时，才在转折处换一个控制类标签；不要为了多加而频繁切换。一段话通常 0~2 个控制类标签即可。",
+            "4. 富语言标签（笑声/叹息/倒吸气等）仅在台词语义真的发生该动作时插入：确实在笑才加 [giggles]，确实在叹气才加 [sighing]，确实惊讶倒吸气才加 [gasp]。不确定就不加，整段最多 1 个，宁缺勿滥。",
             "5. 不要改写、删减、增补台词原文的任何文字和标点，只插入标签。",
             "6. 直接输出插好标签的台词，不要解释、不要引号、不要代码块。"
           ].join("\n")
@@ -258,8 +259,9 @@ export async function deleteVoiceQwenAudio(voiceId) {
 }
 
 export async function synthesizeSpeechQwenAudio(text, voiceId, lang = "zh", instruction = "", model = QWEN_AUDIO_TTS_FLASH) {
+  // 注意：Qwen-Audio-TTS 的表现力由文本内嵌标签控制，不再叠加自然语言 instruction
+  // （instruction 里的“语速缓慢”等会与标签打架并整体拖慢语速），故此处忽略 instruction
   const input = { text, voice: voiceId, format: "wav", sample_rate: 24000 };
-  if (instruction) input.instruction = instruction;
   const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
