@@ -131,41 +131,39 @@ export async function summarizePlot(msgs) {
   return (res.choices?.[0]?.message?.content || "").trim().slice(0, 150);
 }
 
-export async function generateTtsInstruction(charName, personality, mood, recentMsgs) {
-  const context = recentMsgs.slice(-4).map((m) => `${m.role === "user" ? "用户" : charName}: ${m.content.slice(0, 60)}`).join("\n");
-  const res = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    enable_thinking: false,
-    messages: [
-      {
-        role: "system",
-        content: [
-          "你是语音合成指令生成助手。根据角色信息和当前对话情绪，生成一段简短的语音合成风格指令（不超过40字），只描述语速、语调、情感状态等朗读风格，不得包含任何台词、对话内容或引号内的文字。直接输出指令，不要解释。",
-          "重要：语速要贴合当前情绪真实变化，默认用正常偏自然的语速，开心、俏皮、生气、着急、兴奋等情绪应偏快或正常。",
-          "不同情绪的示例（供参考，绝对不要照抄）：",
-          "- 开心俏皮：语速偏快，语调轻快跳跃，带笑意",
-          "- 生气：语速较快，语气冲，音量偏大",
-          "- 害羞：语速正常略顿，声音偏小，尾音轻",
-          "- 温柔安慰：语调柔和",
-          "- 难过：声音低沉，气息下沉",
-          "- 平静日常：语速自然，语调平实"
-        ].join("\n")
-      },
-      {
-        role: "user",
-        content: `角色名：${charName}\n性格：${(personality || "").slice(0, 100)}\n当前情绪：${mood || "平静"}\n近期对话：\n${context}`
-      }
-    ]
-  });
-  return (res.choices?.[0]?.message?.content || "").trim().slice(0, 50);
-}
-
 // Qwen-Audio-TTS 支持的标签白名单（仅这些会被模型识别，其余会被读成文字）
 // 已剔除会明显拖慢语速/不适合聊天陪伴场景的标签：very slowly、tired、bored、very fast、deep and loud shouting、shouting、like dracula
-const AUDIO_CONTROL_TAGS = ["sad", "amazed", "trembling", "angry", "excited", "sarcastic", "curious", "panicked", "mischievously", "empathetic", "whispers", "reluctantly", "crying", "serious"];
+const AUDIO_CONTROL_TAGS = ["sad", "amazed", "trembling", "angry", "excited", "sarcastic", "curious", "panicked", "mischievously", "empathetic", "reluctantly", "crying", "serious"];
 const AUDIO_RICH_TAGS = ["gasp", "sighing", "clears throat", "giggles", "laughing", "cough", "snorts"];
 const ALL_AUDIO_TAGS = new Set([...AUDIO_CONTROL_TAGS, ...AUDIO_RICH_TAGS]);
 const CONTROL_TAG_SET = new Set(AUDIO_CONTROL_TAGS);
+
+// instruction 硬过滤：剔除任何拖慢语速的措辞（会让合成语音变慢吞）
+function sanitizeInstruction(s) {
+  return (s || "").trim().slice(0, 50)
+    .replace(/语速(偏|稍|较|很|非常)?(慢|缓慢|放慢|放缓)/g, "语速自然")
+    .replace(/(偏|稍|较|很|非常)?(慢|缓慢)(吞吞)?(地|的)?/g, "")
+    .replace(/放(慢|缓)(语速|节奏)?/g, "")
+    .replace(/[，,、]{2,}/g, "，")
+    .replace(/^[，,、\s]+|[，,、\s]+$/g, "")
+    .trim();
+}
+
+// 标签文本校验：剔除白名单外标签；去标签后须与原文逐字一致（只插不改）；控制类≤1、富语言≤2
+function sanitizeTaggedText(tagged, original) {
+  tagged = (tagged || "").trim();
+  if (!tagged) return original;
+  tagged = tagged.replace(/\[([^\]]+)\]/g, (m, inner) => (ALL_AUDIO_TAGS.has(inner.trim()) ? `[${inner.trim()}]` : ""));
+  const stripped = tagged.replace(/\[[^\]]+\]/g, "").replace(/\s+/g, "");
+  if (stripped !== original.replace(/\s+/g, "")) return original;
+  let controlKept = 0, richKept = 0;
+  tagged = tagged.replace(/\[([^\]]+)\]/g, (m, inner) => {
+    const tag = inner.trim();
+    if (CONTROL_TAG_SET.has(tag)) return ++controlKept <= 1 ? `[${tag}]` : "";
+    return ++richKept <= 2 ? `[${tag}]` : "";
+  });
+  return tagged.replace(/\s{2,}/g, " ").trim() || original;
+}
 
 // 合成前文本归一化：省略号/多个句末标点会让 TTS 拉长停顿，导致整体语速拖沓
 // 把连续的 …/。。。/... 及重复标点收敛为单个，减少不必要的停顿
@@ -204,7 +202,7 @@ export async function injectAudioTags(text, { mood = "", personality = "" } = {}
             "",
             "规则：",
             "1. 只能使用上面列出的标签，一个字都不能改动标签内的英文，禁止发明新标签。",
-            "2. 真实的人说一段话，情绪基调是稳定的，不会来回大起大落。所以控制类标签原则上只在开头放一个，定住整段的情绪基调，之后不再切换。参考：生气→[angry]、俏皮调侃→[mischievously]、兴奋→[excited]、温柔/亲昵/关切→[empathetic]、难过→[sad]、好奇→[curious]、惊讶→[amazed]、讽刺→[sarcastic]、委屈不情愿→[reluctantly]、认真→[serious]、害羞→[whispers]。注意：[whispers]（耳语）只用于真正压低嗓音、悄悄话的场景，普通的温柔或亲密请用 [empathetic]，不要滥用 [whispers]。语气平淡的日常对话可以不加，选不准就不加。",
+            "2. 真实的人说一段话，情绪基调是稳定的，不会来回大起大落。所以控制类标签原则上只在开头放一个，定住整段的情绪基调，之后不再切换。参考：生气→[angry]、俏皮调侃→[mischievously]、兴奋→[excited]、温柔/亲昵/关切→[empathetic]、难过→[sad]、好奇→[curious]、惊讶→[amazed]、讽刺→[sarcastic]、委屈不情愿→[reluctantly]、认真→[serious]、害羞/温柔/亲昵→[empathetic]。语气平淡的日常对话可以不加，选不准就不加。",
             "3. 只有极少数情况——台词中途情绪发生明显反转（如先难过后突然开心）——才允许在中间再插一个控制类标签。整段控制类标签最多 2 个，绝大多数情况就 1 个或 0 个。",
             "4. 富语言标签（笑声/叹息/倒吸气等）是主要的点缀手段，在台词语义真的发生该动作的位置插入，让语音生动自然：确实在笑处加 [giggles]，感慨叹气处加 [sighing]，惊讶倒吸气处加 [gasp]，清嗓处加 [clears throat]。按语义需要插入，可比控制类标签更灵活，但不要凭空插与语义无关的拟声，同一种拟声不要连续重复。",
             "5. 不要改写、删减、增补台词原文的任何文字和标点，只插入标签。",
@@ -217,26 +215,54 @@ export async function injectAudioTags(text, { mood = "", personality = "" } = {}
         }
       ]
     });
-    let tagged = (res.choices?.[0]?.message?.content || "").trim();
+    const tagged = (res.choices?.[0]?.message?.content || "").trim();
     if (!tagged) return text;
-    // 安全校验：剔除任何不在白名单里的方括号标签，避免被读成文字
-    tagged = tagged.replace(/\[([^\]]+)\]/g, (m, inner) => (ALL_AUDIO_TAGS.has(inner.trim()) ? `[${inner.trim()}]` : ""));
-    // 去标签后应与原文一致（只允许插入标签，不允许改字）；不一致则放弃，返回原文
-    const stripped = tagged.replace(/\[[^\]]+\]/g, "").replace(/\s+/g, "");
-    if (stripped !== text.replace(/\s+/g, "")) return text;
-    // 硬性上限：控制类标签最多保留 1 个（真人一段话基调稳定），富语言标签最多 2 个
-    let controlKept = 0;
-    let richKept = 0;
-    tagged = tagged.replace(/\[([^\]]+)\]/g, (m, inner) => {
-      const tag = inner.trim();
-      if (CONTROL_TAG_SET.has(tag)) {
-        return ++controlKept <= 1 ? `[${tag}]` : "";
-      }
-      return ++richKept <= 2 ? `[${tag}]` : "";
-    });
-    return tagged.replace(/\s{2,}/g, " ").trim() || text;
+    return sanitizeTaggedText(tagged, text);
   } catch {
     return text;
+  }
+}
+
+// 一次 LLM 调用同时产出「语速语调指令」与「带情感/拟声标签的台词」，两者基于同一情绪判断，
+// 避免 instruction 与标签各判各的、情绪相反导致音色漂移。
+// 返回 { instruction, tagged }；wantInstruction / wantTags 控制各自是否生成
+export async function generateTtsStyle(text, { charName = "", personality = "", mood = "", wantInstruction = true, wantTags = true } = {}) {
+  const result = { instruction: "", tagged: text };
+  if (!text || !text.trim()) return result;
+  if (!wantInstruction && !wantTags) return result;
+  try {
+    const sys = [
+      "你是语音合成风格助手。基于角色台词与当前情绪，先在心里确定一个统一的情绪基调，然后据此同时产出两部分，二者情绪必须一致，不得相互矛盾：",
+      wantInstruction ? "1) instruction：一句不超过40字的朗读风格指令，只描述语速/语调/情感状态，不含任何台词原文或引号内容。【硬性禁令】绝不出现“慢/缓慢/偏慢/放慢/放缓”等拖慢语速的字眼，语速一律用“正常/自然/偏快”。开心俏皮兴奋生气着急偏快，其余自然。" : "",
+      wantTags ? [
+        "2) tagged：在台词原文中插入情感/拟声标签后的完整文本，一个字都不改台词，只插标签。",
+        `控制类标签（放句首定情绪基调，整段最多1个，选不准可不加）：${AUDIO_CONTROL_TAGS.map((t) => `[${t}]`).join(" ")}`,
+        `富语言标签（在真的发生该动作处点缀，如笑→[giggles]、叹息→[sighing]、倒吸气→[gasp]）：${AUDIO_RICH_TAGS.map((t) => `[${t}]`).join(" ")}`,
+        "只能用上面列出的标签，禁止发明；控制类标签必须和 instruction 的情绪一致（如 instruction 说生气，就用 [angry]，不能用温柔类）。"
+      ].join("\n") : "",
+      "以严格 JSON 输出，不要解释、不要代码块，格式：{\"instruction\":\"...\",\"tagged\":\"...\"}"
+    ].filter(Boolean).join("\n");
+    const res = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      enable_thinking: false,
+      max_tokens: 600,
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: `角色名：${charName}\n性格：${(personality || "").slice(0, 100)}\n当前情绪：${mood || "平静"}\n台词：${text}` }
+      ]
+    });
+    const raw = (res.choices?.[0]?.message?.content || "").trim();
+    let parsed;
+    try {
+      const jsonStr = raw.replace(/^```(?:json)?/i, "").replace(/```$/,"").trim();
+      parsed = JSON.parse(jsonStr);
+    } catch { parsed = null; }
+    if (!parsed) return result;
+    if (wantInstruction) result.instruction = sanitizeInstruction(parsed.instruction || "");
+    if (wantTags) result.tagged = sanitizeTaggedText(parsed.tagged || "", text);
+    return result;
+  } catch {
+    return result;
   }
 }
 

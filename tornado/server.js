@@ -25,7 +25,7 @@ import {
 } from "./lib/image.js";
 import {
   cloneVoiceCosyVoice, deleteVoiceCosyVoice, synthesizeSpeechCosyVoice,
-  summarizePlot, generateTtsInstruction,
+  summarizePlot, generateTtsStyle,
   translateToJapanese, injectAudioTags, normalizeTtsText,
   cloneVoiceQwenAudio, deleteVoiceQwenAudio, synthesizeSpeechQwenAudio,
   QWEN_AUDIO_TTS_FLASH, QWEN_AUDIO_TTS_PLUS,
@@ -1262,8 +1262,8 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
       const callInstruction = gentle
         ? "带电话音效果，语气温柔，声音轻柔关切"
         : "带电话音效果，语气有点生气，带着一丝委屈";
-      const emotionEnabled = (await getGlobalSetting("tts_emotion_enabled", "1")) === "1";
-      if (emotionEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+      const tagsEnabled = (await getGlobalSetting("tts_tags_enabled", "1")) === "1";
+      if (tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
         ttsInput = await injectAudioTags(ttsInput, { mood: gentle ? "温柔关切" : "委屈生气", personality: char.personality || "" });
       }
       console.log(`[tts][特殊来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
@@ -1911,7 +1911,8 @@ async function handleRequest(req, res) {
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
         tts_channel: await getGlobalSetting("tts_channel", "cosyvoice"),
-        tts_emotion_enabled: await getGlobalSetting("tts_emotion_enabled", "1"),
+        tts_instruction_enabled: await getGlobalSetting("tts_instruction_enabled", "1"),
+        tts_tags_enabled: await getGlobalSetting("tts_tags_enabled", "1"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
@@ -1954,8 +1955,11 @@ async function handleRequest(req, res) {
       if ("tts_channel" in body && TTS_CHANNELS.includes(body.tts_channel)) {
         await setGlobalSetting("tts_channel", body.tts_channel);
       }
-      if ("tts_emotion_enabled" in body) {
-        await setGlobalSetting("tts_emotion_enabled", body.tts_emotion_enabled ? "1" : "0");
+      if ("tts_instruction_enabled" in body) {
+        await setGlobalSetting("tts_instruction_enabled", body.tts_instruction_enabled ? "1" : "0");
+      }
+      if ("tts_tags_enabled" in body) {
+        await setGlobalSetting("tts_tags_enabled", body.tts_tags_enabled ? "1" : "0");
       }
       if ("call_min_messages" in body) {
         await setGlobalSetting("call_min_messages", String(Math.max(1, Number(body.call_min_messages) || 20)));
@@ -1999,7 +2003,8 @@ async function handleRequest(req, res) {
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
         tts_channel: await getGlobalSetting("tts_channel", "cosyvoice"),
-        tts_emotion_enabled: await getGlobalSetting("tts_emotion_enabled", "1"),
+        tts_instruction_enabled: await getGlobalSetting("tts_instruction_enabled", "1"),
+        tts_tags_enabled: await getGlobalSetting("tts_tags_enabled", "1"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
@@ -3239,18 +3244,23 @@ async function handleRequest(req, res) {
           const lang = ttsSettings.ttsLang || "zh";
           let ttsInput = normalizeTtsText(stripped);
           if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
-          // 语音情感总开关：关闭时不生成 instruction、不打标签
-          const emotionEnabled = (await getGlobalSetting("tts_emotion_enabled", "1")) === "1";
-          const instruction = emotionEnabled
-            ? await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "")
-            : "";
           const ch = ttsChar.voice_channel || "cosyvoice";
+          // instruction 与标签为两个独立开关；标签仅 qwen-audio 中文渠道有效
+          const instructionEnabled = (await getGlobalSetting("tts_instruction_enabled", "1")) === "1";
+          const tagsEnabled = (await getGlobalSetting("tts_tags_enabled", "1")) === "1";
+          const wantTags = tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh";
+          // 一次 LLM 调用同时产出 instruction 和标签，保证两者情绪一致，避免音色漂移
+          let instruction = "";
+          if (instructionEnabled || wantTags) {
+            const style = await generateTtsStyle(ttsInput, {
+              charName: char?.name || "", personality: char?.personality || "", mood,
+              wantInstruction: instructionEnabled, wantTags
+            }).catch(() => ({ instruction: "", tagged: ttsInput }));
+            instruction = style.instruction || "";
+            if (wantTags) ttsInput = style.tagged || ttsInput;
+          }
           // 客户端声明不支持流式 PCM（如 RN App）时不推 chunk，直接等最终音频
           const allowStreamTts = req.headers["x-stream-tts"] !== "0";
-          // qwen-audio 支持情感/富语言标签，结合情绪在中文台词里智能插标签
-          if (emotionEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
-            ttsInput = await injectAudioTags(ttsInput, { mood, personality: char?.personality || "" });
-          }
           console.log(`[tts] 开始合成 lang=${lang} ch=${ch} chars=${ttsInput.length} instruction="${instruction}"`);
           console.log(`[tts] 合成文本 >>>\n${ttsInput}\n<<<`);
           let audioUrl;
@@ -3824,8 +3834,8 @@ setInterval(async () => {
           if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
           const ch = char.voice_channel || "cosyvoice";
           const synthFn = pickSynthFn(ch);
-          const emotionEnabled = (await getGlobalSetting("tts_emotion_enabled", "1")) === "1";
-          if (emotionEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+          const tagsEnabled = (await getGlobalSetting("tts_tags_enabled", "1")) === "1";
+          if (tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
             ttsInput = await injectAudioTags(ttsInput, { mood: "委屈生气", personality: char.personality || "" });
           }
           console.log(`[tts][来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
