@@ -139,7 +139,17 @@ export async function generateTtsInstruction(charName, personality, mood, recent
     messages: [
       {
         role: "system",
-        content: "你是语音合成指令生成助手。根据角色信息和当前对话情绪，生成一段简短的语音合成风格指令（不超过50字），只描述语速、语调、情感状态等朗读风格，不得包含任何台词、对话内容或引号内的文字，直接输出指令，不要任何解释。示例：语速稍快，语气不耐烦，带轻微鼻音。"
+        content: [
+          "你是语音合成指令生成助手。根据角色信息和当前对话情绪，生成一段简短的语音合成风格指令（不超过40字），只描述语速、语调、情感状态等朗读风格，不得包含任何台词、对话内容或引号内的文字。直接输出指令，不要解释。",
+          "重要：语速要贴合当前情绪真实变化，默认用正常偏自然的语速，不要动不动就“语速缓慢/放缓”。只有明显低落、疲惫、深情倾诉等情绪才用慢速；开心、俏皮、生气、着急、兴奋等情绪应偏快或正常。",
+          "不同情绪的示例（供参考，不要照抄）：",
+          "- 开心俏皮：语速偏快，语调轻快跳跃，带笑意",
+          "- 生气：语速较快，语气冲，音量偏大",
+          "- 害羞：语速正常略顿，声音偏小，尾音轻",
+          "- 温柔安慰：语速平缓，语调柔和",
+          "- 难过：语速偏慢，声音低沉，气息下沉",
+          "- 平静日常：语速自然，语调平实"
+        ].join("\n")
       },
       {
         role: "user",
@@ -194,7 +204,7 @@ export async function injectAudioTags(text, { mood = "", personality = "" } = {}
             "",
             "规则：",
             "1. 只能使用上面列出的标签，一个字都不能改动标签内的英文，禁止发明新标签。",
-            "2. 真实的人说一段话，情绪基调是稳定的，不会来回大起大落。所以控制类标签原则上只在开头放一个，定住整段的情绪基调，之后不再切换。参考：害羞/亲昵→[whispers]、生气→[angry]、温柔关切→[empathetic]、俏皮调侃→[mischievously]、难过→[sad]、认真→[serious]、兴奋→[excited]、好奇→[curious]、惊讶→[amazed]、讽刺→[sarcastic]、委屈不情愿→[reluctantly]。语气平淡的日常对话可以不加，选不准就不加。",
+            "2. 真实的人说一段话，情绪基调是稳定的，不会来回大起大落。所以控制类标签原则上只在开头放一个，定住整段的情绪基调，之后不再切换。参考：生气→[angry]、俏皮调侃→[mischievously]、兴奋→[excited]、温柔/亲昵/关切→[empathetic]、难过→[sad]、好奇→[curious]、惊讶→[amazed]、讽刺→[sarcastic]、委屈不情愿→[reluctantly]、认真→[serious]、害羞→[whispers]。注意：[whispers]（耳语）只用于真正压低嗓音、悄悄话的场景，普通的温柔或亲密请用 [empathetic]，不要滥用 [whispers]。语气平淡的日常对话可以不加，选不准就不加。",
             "3. 只有极少数情况——台词中途情绪发生明显反转（如先难过后突然开心）——才允许在中间再插一个控制类标签。整段控制类标签最多 2 个，绝大多数情况就 1 个或 0 个。",
             "4. 富语言标签（笑声/叹息/倒吸气等）是主要的点缀手段，在台词语义真的发生该动作的位置插入，让语音生动自然：确实在笑处加 [giggles]，感慨叹气处加 [sighing]，惊讶倒吸气处加 [gasp]，清嗓处加 [clears throat]。按语义需要插入，可比控制类标签更灵活，但不要凭空插与语义无关的拟声，同一种拟声不要连续重复。",
             "5. 不要改写、删减、增补台词原文的任何文字和标点，只插入标签。",
@@ -285,9 +295,8 @@ export async function deleteVoiceQwenAudio(voiceId) {
 }
 
 export async function synthesizeSpeechQwenAudio(text, voiceId, lang = "zh", instruction = "", model = QWEN_AUDIO_TTS_FLASH) {
-  // 注意：Qwen-Audio-TTS 的表现力由文本内嵌标签控制，不再叠加自然语言 instruction
-  // （instruction 里的“语速缓慢”等会与标签打架并整体拖慢语速），故此处忽略 instruction
   const input = { text, voice: voiceId, format: "wav", sample_rate: 24000 };
+  if (instruction) input.instruction = instruction;
   const res = await fetch("https://dashscope.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer", {
     method: "POST",
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
