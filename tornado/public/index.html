@@ -230,6 +230,16 @@
             <label>外貌</label>
             <textarea id="char-appearance" rows="2" class="soul-field-input" placeholder="外貌描述，用于生成图片"></textarea>
           </div>
+          <div class="rp-soul-field" id="ref-image-section">
+            <label>参考图（可选）</label>
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">上传后角色卡片、头像及聊天配图都以此图做图生图，保持形象统一</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+              <img id="ref-image-preview" style="display:none;width:60px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#333)">
+              <input type="file" id="ref-image-upload" accept="image/*" style="display:none">
+              <button id="ref-image-upload-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px">上传参考图</button>
+              <button id="ref-image-delete-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px;display:none;color:#f87171;border-color:#f87171">移除</button>
+            </div>
+          </div>
           <div class="rp-soul-field">
             <label>人物说明</label>
             <textarea id="char-description" rows="2" class="soul-field-input" placeholder="角色来源、背景说明"></textarea>
@@ -496,6 +506,16 @@
             <div class="rp-soul-field">
               <label>外貌</label>
               <textarea id="cm-char-appearance" rows="2" class="soul-field-input" placeholder="外貌描述，用于生成图片"></textarea>
+            </div>
+            <div class="rp-soul-field" id="cm-ref-image-section">
+              <label>参考图（可选）</label>
+              <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">上传后角色卡片、头像及聊天配图都以此图做图生图，保持形象统一</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+                <img id="cm-ref-image-preview" style="display:none;width:60px;height:80px;object-fit:cover;border-radius:6px;border:1px solid var(--border,#333)">
+                <input type="file" id="cm-ref-image-upload" accept="image/*" style="display:none">
+                <button id="cm-ref-image-upload-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px">上传参考图</button>
+                <button id="cm-ref-image-delete-btn" class="rp-ingest-btn" style="margin-top:0;padding:5px 12px;font-size:12px;display:none;color:#f87171;border-color:#f87171">移除</button>
+              </div>
             </div>
             <div class="rp-soul-field">
               <label>人物说明</label>
