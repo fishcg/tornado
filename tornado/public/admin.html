@@ -601,10 +601,17 @@
         <h3 style="margin-top:16px">语音情感</h3>
         <div class="toggle-wrap">
           <label class="toggle">
-            <input type="checkbox" id="ttsEmotionToggle">
+            <input type="checkbox" id="ttsInstructionToggle">
             <span class="toggle-slider"></span>
           </label>
-          <label for="ttsEmotionToggle">开启后合成语音会带情感风格（Qwen-Audio 渠道插入情感/拟声标签，并生成语速语调指令）；关闭后按原文平读</label>
+          <label for="ttsInstructionToggle">语速语调指令：开启后按情绪生成语速/语调风格指令控制朗读；关闭后按默认音色朗读</label>
+        </div>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="ttsTagsToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="ttsTagsToggle">情感/拟声标签：开启后在 Qwen-Audio 渠道的中文台词里插入情感与拟声标签（笑声、叹息等）；关闭后不插标签</label>
         </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
@@ -915,7 +922,8 @@ async function loadSystem() {
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
     document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "cosyvoice";
-    document.getElementById("ttsEmotionToggle").checked = settings.tts_emotion_enabled !== "0";
+    document.getElementById("ttsInstructionToggle").checked = settings.tts_instruction_enabled !== "0";
+    document.getElementById("ttsTagsToggle").checked = settings.tts_tags_enabled !== "0";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
     document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
@@ -940,8 +948,9 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
   const multiCharAwareness = document.getElementById("multiCharAwarenessToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
-  const ttsEmotionEnabled = document.getElementById("ttsEmotionToggle").checked;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel, tts_emotion_enabled: ttsEmotionEnabled }) });
+  const ttsInstructionEnabled = document.getElementById("ttsInstructionToggle").checked;
+  const ttsTagsEnabled = document.getElementById("ttsTagsToggle").checked;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel, tts_instruction_enabled: ttsInstructionEnabled, tts_tags_enabled: ttsTagsEnabled }) });
   if (data) showMsg("已保存");
 });
 
