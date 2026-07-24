@@ -155,6 +155,22 @@ export async function generateTtsInstruction(charName, personality, mood, recent
 const AUDIO_CONTROL_TAGS = ["sad", "amazed", "trembling", "angry", "excited", "sarcastic", "curious", "panicked", "mischievously", "empathetic", "whispers", "reluctantly", "crying", "serious"];
 const AUDIO_RICH_TAGS = ["gasp", "sighing", "clears throat", "giggles", "laughing", "cough", "snorts"];
 const ALL_AUDIO_TAGS = new Set([...AUDIO_CONTROL_TAGS, ...AUDIO_RICH_TAGS]);
+const CONTROL_TAG_SET = new Set(AUDIO_CONTROL_TAGS);
+
+// 合成前文本归一化：省略号/多个句末标点会让 TTS 拉长停顿，导致整体语速拖沓
+// 把连续的 …/。。。/... 及重复标点收敛为单个，减少不必要的停顿
+export function normalizeTtsText(text) {
+  if (!text) return text;
+  return text
+    .replace(/[.．。]{2,}/g, "。")      // 中英文省略式句号 → 单个句号
+    .replace(/[…⋯]+/g, "，")           // 省略号 → 短停顿逗号
+    .replace(/[!！]{2,}/g, "！")
+    .replace(/[?？]{2,}/g, "？")
+    .replace(/[~～]{2,}/g, "～")
+    .replace(/[,，]{2,}/g, "，")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
 
 // 给 Qwen-Audio-TTS 的待合成文本智能插入情感/富语言标签
 // 结合角色回复内容、当前情绪、性格，由 LLM 在合适位置插标签，返回带标签文本
@@ -198,6 +214,16 @@ export async function injectAudioTags(text, { mood = "", personality = "" } = {}
     // 去标签后应与原文一致（只允许插入标签，不允许改字）；不一致则放弃，返回原文
     const stripped = tagged.replace(/\[[^\]]+\]/g, "").replace(/\s+/g, "");
     if (stripped !== text.replace(/\s+/g, "")) return text;
+    // 硬性上限：控制类标签最多保留 1 个（真人一段话基调稳定），富语言标签最多 2 个
+    let controlKept = 0;
+    let richKept = 0;
+    tagged = tagged.replace(/\[([^\]]+)\]/g, (m, inner) => {
+      const tag = inner.trim();
+      if (CONTROL_TAG_SET.has(tag)) {
+        return ++controlKept <= 1 ? `[${tag}]` : "";
+      }
+      return ++richKept <= 2 ? `[${tag}]` : "";
+    });
     return tagged.replace(/\s{2,}/g, " ").trim() || text;
   } catch {
     return text;

@@ -26,7 +26,7 @@ import {
 import {
   cloneVoiceCosyVoice, deleteVoiceCosyVoice, synthesizeSpeechCosyVoice,
   summarizePlot, generateTtsInstruction,
-  translateToJapanese, injectAudioTags,
+  translateToJapanese, injectAudioTags, normalizeTtsText,
   cloneVoiceQwenAudio, deleteVoiceQwenAudio, synthesizeSpeechQwenAudio,
   QWEN_AUDIO_TTS_FLASH, QWEN_AUDIO_TTS_PLUS,
 } from "./lib/voice.js";
@@ -1254,7 +1254,8 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
         .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
         .replace(/\*[^*]{0,80}\*/g, "")
         .replace(/\s{2,}/g, " ").trim();
-      let ttsInput = lang === "ja" ? await translateToJapanese(ttsScript) : ttsScript;
+      const normScript = normalizeTtsText(ttsScript);
+      let ttsInput = lang === "ja" ? await translateToJapanese(normScript) : normScript;
       const ch = char.voice_channel || "cosyvoice";
       const synthFn = pickSynthFn(ch);
       const gentle = (type === "emotion" || type?.startsWith("holiday") || type === "streak");
@@ -2424,7 +2425,8 @@ async function handleRequest(req, res) {
         appearance: char.appearance || "",
         personality: char.personality || "",
         description: char.description || "",
-        soul: char.soul_content || ""
+        soul: char.soul_content || "",
+        reference_image_url: char.reference_image_url || null
       });
     } catch (e) {
       send(res, 404, { error: e.message });
@@ -3229,8 +3231,8 @@ async function handleRequest(req, res) {
             .slice(0, 300);
           if (!stripped) return;
           const lang = ttsSettings.ttsLang || "zh";
-          let ttsInput = stripped;
-          if (lang === "ja") ttsInput = await translateToJapanese(stripped);
+          let ttsInput = normalizeTtsText(stripped);
+          if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
           const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
           const ch = ttsChar.voice_channel || "cosyvoice";
           // 客户端声明不支持流式 PCM（如 RN App）时不推 chunk，直接等最终音频
@@ -3808,8 +3810,8 @@ setInterval(async () => {
             .replace(/[【\[][^\]】]{0,80}[\]】]/g, "")
             .replace(/\*[^*]{0,80}\*/g, "")
             .replace(/\s{2,}/g, " ").trim();
-          let ttsInput = ttsScript;
-          if (lang === "ja") ttsInput = await translateToJapanese(ttsScript);
+          let ttsInput = normalizeTtsText(ttsScript);
+          if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
           const ch = char.voice_channel || "cosyvoice";
           const synthFn = pickSynthFn(ch);
           if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {

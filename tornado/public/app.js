@@ -2864,6 +2864,7 @@ async function loadSoulIntoPanel() {
   } catch {}
   await loadCharacterList();
   await loadVoiceSection("rp");
+  await loadRefImageSection("");
 }
 
 async function loadVoiceSection(prefix) {
@@ -2944,6 +2945,93 @@ function setupVoiceSection(prefix) {
 
 setupVoiceSection("");
 setupVoiceSection("cm-");
+
+// ── 角色参考图上传（图生图，保持形象统一）──────────────────────────────────────
+// 取当前面板对应的角色 id：cm 面板用下拉选中值；rp 面板用激活角色
+async function getRefImageCharId(prefix) {
+  if (prefix === "cm-") {
+    const sel = document.getElementById("cm-character-select");
+    if (sel?.value) return sel.value;
+  }
+  try {
+    const soulData = await api("GET", "/character/soul");
+    return soulData?.character_id || null;
+  } catch { return null; }
+}
+
+async function loadRefImageSection(prefix) {
+  const preview = document.getElementById(`${prefix}ref-image-preview`);
+  const deleteBtn = document.getElementById(`${prefix}ref-image-delete-btn`);
+  if (!preview) return;
+  let url = null;
+  try {
+    const charId = await getRefImageCharId(prefix);
+    if (charId) {
+      const detail = await api("GET", `/characters/${charId}`);
+      url = detail?.reference_image_url || null;
+    }
+  } catch {}
+  if (url) {
+    preview.src = url;
+    preview.style.display = "";
+    if (deleteBtn) deleteBtn.style.display = "";
+  } else {
+    preview.style.display = "none";
+    preview.removeAttribute("src");
+    if (deleteBtn) deleteBtn.style.display = "none";
+  }
+}
+
+function setupRefImageSection(prefix) {
+  const uploadInput = document.getElementById(`${prefix}ref-image-upload`);
+  const uploadBtn = document.getElementById(`${prefix}ref-image-upload-btn`);
+  const deleteBtn = document.getElementById(`${prefix}ref-image-delete-btn`);
+  if (!uploadBtn) return;
+
+  uploadBtn.addEventListener("click", () => uploadInput?.click());
+  uploadInput?.addEventListener("change", async () => {
+    const file = uploadInput.files?.[0];
+    if (!file) return;
+    const charId = await getRefImageCharId(prefix);
+    if (!charId) { showToast("请先创建或选择角色"); uploadInput.value = ""; return; }
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "上传中…";
+    try {
+      const r = await fetch(`/characters/${charId}/reference-image`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": file.type || "image/jpeg" },
+        body: file
+      });
+      if (!r.ok) throw new Error(await r.text());
+      await r.json();
+      showToast("参考图已上传");
+      await loadRefImageSection(prefix);
+    } catch (err) {
+      showToast("上传失败：" + String(err.message || err).slice(0, 60));
+    } finally {
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = "上传参考图";
+      uploadInput.value = "";
+    }
+  });
+
+  deleteBtn?.addEventListener("click", async () => {
+    if (!confirm("确认移除参考图？移除后生图不再基于此图。")) return;
+    const charId = await getRefImageCharId(prefix);
+    if (!charId) return;
+    try {
+      await fetch(`/characters/${charId}/reference-image`, { method: "DELETE", credentials: "include" });
+      showToast("已移除参考图");
+      await loadRefImageSection(prefix);
+    } catch (err) {
+      showToast("移除失败");
+    }
+  });
+}
+
+setupRefImageSection("");
+setupRefImageSection("cm-");
 
 document.getElementById("rp-soul-toggle")?.addEventListener("click", async () => {
   const header = document.getElementById("rp-soul-toggle");
@@ -3035,10 +3123,12 @@ async function openCompanionModal() {
         set("cm-char-description", char.description);
         set("cm-char-personality", char.personality);
         set("cm-soul-editor", char.soul_content);
+        await loadRefImageSection("cm-");
       };
     }
   } catch {}
   await loadVoiceSection("cm");
+  await loadRefImageSection("cm-");
 }
 
 document.getElementById("companion-close")?.addEventListener("click", () => {
