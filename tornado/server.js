@@ -1262,7 +1262,8 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
       const callInstruction = gentle
         ? "带电话音效果，语气温柔，声音轻柔关切"
         : "带电话音效果，语气有点生气，带着一丝委屈";
-      if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+      const emotionEnabled = (await getGlobalSetting("tts_emotion_enabled", "1")) === "1";
+      if (emotionEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
         ttsInput = await injectAudioTags(ttsInput, { mood: gentle ? "温柔关切" : "委屈生气", personality: char.personality || "" });
       }
       console.log(`[tts][特殊来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
@@ -1910,6 +1911,7 @@ async function handleRequest(req, res) {
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
         tts_channel: await getGlobalSetting("tts_channel", "cosyvoice"),
+        tts_emotion_enabled: await getGlobalSetting("tts_emotion_enabled", "1"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
@@ -1951,6 +1953,9 @@ async function handleRequest(req, res) {
       }
       if ("tts_channel" in body && TTS_CHANNELS.includes(body.tts_channel)) {
         await setGlobalSetting("tts_channel", body.tts_channel);
+      }
+      if ("tts_emotion_enabled" in body) {
+        await setGlobalSetting("tts_emotion_enabled", body.tts_emotion_enabled ? "1" : "0");
       }
       if ("call_min_messages" in body) {
         await setGlobalSetting("call_min_messages", String(Math.max(1, Number(body.call_min_messages) || 20)));
@@ -1994,6 +1999,7 @@ async function handleRequest(req, res) {
         milestone_video_duration: await getGlobalSetting("milestone_video_duration", "3"),
         deepseek_thinking: await getGlobalSetting("deepseek_thinking", "0"),
         tts_channel: await getGlobalSetting("tts_channel", "cosyvoice"),
+        tts_emotion_enabled: await getGlobalSetting("tts_emotion_enabled", "1"),
         call_min_messages: await getGlobalSetting("call_min_messages", "20"),
         call_idle_minutes: await getGlobalSetting("call_idle_minutes", "5"),
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
@@ -3233,12 +3239,16 @@ async function handleRequest(req, res) {
           const lang = ttsSettings.ttsLang || "zh";
           let ttsInput = normalizeTtsText(stripped);
           if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
-          const instruction = await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "");
+          // 语音情感总开关：关闭时不生成 instruction、不打标签
+          const emotionEnabled = (await getGlobalSetting("tts_emotion_enabled", "1")) === "1";
+          const instruction = emotionEnabled
+            ? await generateTtsInstruction(char?.name || "", char?.personality || "", mood, recent).catch(() => "")
+            : "";
           const ch = ttsChar.voice_channel || "cosyvoice";
           // 客户端声明不支持流式 PCM（如 RN App）时不推 chunk，直接等最终音频
           const allowStreamTts = req.headers["x-stream-tts"] !== "0";
           // qwen-audio 支持情感/富语言标签，结合情绪在中文台词里智能插标签
-          if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+          if (emotionEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
             ttsInput = await injectAudioTags(ttsInput, { mood, personality: char?.personality || "" });
           }
           console.log(`[tts] 开始合成 lang=${lang} ch=${ch} chars=${ttsInput.length} instruction="${instruction}"`);
@@ -3814,7 +3824,8 @@ setInterval(async () => {
           if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
           const ch = char.voice_channel || "cosyvoice";
           const synthFn = pickSynthFn(ch);
-          if (QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
+          const emotionEnabled = (await getGlobalSetting("tts_emotion_enabled", "1")) === "1";
+          if (emotionEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
             ttsInput = await injectAudioTags(ttsInput, { mood: "委屈生气", personality: char.personality || "" });
           }
           console.log(`[tts][来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
@@ -3986,6 +3997,8 @@ const DEFAULT_CHARACTER_ASSETS = {
   voice_channel: "cosyvoice",
   tts_enabled: 1,
   appearance_hash: "38061f87",
+  // 官方参考图（当前激活卡片），默认龙卷后续生图都以此做图生图，保持形象统一
+  reference_image_url: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780592855792_5f73e48338da60cc.png",
   avatars: {
     angry: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780598286084_f5884408db7bad69.png",
     annoyed: "https://acgay.oss-cn-hangzhou.aliyuncs.com/test/log/outputs/1780598096200_412f04c37c1e039b.png",
@@ -4023,13 +4036,28 @@ async function seedDefaultCharacterAssets(name, userId) {
       [name, c.url, c.active ? 1 : 0, now, userId ?? null]
     );
   }
-  // 音色
+  // 音色 + 官方参考图（图生图基准）
   await dbRun(
-    "UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = ? WHERE name = ? AND (user_id = ? OR (user_id IS NULL AND ? IS NULL))",
-    [A.voice_id, A.voice_channel, A.tts_enabled, name, userId ?? null, userId ?? null]
+    "UPDATE characters SET voice_id = ?, voice_channel = ?, tts_enabled = ?, reference_image_url = ? WHERE name = ? AND (user_id = ? OR (user_id IS NULL AND ? IS NULL))",
+    [A.voice_id, A.voice_channel, A.tts_enabled, A.reference_image_url, name, userId ?? null, userId ?? null]
   );
 }
 
+
+// 一次性回填：给所有名为「龙卷」且尚未设置参考图的角色补上官方参考图
+// 已手动上传过参考图的角色不受影响（WHERE 限定 NULL/空）
+async function backfillDefaultCharacterReferenceImage() {
+  try {
+    const result = await dbRun(
+      "UPDATE characters SET reference_image_url = ? WHERE name = ? AND (reference_image_url IS NULL OR reference_image_url = '')",
+      [DEFAULT_CHARACTER_ASSETS.reference_image_url, DEFAULT_CHARACTER.name]
+    );
+    const n = result?.affectedRows ?? 0;
+    if (n > 0) console.log(`[回填] 已为 ${n} 个默认龙卷角色补上官方参考图`);
+  } catch (e) {
+    console.error("[回填] 默认龙卷参考图失败:", e.message);
+  }
+}
 
 async function ensureDefaultCharacter(userId) {
   let countRow;
@@ -4557,6 +4585,7 @@ server.listen(PORT, async () => {
     console.log(`已初始化邀请码：${DEFAULT_INVITE_CODE}`);
   }
   await ensureDefaultCharacter(null);
+  await backfillDefaultCharacterReferenceImage();
   const activeName = await getCharacterName(null);
   if (activeName && activeName !== "default") {
     // 只在有缺失头像时才预生成，避免每次重启都触发

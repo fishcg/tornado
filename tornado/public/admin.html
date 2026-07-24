@@ -598,6 +598,14 @@
           </select>
           <span style="color:var(--text-dim);font-size:13px">影响新上传音色使用的复刻渠道，已复刻的角色不受影响</span>
         </div>
+        <h3 style="margin-top:16px">语音情感</h3>
+        <div class="toggle-wrap">
+          <label class="toggle">
+            <input type="checkbox" id="ttsEmotionToggle">
+            <span class="toggle-slider"></span>
+          </label>
+          <label for="ttsEmotionToggle">开启后合成语音会带情感风格（Qwen-Audio 渠道插入情感/拟声标签，并生成语速语调指令）；关闭后按原文平读</label>
+        </div>
         <button class="btn-sm btn-primary" id="saveGlobalSettingsBtn" style="margin-top:12px">保存</button>
       </div>
       <div class="admin-form">
@@ -907,6 +915,7 @@ async function loadSystem() {
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
     document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "cosyvoice";
+    document.getElementById("ttsEmotionToggle").checked = settings.tts_emotion_enabled !== "0";
     document.getElementById("callMinMessages").value = settings.call_min_messages ?? "20";
     document.getElementById("callIdleMinutes").value = settings.call_idle_minutes ?? "5";
     document.getElementById("callCooldownMinutes").value = settings.call_cooldown_minutes ?? "60";
@@ -931,7 +940,8 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const deepseekThinking = document.getElementById("deepseekThinkingToggle").checked;
   const multiCharAwareness = document.getElementById("multiCharAwarenessToggle").checked;
   const ttsChannel = document.getElementById("ttsChannel").value;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel }) });
+  const ttsEmotionEnabled = document.getElementById("ttsEmotionToggle").checked;
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel, tts_emotion_enabled: ttsEmotionEnabled }) });
   if (data) showMsg("已保存");
 });
 
