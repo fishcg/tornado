@@ -14,6 +14,10 @@ type CharDetail = {
   appearance: string | null;
   personality: string | null;
   description: string | null;
+  values_content: string | null;
+  boundaries_content: string | null;
+  habits_content: string | null;
+  speech_examples: string | null;
   soul_content: string | null;
   is_active: number;
 };
@@ -26,6 +30,10 @@ export default function EditCharacter() {
   const [appearance, setAppearance] = useState("");
   const [description, setDescription] = useState("");
   const [personality, setPersonality] = useState("");
+  const [valuesContent, setValuesContent] = useState("");
+  const [boundariesContent, setBoundariesContent] = useState("");
+  const [habitsContent, setHabitsContent] = useState("");
+  const [speechExamples, setSpeechExamples] = useState("");
   const [soul, setSoul] = useState("");
   const [isActive, setIsActive] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -38,6 +46,10 @@ export default function EditCharacter() {
         setAppearance(d.appearance || "");
         setDescription(d.description || "");
         setPersonality(d.personality || "");
+        setValuesContent(d.values_content || "");
+        setBoundariesContent(d.boundaries_content || "");
+        setHabitsContent(d.habits_content || "");
+        setSpeechExamples(d.speech_examples || "");
         setSoul(d.soul_content || "");
         setIsActive(!!d.is_active);
       })
@@ -52,6 +64,10 @@ export default function EditCharacter() {
       await api("PATCH", `/characters/${cid}`, {
         name: name.trim(),
         appearance, description, personality,
+        values_content: valuesContent,
+        boundaries_content: boundariesContent,
+        habits_content: habitsContent,
+        speech_examples: speechExamples,
         soul_content: soul,
       });
       router.back();
@@ -96,6 +112,26 @@ export default function EditCharacter() {
         <Text style={s.hint}>性格特征、口头禅、对待你的方式</Text>
         <TextInput value={personality} onChangeText={setPersonality} style={[s.input, s.area3]}
           multiline placeholder="性格特征" placeholderTextColor="#555" />
+
+        <Text style={s.label}>价值观与在意的事</Text>
+        <Text style={s.hint}>她真正重视什么，遇到冲突时如何取舍</Text>
+        <TextInput value={valuesContent} onChangeText={setValuesContent} style={[s.input, s.area2]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>边界与雷区</Text>
+        <Text style={s.hint}>能接受什么，哪些行为会让她不舒服</Text>
+        <TextInput value={boundariesContent} onChangeText={setBoundariesContent} style={[s.input, s.area2]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>习惯与生活细节</Text>
+        <Text style={s.hint}>作息、爱好、小动作和日常习惯</Text>
+        <TextInput value={habitsContent} onChangeText={setHabitsContent} style={[s.input, s.area2]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>说话示例与反例</Text>
+        <Text style={s.hint}>写几组她会怎么说，以及绝不会怎么说</Text>
+        <TextInput value={speechExamples} onChangeText={setSpeechExamples} style={[s.input, s.areaBig]}
+          multiline placeholderTextColor="#555" />
 
         <Text style={s.label}>Soul（高级）</Text>
         <Text style={s.hint}>填写后将作为完整 prompt 注入；留空时基于上面字段自动拼装</Text>

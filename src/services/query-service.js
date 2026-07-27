@@ -5,32 +5,44 @@ import {
 import { generateStructured } from "../llm/openai-client.js";
 import { answerSchema } from "./prompt-schemas.js";
 
-export async function answerQuestion(question, sourcePrefix) {
-  let { memories } = await listMemories(200);
-  let consolidations = (await listConsolidations(10)).consolidations;
-
-  // 按 source 前缀过滤，只保留该角色的记忆
-  if (sourcePrefix) {
-    const filtered = memories.filter((m) => m.source && m.source.startsWith(sourcePrefix));
-    if (filtered.length > 0) {
-      memories = filtered;
-      // consolidations 也只保留 source_ids 全部属于该角色记忆的
-      const memoryIdSet = new Set(memories.map((m) => m.id));
-      consolidations = consolidations.filter(
-        (c) => Array.isArray(c.source_ids) && c.source_ids.length > 0 && c.source_ids.every((id) => memoryIdSet.has(id))
-      );
-    } else {
-      // 该角色没有任何记忆，直接返回空，不 fallback 到其他角色的记忆
-      memories = [];
-    }
-  }
-
-  // 截取最近 50 条
-  memories = memories.slice(-50);
+export async function answerQuestion(question, sourcePrefix, exactSource = false) {
+  // 必须在 SQL LIMIT 之前按用户+角色过滤，否则高活跃用户会把其他人的记忆
+  // 挤出全局最近 N 条。listMemories 本身已按 created_at DESC 返回。
+  let { memories } = await listMemories(200, sourcePrefix, exactSource);
 
   if (memories.length === 0) {
-    return "No memories stored yet.";
+    return "";
   }
+
+  const normalize = (value) => String(value || "").toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+  const q = normalize(question);
+  const grams = new Set();
+  for (let size = 2; size <= 4; size++) {
+    for (let i = 0; i + size <= q.length; i++) grams.add(q.slice(i, i + size));
+  }
+  const scored = memories.map((memory, index) => {
+    const haystack = normalize([
+      memory.summary,
+      memory.raw_text,
+      ...(memory.topics || []),
+      ...(memory.entities || [])
+    ].join(" "));
+    let lexical = q.length >= 2 && haystack.includes(q) ? 12 : 0;
+    for (const gram of grams) if (haystack.includes(gram)) lexical += gram.length >= 3 ? 2 : 1;
+    const importance = Number(memory.importance || 0) * 3;
+    const recency = Math.max(0, 2 - index / 50);
+    return { memory, score: lexical + importance + recency, lexical };
+  });
+  const relevant = scored.filter((item) => item.lexical > 0).sort((a, b) => b.score - a.score);
+  memories = (relevant.length ? relevant : scored)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8)
+    .map((item) => item.memory);
+
+  const memoryIdSet = new Set(memories.map((memory) => memory.id));
+  let consolidations = (await listConsolidations(500)).consolidations
+    .filter((item) => Array.isArray(item.source_ids) && item.source_ids.some((id) => memoryIdSet.has(id)))
+    .slice(0, 5);
 
   const result = await generateStructured({
     schemaName: "memory_query_answer",

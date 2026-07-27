@@ -16,6 +16,10 @@ export default function NewCharacter() {
   const [appearance, setAppearance] = useState("");
   const [description, setDescription] = useState("");
   const [personality, setPersonality] = useState("");
+  const [valuesContent, setValuesContent] = useState("");
+  const [boundariesContent, setBoundariesContent] = useState("");
+  const [habitsContent, setHabitsContent] = useState("");
+  const [speechExamples, setSpeechExamples] = useState("");
   const [soul, setSoul] = useState("");
   const [activate, setActivate] = useState(true);
   const [refImage, setRefImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -67,6 +71,10 @@ export default function NewCharacter() {
       // 第二步：把结构化字段一起补上
       await api("PATCH", `/characters/${r.id}`, {
         appearance, description, personality,
+        values_content: valuesContent,
+        boundaries_content: boundariesContent,
+        habits_content: habitsContent,
+        speech_examples: speechExamples,
         ...(activate ? { is_active: true } : {}),
       });
       router.back();
@@ -118,6 +126,26 @@ export default function NewCharacter() {
         <Text style={s.label}>性格</Text>
         <Text style={s.hint}>性格特征、口头禅、对待你的方式</Text>
         <TextInput value={personality} onChangeText={setPersonality} style={[s.input, s.area3]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>价值观与在意的事</Text>
+        <Text style={s.hint}>她真正重视什么，遇到冲突时如何取舍</Text>
+        <TextInput value={valuesContent} onChangeText={setValuesContent} style={[s.input, s.area2]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>边界与雷区</Text>
+        <Text style={s.hint}>能接受什么，哪些行为会让她不舒服</Text>
+        <TextInput value={boundariesContent} onChangeText={setBoundariesContent} style={[s.input, s.area2]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>习惯与生活细节</Text>
+        <Text style={s.hint}>作息、爱好、小动作和日常习惯</Text>
+        <TextInput value={habitsContent} onChangeText={setHabitsContent} style={[s.input, s.area2]}
+          multiline placeholderTextColor="#555" />
+
+        <Text style={s.label}>说话示例与反例</Text>
+        <Text style={s.hint}>写几组她会怎么说，以及绝不会怎么说</Text>
+        <TextInput value={speechExamples} onChangeText={setSpeechExamples} style={[s.input, s.areaBig]}
           multiline placeholderTextColor="#555" />
 
         <Text style={s.label}>Soul（高级）</Text>

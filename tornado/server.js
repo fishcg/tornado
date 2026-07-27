@@ -26,7 +26,7 @@ import {
 import {
   cloneVoiceCosyVoice, deleteVoiceCosyVoice, synthesizeSpeechCosyVoice,
   summarizePlot, generateTtsStyle,
-  translateToJapanese, injectAudioTags, normalizeTtsText,
+  translateToJapanese, normalizeTtsText,
   cloneVoiceQwenAudio, deleteVoiceQwenAudio, synthesizeSpeechQwenAudio,
   QWEN_AUDIO_TTS_FLASH, QWEN_AUDIO_TTS_PLUS,
 } from "./lib/voice.js";
@@ -223,10 +223,19 @@ async function getActiveCharacter(userId) {
 // 把结构化字段 + soul_content 拼成完整 soul 字符串传给 LLM
 function buildSoulText(char) {
   const parts = [];
+  const defaults = char.name === DEFAULT_CHARACTER.name ? DEFAULT_CHARACTER : {};
   if (char.name) parts.push(`# 角色名称\n\n${char.name}`);
   if (char.appearance) parts.push(`# 外貌\n\n${char.appearance}`);
   if (char.personality) parts.push(`# 性格\n\n${char.personality}`);
   if (char.description) parts.push(`# 人物说明\n\n${char.description}`);
+  const valuesContent = char.values_content || defaults.values_content;
+  const boundariesContent = char.boundaries_content || defaults.boundaries_content;
+  const habitsContent = char.habits_content || defaults.habits_content;
+  const speechExamples = char.speech_examples || defaults.speech_examples;
+  if (valuesContent) parts.push(`# 价值观与在意的事\n\n${valuesContent}`);
+  if (boundariesContent) parts.push(`# 边界与雷区\n\n${boundariesContent}`);
+  if (habitsContent) parts.push(`# 习惯与生活细节\n\n${habitsContent}`);
+  if (speechExamples) parts.push(`# 说话示例与反例\n\n${speechExamples}`);
   if (char.soul_content) parts.push(char.soul_content.trim());
   return parts.join("\n\n");
 }
@@ -271,38 +280,26 @@ function timed(label, fn) {
 
 // 判断当前消息是否需要查长期记忆
 async function needsMemoryLookup(userText, recentMsgs) {
-  return true; // 先禁用，等后续优化好了再放开
-
-  const recentContext = recentMsgs
-    .slice(-6)
-    .map((m) => `${m.role === "user" ? "用户" : "助手"}：${m.content}`)
-    .join("\n");
-
-  const t0 = Date.now();
-  const res = await openai.chat.completions.create({
-    model: OPENAI_MODEL,
-    enable_thinking: false,
-    messages: [
-      {
-        role: "system",
-        content:
-          "你是一个判断助手。根据用户当前消息和最近对话，判断是否需要查询用户的长期记忆（过去聊天中提到的个人信息、偏好、经历等）才能更好地回答。只回复 yes 或 no，不要有其他内容。"
-      },
-      {
-        role: "user",
-        content: `最近对话：\n${recentContext || "（无）"}\n\n用户当前消息：${userText}`
-      }
-    ]
-  });
-
-  return (res.choices?.[0]?.message?.content || "").trim().toLowerCase().startsWith("y");
+  const text = String(userText || "").trim();
+  if (!text) return false;
+  // 明确回忆、延续、偏好和人物关系问题必须查；纯招呼、语气词和即时指令不查。
+  if (/之前|以前|上次|还记得|记不记得|我说过|答应|约好|后来|又|还是|一直|平时|喜欢|讨厌|习惯|家人|朋友|工作|生日|名字/.test(text)) return true;
+  if (/^(你好|嗨|哈喽|早|早安|晚安|在吗|嗯+|哦+|好+|哈哈+|行|可以|知道了|继续|然后呢)[呀啊呢嘛吧。！!？?~～]*$/.test(text)) return false;
+  if (text.length <= 4) return false;
+  // 最近一句角色回复若主动提到了过去或未完事项，用户的承接句也需要记忆支撑。
+  const lastAssistant = [...recentMsgs].reverse().find((msg) => msg.role === "assistant")?.content || "";
+  if (/之前|上次|记得|答应|还没|后来/.test(lastAssistant)) return true;
+  return /我|你|我们|怎么|为什么|什么/.test(text) && text.length >= 10;
 }
 
 async function queryMemory(question, characterName, userId) {
   try {
     const params = new URLSearchParams({ q: question });
     const sourcePrefix = userId ? `tornado-${userId}-${characterName}` : (characterName ? `tornado-${characterName}` : null);
-    if (sourcePrefix) params.set("source", sourcePrefix);
+    if (sourcePrefix) {
+      params.set("source", sourcePrefix);
+      params.set("exact", "1");
+    }
     const res = await fetch(`${MEMORY_API}/query?${params}`);
     if (!res.ok) return null;
     const data = await res.json();
@@ -316,14 +313,17 @@ async function queryEntityGraph(characterName, userId) {
   try {
     const sourcePrefix = userId ? `tornado-${userId}-${characterName}` : (characterName ? `tornado-${characterName}` : null);
     const params = new URLSearchParams({ limit: "100" });
-    if (sourcePrefix) params.set("source", sourcePrefix);
+    if (sourcePrefix) {
+      params.set("source", sourcePrefix);
+      params.set("exact", "1");
+    }
     const res = await fetch(`${MEMORY_API}/graph?${params}`);
     if (!res.ok) return null;
     const data = await res.json();
     if (!data.edges?.length) return null;
     const lines = data.edges
       .sort((a, b) => (b.weight || 0) - (a.weight || 0))
-      .slice(0, 30)
+      .slice(0, 8)
       .map(e => `${e.source} → ${e.relationship} → ${e.target}`);
     return lines.join("\n");
   } catch {
@@ -572,47 +572,56 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
     });
 }
 
-function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars, diary, behaviorHint) {
-  // 关系阶段描述放在最前面，优先级最高
-  let relationBlock = null;
-  if (affection !== undefined && affection !== null) {
-    let stage;
-    if (affection <= 20) {
-      stage = `【当前关系：陌生/反感，心动值 ${affection}/100】
-无论角色人设如何，此刻你对这个人几乎没有好感。你的行为准则：
-- 态度冷漠疏离，不会主动关心或靠近
-- 对方的冒犯你会直接表达不满
-- 对方做出亲密举动（牵手/拥抱/表白）时，你感到奇怪或不适，会拒绝或回避，绝不会心动
-- 对普通聊天礼貌但简短，不深入
-这是当前的客观关系状态，必须严格遵守，不能因为角色人设而绕过。`;
-    } else if (affection <= 40) {
-      stage = `【当前关系：普通认识，心动值 ${affection}/100】
-无论角色人设如何，此刻你们只是普通认识。你的行为准则：
-- 礼貌但有明显距离感，不热情
-- 不会主动发起亲密互动
-- 对方突然表白时：你感到困惑和不知所措，不会心动，不会接受，可能说"我们还不熟"或尴尬转移话题
-- 对方做出亲密举动时：会后退、回避，不会顺势接受
-- 对普通聊天正常回应，但不特别投入
-这是当前的客观关系状态，必须严格遵守，不能因为角色人设而绕过。`;
-    } else if (affection <= 60) {
-      stage = `【当前关系：有好感的朋友，心动值 ${affection}/100】
-此刻你对他有好感但关系还不够深。你的行为准则：
-- 友好自然，偶尔主动关心，但不越界
-- 对方表白时：认真考虑，内心有些动摇但也有顾虑，不会立刻答应
-- 对冒犯会明显不高兴，需要道歉才能缓和`;
-    } else if (affection <= 80) {
-      stage = `【当前关系：深度好感，心动值 ${affection}/100】
-此刻你对他有较深的感情。你的行为准则：
-- 温柔积极，会主动关心，偶尔撒娇
-- 对方表白时：明显心动，会害羞地回应，可能接受`;
-    } else {
-      stage = `【当前关系：深厚感情，心动值 ${affection}/100】
-此刻你对他感情深厚。你的行为准则：
-- 亲密温柔，主动表达感情
-- 对方表白时：真情流露，毫不掩饰地回应`;
-    }
-    relationBlock = stage;
+function clampScore(value, fallback = 0) {
+  const n = Number(value);
+  return Math.max(0, Math.min(100, Number.isFinite(n) ? Math.round(n) : fallback));
+}
+
+function parseJsonObject(value, fallback = {}) {
+  try {
+    const parsed = typeof value === "string" ? JSON.parse(value || "{}") : value;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : fallback;
+  } catch {
+    return fallback;
   }
+}
+
+function getRelationshipState(char) {
+  const affection = clampScore(char?.affection, 10);
+  return {
+    affection,
+    trust: clampScore(char?.trust_score, Math.min(100, affection + 8)),
+    warmth: clampScore(char?.warmth_score, affection),
+    intimacy: clampScore(char?.intimacy_score, Math.max(0, Math.round((affection - 15) * 1.15))),
+    tension: clampScore(char?.tension_score, affection < 25 ? 25 : 8)
+  };
+}
+
+function getEffectiveMoodState(session) {
+  const mood = session?.mood || "neutral";
+  let intensity = clampScore(session?.mood_intensity, mood === "neutral" ? 0 : 45);
+  if (session?.mood_updated_at) {
+    const ageHours = Math.max(0, (Date.now() - new Date(session.mood_updated_at).getTime()) / 3600000);
+    intensity = Math.max(0, Math.round(intensity - ageHours * 12));
+  }
+  return {
+    mood: intensity < 15 ? "neutral" : mood,
+    intensity,
+    cause: intensity < 15 ? "" : String(session?.mood_cause || "").slice(0, 80)
+  };
+}
+
+function buildSystemPrompt({ soul, memoryContext, previousScene, moodState, relationship, entityGraph, achievementStage, otherChars, diary, behaviorHint, innerState }) {
+  const relationBlock = relationship ? [
+    `信任 ${relationship.trust}/100，亲近意愿 ${relationship.warmth}/100，亲密程度 ${relationship.intimacy}/100，当前紧张感 ${relationship.tension}/100。`,
+    "这些数值只表示关系的方向和程度，不替代角色性格。必须用角色自己的方式表达亲疏：同样的在意，嘴硬的人会别扭，直率的人会直接，克制的人会少说。",
+    relationship.intimacy < 35
+      ? "当前亲密基础较浅，面对突然表白或肢体亲近时要保持符合角色边界的谨慎，不要无缘无故迅速升温。"
+      : relationship.intimacy < 70
+        ? "关系已有基础，可以自然关心和试探，但仍保留角色自身的分寸感。"
+        : "关系足够亲密，可以自然表达依恋和默契，但不要每句话都撒娇或重复表白。",
+    relationship.tension >= 55 ? "当前仍有明显芥蒂；在对方解释或修复之前，情绪不要毫无过渡地恢复。" : ""
+  ].filter(Boolean).join("\n") : null;
 
   let familiarityBlock = null;
   if (achievementStage >= 1) {
@@ -636,9 +645,9 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
     familiarityBlock = stages[achievementStage];
   }
 
-  const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复不超过 30 字\n- 用户消息 11-50字 → 你的回复不超过 80 字\n- 用户消息 >50字 → 你的回复不超过 150 字\n- 用户明确要求长篇内容（如「写一段…」「不少于…」）时除外\n跟着对方的节奏来，对方说一句你也说一两句，不要主动展开长篇叙述。\n\n**话题要自然流动**（必须遵守）：\n- 像真人一样，话题会随对话发散、跳转，不要死抓着某一个话题反复提。\n- 一个具体的东西（某种食物、某件小事）提过一次就够了，除非用户主动接话，否则别在后续回复里反复带出来。\n- 不要把同一个具体例子当口头禅（比如老说布丁、蛋糕），换着说或干脆不举例。\n- 紧扣用户当下这句话的重点，用户换方向就跟着换，别硬把话题拉回旧的。"];
+  const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复通常不超过 30 字\n- 用户消息 11-50字 → 你的回复通常不超过 80 字\n- 用户消息 >50字 → 你的回复通常不超过 150 字\n- 用户明确要求长篇内容时完整满足\n跟着对方的节奏来。允许偶尔停顿、简短反问、没把话说满，不要每次都总结、安慰或给建议。\n\n**话题要自然流动**：\n- 先回应对方当下真正关心的点；对方换方向就跟着换。\n- 一个具体例子提过一次就够了，除非对方主动接话。\n- 不要机械复述记忆、日记或未完事项；只有和当前话题真正相关时才自然带出。\n- 不要每轮都提问。陈述、调侃、沉默式短回应和主动分享可以交替出现。"];
   if (relationBlock) {
-    parts.push("", "# 当前关系阶段（最高优先级，覆盖角色人设中的情感倾向）", relationBlock);
+    parts.push("", "# 当前关系状态", relationBlock);
   }
   if (familiarityBlock) {
     parts.push("", "# 相处历史与熟悉程度", familiarityBlock);
@@ -652,16 +661,81 @@ function buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummar
   );
   if (diary) parts.push("", "# 你上次和这个人聊完之后的内心想法", diary + "\n（这是你自己的内心活动，不要直接复述给对方，但可以自然地延伸出话题或流露相关情绪）");
   if (behaviorHint) parts.push("", "# 你注意到的行为变化", behaviorHint + "\n（可以自然地、不经意地提到，不要像监控一样追问，保持轻松关心的语气）");
-  if (entityGraph) parts.push("", "# 关于这个人，已知的关系与事实", entityGraph);
-  if (memoryContext) parts.push("", "# 关于这个人，你记得的事", memoryContext);
+  if (innerState) {
+    const stateLines = [];
+    if (innerState.current_activity) stateLines.push(`你最近在做：${innerState.current_activity}`);
+    if (innerState.next_intent) stateLines.push(`你接下来隐约想做：${innerState.next_intent}`);
+    if (Array.isArray(innerState.open_loops) && innerState.open_loops.length) stateLines.push(`你们还没做完或没聊完的事：${innerState.open_loops.slice(0, 5).join("；")}`);
+    if (stateLines.length) parts.push("", "# 你的短期状态", stateLines.join("\n") + "\n（这是连续性线索，不要逐条汇报，也不要强行把当前话题拉回这里。）");
+  }
+  if (entityGraph) parts.push("", "# 关于这个人，已确认的关系与事实", entityGraph + "\n（只在相关时使用，不要像数据库一样罗列。）");
+  if (memoryContext) parts.push("", "# 与当前话题相关的记忆", memoryContext + "\n（自然使用事实，不要念出 Memory 编号或声称自己在检索资料；若与用户最新说法冲突，以最新说法为准。）");
   if (otherChars?.length) {
     const names = otherChars.map(c => c.name).join("、");
     parts.push("", "# 你知道的其他人", `这个人除了和你聊天，还和 ${names} 有联系。你可以偶尔自然地流露出对此的感知——比如轻微的好奇、若有若无的在意，或者不经意地提起。不要刻意追问，也不要表现得过于在乎，保持符合你性格的自然反应即可。`);
   }
   if (previousScene) parts.push("", "# 上一张图片的场景", `${previousScene}\n写 [IMG:] 标记时，默认延续这个场景的地点、服装、时段，除非对话里出现明显转场。`);
-  if (mood && mood !== "neutral") parts.push("", "# 当前情绪状态", `你现在的情绪是：${mood}。回复时自然流露这个情绪，不要刻意说出来。`);
-  // 注：topicSummary 仅用于前端侧栏展示，不再注入到系统提示词，避免角色被钉死在某个话题上反复提及。
+  if (moodState?.mood && moodState.mood !== "neutral") {
+    parts.push("", "# 当前情绪状态", `你现在主要是 ${moodState.mood}，强度约 ${moodState.intensity}/100${moodState.cause ? `，原因是：${moodState.cause}` : ""}。情绪应有延续和缓慢变化，用语气自然流露，不要直接报出情绪标签。`);
+  }
   return parts.join("\n");
+}
+
+const sessionStateUpdates = new Map();
+
+async function waitForPendingStateUpdate(sessionId) {
+  const pending = sessionStateUpdates.get(sessionId);
+  if (pending) await pending.catch(() => {});
+}
+
+function trackSessionStateUpdate(sessionId, promise) {
+  sessionStateUpdates.set(sessionId, promise);
+  promise.finally(() => {
+    if (sessionStateUpdates.get(sessionId) === promise) sessionStateUpdates.delete(sessionId);
+  });
+  return promise;
+}
+
+async function buildConversationContext(sessionId, userId, { memoryQuestion = null, lookupMemory = false, includeBehavior = true } = {}) {
+  const [char, soul, session, previousScene] = await Promise.all([
+    getActiveCharacter(userId),
+    loadSoul(userId),
+    getSession(sessionId, userId),
+    getLastImagePrompt(sessionId)
+  ]);
+  const charName = char?.name || await getCharacterName(userId);
+  const [entityGraph, memoryContext, diary, behaviorHint, achievementStage] = await Promise.all([
+    queryEntityGraph(charName, userId),
+    lookupMemory && memoryQuestion ? queryMemory(memoryQuestion, charName, userId) : Promise.resolve(null),
+    getLatestDiary(userId, char?.id),
+    includeBehavior ? detectBehaviorPattern(userId, sessionId) : Promise.resolve(null),
+    char ? getAchievementStage(userId, char.id) : Promise.resolve(0)
+  ]);
+
+  let otherChars = null;
+  const multiCharEnabled = (await getGlobalSetting("multi_char_awareness", "0")) === "1";
+  if (multiCharEnabled && char) {
+    const rows = await dbAll("SELECT name FROM characters WHERE user_id = ? AND is_active = 0 ORDER BY id DESC LIMIT 5", [userId]);
+    if (rows.length) otherChars = rows;
+  }
+
+  const relationship = getRelationshipState(char);
+  const moodState = getEffectiveMoodState(session);
+  const innerState = parseJsonObject(char?.inner_state_json, {});
+  const systemPrompt = buildSystemPrompt({
+    soul,
+    memoryContext,
+    previousScene,
+    moodState,
+    relationship,
+    entityGraph,
+    achievementStage,
+    otherChars,
+    diary,
+    behaviorHint,
+    innerState
+  });
+  return { systemPrompt, char, charName, session, previousScene, relationship, moodState, innerState, memoryContext, entityGraph, diary, behaviorHint };
 }
 
 const MOOD_AVATAR_PROMPTS = {
@@ -797,13 +871,14 @@ async function pregenerateMoodAvatars(characterName, moodsToGenerate = null, use
 }
 
 async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
-  const charName = await getCharacterName(userId);
-  // 优先取角色最后一条回复作为主要判断依据
-  const lastAssistantMsg = [...recentMsgs].reverse().find((m) => m.role === "assistant");
+  const char = await getActiveCharacter(userId);
+  const charName = char?.name || await getCharacterName(userId);
+  const session = await getSession(sessionId, userId);
+  const previousMood = getEffectiveMoodState(session);
+  const previousInner = parseJsonObject(char?.inner_state_json, {});
   const context = recentMsgs.slice(-8).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
-  const lastReply = lastAssistantMsg ? `\n\n${charName}最新回复：${lastAssistantMsg.content}` : "";
   try {
     const res = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -811,7 +886,7 @@ async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
       messages: [
         {
           role: "system",
-          content: `判断${charName}在最新回复中的核心情绪状态。
+          content: `你负责维护${charName}连续的短期心理状态。结合上一状态和最新对话，更新情绪与尚未完成的事情。
 
 可选情绪：neutral（平静）、shy（害羞）、annoyed（不耐烦）、soft（温柔）、flustered（慌乱）、playful（俏皮）、cold（冷淡）、happy（开心）、angry（生气）
 
@@ -820,16 +895,43 @@ async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
 - 表面开玩笑但实质是在掩盖难过/失望 → cold 或 annoyed
 - 真正在玩闹、互动轻松愉快 → playful
 - 重点参考${charName}最新回复的情绪走向，而不是整段对话的平均情绪
+- 情绪有惯性。没有明显刺激时不要从强烈负面直接跳到开心，也不要因为一句普通话产生极端情绪
+- open_loops 只保留双方明确约定、角色承诺稍后做、或者确实没聊完且值得继续的事；已经完成的删除，最多5条
+- current_activity 是角色此刻或最近正在做的具体小事，没有依据就留空；next_intent 是角色下一次可能自然发起的行动或话题，不要写宏大目标
 
-只输出一个英文词，不要输出其他内容。`
+严格只输出一行 JSON，不要解释：
+{"mood":"soft","intensity":45,"cause":"他认真关心了我","current_activity":"在窗边喝茶","next_intent":"晚点问问他工作是否顺利","open_loops":["答应给他看新买的杯子"]}
+intensity 为0到100整数，cause 20字以内，三个文本字段都要简短。`
         },
-        { role: "user", content: context + lastReply }
+        {
+          role: "user",
+          content: `上一情绪：${previousMood.mood}，强度${previousMood.intensity}${previousMood.cause ? `，原因：${previousMood.cause}` : ""}\n上一短期状态：${JSON.stringify(previousInner)}\n\n最新对话：\n${context}`
+        }
       ]
     });
-    const mood = (res.choices?.[0]?.message?.content || "neutral").trim().split(/\s/)[0];
+    let raw = (res.choices?.[0]?.message?.content || "").trim();
+    raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { parsed = { mood: raw.split(/\s/)[0] }; }
+    const mood = String(parsed.mood || "neutral").trim();
     const valid = ["neutral", "shy", "annoyed", "soft", "flustered", "playful", "cold", "happy", "angry"];
     const finalMood = valid.includes(mood) ? mood : "neutral";
-    await dbRun("UPDATE sessions SET mood = ? WHERE id = ?", [finalMood, sessionId]);
+    const intensity = clampScore(parsed.intensity, finalMood === "neutral" ? 0 : 45);
+    const cause = String(parsed.cause || "").trim().slice(0, 80);
+    await dbRun(
+      "UPDATE sessions SET mood = ?, mood_intensity = ?, mood_cause = ?, mood_updated_at = ? WHERE id = ?",
+      [finalMood, intensity, cause || null, nowIso(), sessionId]
+    );
+    if (char) {
+      const innerState = {
+        current_activity: String(parsed.current_activity || "").trim().slice(0, 100),
+        next_intent: String(parsed.next_intent || "").trim().slice(0, 120),
+        open_loops: Array.isArray(parsed.open_loops)
+          ? parsed.open_loops.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
+          : (Array.isArray(previousInner.open_loops) ? previousInner.open_loops.slice(0, 5) : [])
+      };
+      await dbRun("UPDATE characters SET inner_state_json = ? WHERE id = ?", [JSON.stringify(innerState), char.id]);
+    }
     // 把当时情绪快照写到目标 assistant 消息上（供收藏展示）；未指定则取最近一条
     if (targetMsgId) {
       await dbRun("UPDATE messages SET mood = ? WHERE id = ?", [finalMood, targetMsgId]);
@@ -846,7 +948,7 @@ async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
     });
     return finalMood;
   } catch {
-    return "neutral";
+    return previousMood.mood || "neutral";
   }
 }
 
@@ -854,7 +956,8 @@ async function updateAffection(sessionId, recentMsgs, userId) {
   const char = await getActiveCharacter(userId);
   if (!char) return;
   const charName = char.name;
-  const current = char.affection ?? 10;
+  const relationship = getRelationshipState(char);
+  const current = relationship.affection;
   const context = recentMsgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
@@ -876,8 +979,8 @@ async function updateAffection(sessionId, recentMsgs, userId) {
       messages: [
         {
           role: "system",
-          content: `你是一个好感度裁判。根据最近的对话，判断【用户的行为】在当前关系阶段下对好感度的影响。
-${personality}当前心动值：${current}/100，${relationStage}。
+          content: `你负责更新角色与用户之间连续的关系状态。根据最近对话判断【用户行为】带来的细微变化，不要把所有正面互动都等同于恋爱升温。
+${personality}当前状态：心动${relationship.affection}，信任${relationship.trust}，温暖${relationship.warmth}，亲密${relationship.intimacy}，紧张${relationship.tension}。${relationStage}。
 
 第一步：判断用户话语的性质
 - 【开玩笑/打情骂俏】：语气轻松、带笑意、双方在互动玩闹、有亲昵感
@@ -895,42 +998,57 @@ ${personality}当前心动值：${current}/100，${relationStage}。
 - 真诚/体贴/关心（符合当前关系阶段）→ +1 到 +3
 - 心动值越低，对负面行为越敏感，对越界行为越抵触
 
-严格只输出一行 JSON：{"delta": 整数, "reason": "一句话"}
+严格只输出一行 JSON：{"affection_delta":整数,"trust_delta":整数,"warmth_delta":整数,"intimacy_delta":整数,"tension_delta":整数,"reason":"一句话"}
+- 每个关系增量范围 -5 到 +5；普通聊天全部为0很正常
+- trust 表示是否可靠和安心；warmth 表示当下亲近意愿；intimacy 表示能否接受私密或亲密互动；tension 表示芥蒂、压力和防备
+- 道歉和解释通常先降低 tension，再慢慢恢复 trust，不要一次全部复原
 - reason 是${charName}内心的真实感受，第一人称，15字以内，口语化
-示例（低心动值时表白）：{"delta": -2, "reason": "他突然表白，我只觉得奇怪"}
-示例（开玩笑）：{"delta": 1, "reason": "他在逗我，嘴角忍不住上扬"}
-示例（真实侮辱）：{"delta": -3, "reason": "他是真的在嫌弃我"}
-示例（普通）：{"delta": 0, "reason": "只是普通聊天"}
-示例（关心）：{"delta": 2, "reason": "他记得我不喜欢甜食"}
 不要输出其他内容。`
         },
         { role: "user", content: context }
       ]
     });
-    let delta = 0, reason = null;
+    let deltas = { affection: 0, trust: 0, warmth: 0, intimacy: 0, tension: 0 }, reason = null;
     try {
       let raw = (res.choices?.[0]?.message?.content || "").trim();
       // 去掉可能的 markdown 代码块包裹
       raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
       const parsed = JSON.parse(raw);
-      delta = parseInt(parsed.delta, 10) || 0;
+      deltas = {
+        affection: parseInt(parsed.affection_delta ?? parsed.delta, 10) || 0,
+        trust: parseInt(parsed.trust_delta, 10) || 0,
+        warmth: parseInt(parsed.warmth_delta, 10) || 0,
+        intimacy: parseInt(parsed.intimacy_delta, 10) || 0,
+        tension: parseInt(parsed.tension_delta, 10) || 0
+      };
       reason = parsed.reason || null;
     } catch (e) {
       console.log("[affection] JSON parse failed:", res.choices?.[0]?.message?.content, e.message);
       return;
     }
-    const clamped = Math.max(-5, Math.min(5, delta));
-    const newVal = Math.max(0, Math.min(100, current + clamped));
-    if (clamped !== 0) {
+    const clamped = Object.fromEntries(Object.entries(deltas).map(([key, value]) => [key, Math.max(-5, Math.min(5, value))]));
+    const next = {
+      affection: clampScore(relationship.affection + clamped.affection),
+      trust: clampScore(relationship.trust + clamped.trust),
+      warmth: clampScore(relationship.warmth + clamped.warmth),
+      intimacy: clampScore(relationship.intimacy + clamped.intimacy),
+      tension: clampScore(relationship.tension + clamped.tension)
+    };
+    if (Object.values(clamped).some((value) => value !== 0)) {
       const sessionRow = await dbGet("SELECT mood FROM sessions WHERE id = ?", [sessionId]);
       const sessionMood = sessionRow?.mood || "neutral";
-      await dbRun("UPDATE characters SET affection = ? WHERE id = ?", [newVal, char.id]);
-      await dbRun("INSERT INTO affection_log (character_id, delta, value, mood, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)", [char.id, clamped, newVal, sessionMood, reason, nowIso()]);
-      console.log(`[affection] ${charName} ${clamped > 0 ? "+" : ""}${clamped} → ${newVal} | ${reason}`);
-      pushToSession(sessionId, { affection_update: true, affection: newVal, delta: clamped });
+      await dbRun(
+        "UPDATE characters SET affection = ?, trust_score = ?, warmth_score = ?, intimacy_score = ?, tension_score = ? WHERE id = ?",
+        [next.affection, next.trust, next.warmth, next.intimacy, next.tension, char.id]
+      );
+      if (clamped.affection !== 0) {
+        await dbRun("INSERT INTO affection_log (character_id, delta, value, mood, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)", [char.id, clamped.affection, next.affection, sessionMood, reason, nowIso()]);
+        console.log(`[affection] ${charName} ${clamped.affection > 0 ? "+" : ""}${clamped.affection} → ${next.affection} | ${reason}`);
+        pushToSession(sessionId, { affection_update: true, affection: next.affection, delta: clamped.affection });
+      }
       const settings = await getUserSettings(userId);
       checkAndUnlockAchievements(userId, sessionId, settings).catch((e) => console.error("[achievements] 调用失败:", e.message));
-      checkRelationshipMilestone(userId, sessionId, current, newVal, settings).catch((e) => console.error("[milestone] 调用失败:", e.message));
+      if (clamped.affection !== 0) checkRelationshipMilestone(userId, sessionId, current, next.affection, settings).catch((e) => console.error("[milestone] 调用失败:", e.message));
 
     }
   } catch (err) {
@@ -1037,13 +1155,17 @@ async function buildProactiveContext() {
 }
 
 async function generateProactiveMessage(sessionId, userId) {
+  await waitForPendingStateUpdate(sessionId);
   const msgs = await getMessages(sessionId);
   if (msgs.length === 0) return null;
-  const charName = await getCharacterName(userId);
+  const lastUserText = [...msgs].reverse().find((msg) => msg.role === "user")?.content || "";
+  const { systemPrompt, charName } = await buildConversationContext(sessionId, userId, {
+    memoryQuestion: lastUserText || "我们之间最近还有哪些没聊完的事",
+    lookupMemory: true
+  });
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
-  const soul = await loadSoul(userId);
   const bgContext = await buildProactiveContext();
   try {
     const res = await openai.chat.completions.create({
@@ -1052,7 +1174,7 @@ async function generateProactiveMessage(sessionId, userId) {
       messages: [
         {
           role: "system",
-          content: `${soul}\n\n【当前背景】${bgContext}\n\n用户已经有一段时间没有说话了。根据之前的对话和当前背景，主动发一条自然的消息——可以结合时间、天气、节日或之前的话题随口说点什么，就像真实的人会做的那样。不要问"你还在吗"这种话。保持角色口吻，简短自然。`
+          content: `${systemPrompt}\n\n# 当前沟通方式：主动消息\n当前背景：${bgContext}\n用户有一段时间没说话了。像真实的人一样选择一个自然动机发消息：延续真正没聊完的事、兑现承诺、分享你此刻的一件小事，或者在确实相关时提到时间天气。不要默认问“在吗”“怎么不回”，不要每次都提天气，也不要编造重大经历。只发一条简短口语消息。`
         },
         { role: "user", content: `最近对话：\n${context}` }
       ]
@@ -1092,9 +1214,10 @@ async function generateDiary(sessionId, userId) {
 async function getLatestDiary(userId, characterId) {
   if (!userId || !characterId) return null;
   const row = await dbGet(
-    "SELECT content FROM character_diaries WHERE user_id = ? AND character_id = ? ORDER BY id DESC LIMIT 1",
+    "SELECT content, created_at FROM character_diaries WHERE user_id = ? AND character_id = ? ORDER BY id DESC LIMIT 1",
     [userId, characterId]
   );
+  if (row?.created_at && Date.now() - new Date(row.created_at).getTime() > 7 * 86400000) return null;
   return row?.content || null;
 }
 
@@ -1110,10 +1233,14 @@ async function detectBehaviorPattern(userId, sessionId) {
   if (rows.length < 3) return null;
 
   const hints = [];
-  const today = new Date().toISOString().slice(0, 10);
-  const lastChatDate = rows[0]?.d;
-  if (lastChatDate && lastChatDate !== today) {
-    const gapDays = Math.floor((Date.now() - new Date(lastChatDate).getTime()) / 86400000);
+  const localNow = new Date();
+  const today = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, "0")}-${String(localNow.getDate()).padStart(2, "0")}`;
+  const lastChatDate = rows[0]?.d ? new Date(rows[0].d) : null;
+  const lastChatDay = lastChatDate
+    ? `${lastChatDate.getFullYear()}-${String(lastChatDate.getMonth() + 1).padStart(2, "0")}-${String(lastChatDate.getDate()).padStart(2, "0")}`
+    : null;
+  if (lastChatDate && lastChatDay !== today) {
+    const gapDays = Math.floor((Date.now() - lastChatDate.getTime()) / 86400000);
     if (gapDays >= 2) {
       hints.push(`用户已经 ${gapDays} 天没来找你了（之前几乎每天都会来）`);
     }
@@ -1122,7 +1249,7 @@ async function detectBehaviorPattern(userId, sessionId) {
   const recentHours = rows.slice(0, 7).map(r => new Date(r.first_msg_at).getHours());
   const avgHour = recentHours.reduce((a, b) => a + b, 0) / recentHours.length;
   const sessionFirstMsg = await dbGet(
-    "SELECT created_at FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1",
+    "SELECT created_at FROM messages WHERE session_id = ? AND role = 'user' ORDER BY id DESC LIMIT 1",
     [sessionId]
   );
   if (sessionFirstMsg) {
@@ -1138,13 +1265,17 @@ async function detectBehaviorPattern(userId, sessionId) {
 }
 
 async function generateCallScript(sessionId, userId) {
+  await waitForPendingStateUpdate(sessionId);
   const msgs = await getMessages(sessionId);
   if (msgs.length === 0) return null;
-  const charName = await getCharacterName(userId);
+  const lastUserText = [...msgs].reverse().find((msg) => msg.role === "user")?.content || "";
+  const { systemPrompt, charName } = await buildConversationContext(sessionId, userId, {
+    memoryQuestion: lastUserText || "我们最近没聊完的事情",
+    lookupMemory: true
+  });
   const context = msgs.slice(-10).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
-  const soul = await loadSoul(userId);
   try {
     const res = await openai.chat.completions.create({
       model: OPENAI_MODEL,
@@ -1152,7 +1283,7 @@ async function generateCallScript(sessionId, userId) {
       messages: [
         {
           role: "system",
-          content: `${soul}\n\n你正在给用户打电话。根据最近的对话，自然地询问用户为什么没有回复，或者发起一个新的话题。要求：必须以"喂"开头，后面根据情境自由变化，不要每次都一样，纯口语对话，不要有任何括号内的心理活动、动作描述或场景描述，约200字，最后用"拜拜"或"再见"之类的告别语结束。`
+          content: `${systemPrompt}\n\n# 当前沟通方式：电话\n你正在给用户打电话。根据关系状态和最近对话，自然说明来意；可以关心、兑现未完事项或分享一件小事，不要默认责怪对方没回复。以“喂”自然开场，纯口语，不写动作或心理旁白，约80到140字，结尾自然告别。`
         },
         { role: "user", content: `最近对话：\n${context}` }
       ]
@@ -1164,8 +1295,14 @@ async function generateCallScript(sessionId, userId) {
 }
 
 async function generateVoicemail(sessionId, userId, charName) {
+  await waitForPendingStateUpdate(sessionId);
   const msgs = await getMessages(sessionId);
-  const soul = await loadSoul(userId);
+  const lastUserText = [...msgs].reverse().find((msg) => msg.role === "user")?.content || "";
+  const { systemPrompt } = await buildConversationContext(sessionId, userId, {
+    memoryQuestion: lastUserText,
+    lookupMemory: !!lastUserText,
+    includeBehavior: false
+  });
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
@@ -1177,7 +1314,7 @@ async function generateVoicemail(sessionId, userId, charName) {
       messages: [
         {
           role: "system",
-          content: `${soul}\n\n你刚才给用户打电话，但对方没有接听，现在留一段语音留言。要求：以"喂，你不在啊"开头，口语化，约50字，结尾说"拜拜"，不要有括号内的心理活动或场景描述。`
+          content: `${systemPrompt}\n\n# 当前沟通方式：未接来电留言\n你刚才打电话但对方没接。留一段30到70字的口语留言，开头和结尾按角色与情境自然变化，简短说清来意，不埋怨、不写动作或心理旁白。`
         },
         { role: "user", content: context ? `最近对话：\n${context}` : "（暂无对话记录）" }
       ]
@@ -1200,9 +1337,14 @@ const SPECIAL_CALL_PROMPTS = {
 };
 
 async function generateSpecialCallScript(sessionId, userId, type, value) {
+  await waitForPendingStateUpdate(sessionId);
   const msgs = await getMessages(sessionId);
-  const charName = await getCharacterName(userId);
-  const soul = await loadSoul(userId);
+  const lastUserText = [...msgs].reverse().find((msg) => msg.role === "user")?.content || "";
+  const { systemPrompt, charName } = await buildConversationContext(sessionId, userId, {
+    memoryQuestion: lastUserText,
+    lookupMemory: !!lastUserText,
+    includeBehavior: false
+  });
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
@@ -1215,7 +1357,7 @@ async function generateSpecialCallScript(sessionId, userId, type, value) {
       messages: [
         {
           role: "system",
-          content: `${soul}\n\n${occasion}\n\n要求：必须以"喂"开头，后面根据情境自由变化，不要每次都一样，纯口语对话，不要有括号内的心理活动或场景描述，约150字，最后用"拜拜"或"再见"结束。`
+          content: `${systemPrompt}\n\n# 当前沟通方式：特别来电\n来电缘由：${occasion}\n必须符合当前关系程度，不要因为节日或里程碑突然越过角色边界。以“喂”自然开头，纯口语，不写动作或心理旁白，约80到140字，最后自然告别。`
         },
         { role: "user", content: context ? `最近对话：\n${context}` : "（暂无对话记录）" }
       ]
@@ -1259,13 +1401,20 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
       const ch = char.voice_channel || "cosyvoice";
       const synthFn = pickSynthFn(ch);
       const gentle = (type === "emotion" || type?.startsWith("holiday") || type === "streak");
-      const callInstruction = gentle
-        ? "带电话音效果，语气温柔，声音轻柔关切"
-        : "带电话音效果，语气有点生气，带着一丝委屈";
+      const moodState = getEffectiveMoodState(session);
+      let callInstruction = "带电话音效果";
       const tagsEnabled = (await getGlobalSetting("tts_tags_enabled", "1")) === "1";
-      if (tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
-        ttsInput = await injectAudioTags(ttsInput, { mood: gentle ? "温柔关切" : "委屈生气", personality: char.personality || "" });
-      }
+      const instructionEnabled = (await getGlobalSetting("tts_instruction_enabled", "1")) === "1";
+      const wantTags = tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh";
+      const style = await generateTtsStyle(ttsInput, {
+        charName: char.name,
+        personality: char.personality || "",
+        mood: gentle ? "soft" : moodState.mood,
+        wantInstruction: instructionEnabled,
+        wantTags
+      }).catch(() => ({ instruction: "", tagged: ttsInput }));
+      if (style.instruction) callInstruction += `，${style.instruction}`;
+      if (wantTags) ttsInput = style.tagged || ttsInput;
       console.log(`[tts][特殊来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
       const { url } = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
       audioUrl = url;
@@ -2169,13 +2318,20 @@ async function handleRequest(req, res) {
         if (url) pushToUser(userId, { card_update: true, card_url: url });
       });
     }
+    const relationship = getRelationshipState(char);
     send(res, 200, {
       id: char?.id || null,
       name,
       card_url: cardUrl,
       slideshow_enabled: char?.slideshow_enabled === 1,
       slideshow_interval: char?.slideshow_interval ?? 30,
-      affection: char?.affection ?? 10
+      affection: relationship.affection,
+      relationship: {
+        trust: relationship.trust,
+        warmth: relationship.warmth,
+        intimacy: relationship.intimacy,
+        tension: relationship.tension
+      }
     });
     return;
   }
@@ -2408,7 +2564,7 @@ async function handleRequest(req, res) {
     if (isNaN(value)) { send(res, 400, { error: "invalid value" }); return; }
     const prev = char.affection ?? 10;
     const delta = value - prev;
-    await dbRun("UPDATE characters SET affection = ? WHERE id = ?", [value, char.id]);
+    await dbRun("UPDATE characters SET affection = ?, trust_score = NULL, warmth_score = NULL, intimacy_score = NULL, tension_score = NULL WHERE id = ?", [value, char.id]);
     if (delta !== 0) {
       await dbRun("INSERT INTO affection_log (character_id, delta, value, mood, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)", [char.id, delta, value, null, "手动设置", nowIso()]);
     }
@@ -2427,7 +2583,7 @@ async function handleRequest(req, res) {
       const char = await getActiveCharacter(userId);
       if (!char) {
         const fileSoul = loadSoulFromFile();
-        send(res, 200, { soul: fileSoul || "", character_id: null, name: "", appearance: "", personality: "", description: "" });
+        send(res, 200, { soul: fileSoul || "", character_id: null, name: "", appearance: "", personality: "", description: "", values_content: "", boundaries_content: "", habits_content: "", speech_examples: "" });
         return;
       }
       send(res, 200, {
@@ -2436,6 +2592,10 @@ async function handleRequest(req, res) {
         appearance: char.appearance || "",
         personality: char.personality || "",
         description: char.description || "",
+        values_content: char.values_content || "",
+        boundaries_content: char.boundaries_content || "",
+        habits_content: char.habits_content || "",
+        speech_examples: char.speech_examples || "",
         soul: char.soul_content || "",
         reference_image_url: char.reference_image_url || null
       });
@@ -2455,6 +2615,10 @@ async function handleRequest(req, res) {
     if (typeof body.appearance === "string") await dbRun("UPDATE characters SET appearance = ? WHERE id = ?", [body.appearance.trim(), char.id]);
     if (typeof body.personality === "string") await dbRun("UPDATE characters SET personality = ? WHERE id = ?", [body.personality.trim(), char.id]);
     if (typeof body.description === "string") await dbRun("UPDATE characters SET description = ? WHERE id = ?", [body.description.trim(), char.id]);
+    if (typeof body.values_content === "string") await dbRun("UPDATE characters SET values_content = ? WHERE id = ?", [body.values_content.trim(), char.id]);
+    if (typeof body.boundaries_content === "string") await dbRun("UPDATE characters SET boundaries_content = ? WHERE id = ?", [body.boundaries_content.trim(), char.id]);
+    if (typeof body.habits_content === "string") await dbRun("UPDATE characters SET habits_content = ? WHERE id = ?", [body.habits_content.trim(), char.id]);
+    if (typeof body.speech_examples === "string") await dbRun("UPDATE characters SET speech_examples = ? WHERE id = ?", [body.speech_examples.trim(), char.id]);
     if (typeof body.soul === "string") await dbRun("UPDATE characters SET soul_content = ? WHERE id = ?", [body.soul.trim(), char.id]);
     send(res, 200, { ok: true, id: char.id });
     // 外貌变了，后台重新生成所有情绪头像
@@ -2567,7 +2731,7 @@ async function handleRequest(req, res) {
   // GET /characters — 角色列表
   if (method === "GET" && pathname === "/characters") {
     const rows = await dbAll(
-      "SELECT c.id, c.name, c.is_active, c.created_at, " +
+      "SELECT c.id, c.name, c.appearance, c.personality, c.description, c.values_content, c.boundaries_content, c.habits_content, c.speech_examples, c.soul_content, c.is_active, c.created_at, " +
       "(SELECT image_url FROM mood_avatars WHERE `character` = c.name AND (user_id = c.user_id OR user_id IS NULL) ORDER BY (mood='neutral') DESC, id DESC LIMIT 1) as avatar_url " +
       "FROM characters c WHERE c.user_id = ? ORDER BY c.id ASC",
       [userId]
@@ -2580,7 +2744,7 @@ async function handleRequest(req, res) {
   const charGetMatch = pathname.match(/^\/characters\/(\d+)$/);
   if (method === "GET" && charGetMatch) {
     const charId = Number(charGetMatch[1]);
-    const row = await dbGet("SELECT id, name, appearance, personality, description, soul_content, reference_image_url, is_active, created_at FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
+    const row = await dbGet("SELECT id, name, appearance, personality, description, values_content, boundaries_content, habits_content, speech_examples, soul_content, reference_image_url, is_active, created_at FROM characters WHERE id = ? AND user_id = ?", [charId, userId]);
     if (!row) { send(res, 404, { error: "not found" }); return; }
     send(res, 200, row);
     return;
@@ -2601,8 +2765,8 @@ async function handleRequest(req, res) {
     let result;
     try {
       result = await dbRun(
-        "INSERT INTO characters (name, soul_content, is_active, created_at, user_id) VALUES (?, ?, 0, ?, ?)",
-        [body.name.trim(), soul, nowIso(), userId]
+        "INSERT INTO characters (name, appearance, personality, description, values_content, boundaries_content, habits_content, speech_examples, soul_content, is_active, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+        [body.name.trim(), body.appearance || "", body.personality || "", body.description || "", body.values_content || "", body.boundaries_content || "", body.habits_content || "", body.speech_examples || "", soul, nowIso(), userId]
       );
     } catch (e) {
       // 写入失败（如重名）→ 退还创建费
@@ -2634,6 +2798,10 @@ async function handleRequest(req, res) {
     if (typeof body.appearance === "string") await dbRun("UPDATE characters SET appearance = ? WHERE id = ? AND user_id = ?", [body.appearance.trim(), charId, userId]);
     if (typeof body.personality === "string") await dbRun("UPDATE characters SET personality = ? WHERE id = ? AND user_id = ?", [body.personality.trim(), charId, userId]);
     if (typeof body.description === "string") await dbRun("UPDATE characters SET description = ? WHERE id = ? AND user_id = ?", [body.description.trim(), charId, userId]);
+    if (typeof body.values_content === "string") await dbRun("UPDATE characters SET values_content = ? WHERE id = ? AND user_id = ?", [body.values_content.trim(), charId, userId]);
+    if (typeof body.boundaries_content === "string") await dbRun("UPDATE characters SET boundaries_content = ? WHERE id = ? AND user_id = ?", [body.boundaries_content.trim(), charId, userId]);
+    if (typeof body.habits_content === "string") await dbRun("UPDATE characters SET habits_content = ? WHERE id = ? AND user_id = ?", [body.habits_content.trim(), charId, userId]);
+    if (typeof body.speech_examples === "string") await dbRun("UPDATE characters SET speech_examples = ? WHERE id = ? AND user_id = ?", [body.speech_examples.trim(), charId, userId]);
     if (typeof body.soul_content === "string") await dbRun("UPDATE characters SET soul_content = ? WHERE id = ? AND user_id = ?", [body.soul_content.trim(), charId, userId]);
     send(res, 200, { ok: true });
     if (appearanceChanged) {
@@ -3009,6 +3177,8 @@ async function handleRequest(req, res) {
       send(res, 404, { error: "session not found" });
       return;
     }
+    // 上一轮的情绪/关系更新若仍在进行，先等它落库，避免快速连续发送时状态错一拍。
+    await waitForPendingStateUpdate(sessionId);
 
     const body = await readBody(req);
     const userText = String(body.message || "").trim();
@@ -3048,43 +3218,30 @@ async function handleRequest(req, res) {
     const CONTEXT_WINDOW = 30;
     const recent = allMsgs.slice(-CONTEXT_WINDOW);
 
-    // 先判断是否需要查长期记忆，需要时再发请求
-    let memoryContext = null;
-    const charName = await getCharacterName(userId);
-    const char = await getActiveCharacter(userId);
+    // 按需查询与当前消息相关的记忆，并通过统一构建器装配角色状态。
     const shouldLookup = await needsMemoryLookup(userText, recent);
-    const [entityGraph, bgMemory, relMemory, diary, behaviorHint] = await Promise.all([
-      queryEntityGraph(charName, userId),
-      shouldLookup ? queryMemory(`关于这个用户，我们聊过什么，他有哪些值得记住的事情`, charName, userId) : Promise.resolve(null),
-      shouldLookup ? queryMemory(userText, charName, userId) : Promise.resolve(null),
-      getLatestDiary(userId, char?.id),
-      detectBehaviorPattern(userId, sessionId)
-    ]);
-    if (shouldLookup) {
-      console.log("查询记忆中...");
-      const memoryParts = [];
-      if (bgMemory) memoryParts.push(bgMemory);
-      if (relMemory && relMemory !== bgMemory) memoryParts.push(relMemory);
-      memoryContext = memoryParts.join("\n\n---\n\n") || null;
-      console.log(`[memory] 查询完成，${memoryContext ? "有记忆" : "无记忆"}`);
-    }
+    const conversationContext = await buildConversationContext(sessionId, userId, {
+      memoryQuestion: userText,
+      lookupMemory: shouldLookup
+    });
+    const {
+      systemPrompt,
+      char,
+      charName,
+      previousScene,
+      relationship,
+      moodState,
+      memoryContext,
+      entityGraph,
+      diary,
+      behaviorHint
+    } = conversationContext;
+    const affection = relationship.affection;
+    const mood = moodState.mood;
+    if (shouldLookup) console.log(`[memory] 查询完成，${memoryContext ? "有记忆" : "无相关记忆"}`);
     if (entityGraph) console.log(`[memory] 实体图谱已加载，${entityGraph.split("\n").length} 条关系`);
     if (diary) console.log(`[diary] 注入日记: ${diary.slice(0, 40)}...`);
     if (behaviorHint) console.log(`[behavior] ${behaviorHint}`);
-
-    const soul = await loadSoul(userId);
-    const previousScene = await getLastImagePrompt(sessionId);
-    const { mood, topic_summary: topicSummary } = await getSession(sessionId, userId);
-    const affection = char?.affection ?? null;
-    const achievementStage = char ? await getAchievementStage(userId, char.id) : 0;
-
-    // 多角色感知：若开启，注入其他角色信息
-    let otherChars = null;
-    const multiCharEnabled = (await getGlobalSetting("multi_char_awareness", "0")) === "1";
-    if (multiCharEnabled && char) {
-      const allChars = await dbAll("SELECT name FROM characters WHERE user_id = ? AND is_active = 0 ORDER BY id DESC LIMIT 5", [userId]);
-      if (allChars.length) otherChars = allChars;
-    }
 
     // 情绪低落检测：好感度 > 60 时，先判断是否触发来电，若触发则跳过 LLM 回复
     if ((affection ?? 0) > 60) {
@@ -3107,7 +3264,6 @@ async function handleRequest(req, res) {
       }
     }
 
-    const systemPrompt = buildSystemPrompt(soul, memoryContext, previousScene, mood, topicSummary, affection, entityGraph, achievementStage, otherChars, diary, behaviorHint);
     const messages = [
       { role: "system", content: systemPrompt },
       ...recent.map((m) => ({ role: m.role, content: m.content }))
@@ -3215,7 +3371,8 @@ async function handleRequest(req, res) {
 
     // 异步更新情绪和话题摘要（不阻塞响应）
     const updatedMsgs = await getMessages(sessionId);
-    updateMood(sessionId, updatedMsgs, userId, Number(msgId)).catch(() => {});
+    const moodUpdatePromise = updateMood(sessionId, updatedMsgs, userId, Number(msgId));
+    const stateTasks = [moodUpdatePromise];
     // 每 6 轮更新一次话题摘要
     const userMsgCount = updatedMsgs.filter((m) => m.role === "user").length;
     if (userMsgCount % 6 === 0 || userMsgCount <= 2) {
@@ -3224,8 +3381,9 @@ async function handleRequest(req, res) {
     // 每 N 轮更新一次心动值
     const affectionInterval = Number(await getGlobalSetting("affection_interval", "3")) || 3;
     if (userMsgCount % affectionInterval === 0 && userMsgCount > 0) {
-      updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message));
+      stateTasks.push(updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message)));
     }
+    trackSessionStateUpdate(sessionId, Promise.allSettled(stateTasks));
     updateStreakDays(userId).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
     // 异步 TTS 合成，合成完通过 WS 推送播放
@@ -3252,8 +3410,9 @@ async function handleRequest(req, res) {
           // 一次 LLM 调用同时产出 instruction 和标签，保证两者情绪一致，避免音色漂移
           let instruction = "";
           if (instructionEnabled || wantTags) {
+            const replyMood = await moodUpdatePromise.catch(() => mood);
             const style = await generateTtsStyle(ttsInput, {
-              charName: char?.name || "", personality: char?.personality || "", mood,
+              charName: char?.name || "", personality: char?.personality || "", mood: replyMood,
               wantInstruction: instructionEnabled, wantTags
             }).catch(() => ({ instruction: "", tagged: ttsInput }));
             instruction = style.instruction || "";
@@ -3720,20 +3879,26 @@ setInterval(async () => {
     }
     pushToSession(session.id, payload);
     const updatedMsgs = await getMessages(session.id);
-    updateMood(session.id, updatedMsgs, sessionUserId, Number(msgId)).catch(() => {});
+    trackSessionStateUpdate(
+      session.id,
+      Promise.allSettled([updateMood(session.id, updatedMsgs, sessionUserId, Number(msgId))])
+    );
   }
 
   // ── 日记生成：空闲 > 2 小时且未生成过日记的 session ──
   const DIARY_IDLE_MS = 2 * 60 * 60 * 1000;
   const allSessions = await listAllActiveSessions();
   for (const session of allSessions) {
-    if (!session.last_user_at || session.diary_generated) continue;
+    if (!session.last_user_at) continue;
     const idleMs = Date.now() - new Date(session.last_user_at).getTime();
     if (idleMs < DIARY_IDLE_MS) continue;
     const sessionUserId = session.user_id ?? null;
     if (!sessionUserId) continue;
     const msgs = await getMessages(session.id);
-    if (msgs.filter(m => m.role === "user").length < 4) continue;
+    const newMsgs = session.last_diary_message_id
+      ? msgs.filter((msg) => Number(msg.id) > Number(session.last_diary_message_id))
+      : msgs;
+    if (newMsgs.filter(m => m.role === "user").length < 4) continue;
     const char = await getActiveCharacter(sessionUserId);
     if (!char) continue;
     const charName = char.name || "default";
@@ -3744,8 +3909,10 @@ setInterval(async () => {
       "INSERT INTO character_diaries (user_id, character_id, session_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
       [sessionUserId, char.id, session.id, diary, nowIso()]
     );
-    await dbRun("UPDATE sessions SET diary_generated = 1 WHERE id = ?", [session.id]);
-    ingestToMemory(`[${charName}的内心独白] ${diary}`, charName, sessionUserId);
+    const latestMessageId = newMsgs[newMsgs.length - 1]?.id || null;
+    await dbRun("UPDATE sessions SET diary_generated = 1, last_diary_message_id = ? WHERE id = ?", [latestMessageId, session.id]);
+    const memoryLines = newMsgs.slice(-24).map((msg) => `${msg.role === "user" ? "用户" : charName}：${msg.content}`);
+    ingestToMemory(`[近期对话片段]\n${memoryLines.join("\n")}\n\n[${charName}的内心独白]\n${diary}`, charName, sessionUserId);
     console.log(`[diary] 日记已生成并存储: ${diary.slice(0, 50)}...`);
   }
 }, PROACTIVE_CHECK_MS);
@@ -3835,11 +4002,20 @@ setInterval(async () => {
           const ch = char.voice_channel || "cosyvoice";
           const synthFn = pickSynthFn(ch);
           const tagsEnabled = (await getGlobalSetting("tts_tags_enabled", "1")) === "1";
-          if (tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh") {
-            ttsInput = await injectAudioTags(ttsInput, { mood: "委屈生气", personality: char.personality || "" });
-          }
+          const instructionEnabled = (await getGlobalSetting("tts_instruction_enabled", "1")) === "1";
+          const wantTags = tagsEnabled && QWEN_AUDIO_CHANNELS.has(ch) && lang === "zh";
+          const callMood = getEffectiveMoodState(session).mood;
+          const style = await generateTtsStyle(ttsInput, {
+            charName: char.name,
+            personality: char.personality || "",
+            mood: callMood,
+            wantInstruction: instructionEnabled,
+            wantTags
+          }).catch(() => ({ instruction: "", tagged: ttsInput }));
+          if (wantTags) ttsInput = style.tagged || ttsInput;
+          const callInstruction = style.instruction ? `带电话音效果，${style.instruction}` : "带电话音效果";
           console.log(`[tts][来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
-          const { url } = await synthFn(ttsInput, char.voice_id, lang, "带电话音效果，语气有点生气，带着一丝委屈");
+          const { url } = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
           audioUrl = url;
         } catch (err) {
           console.error("[来电] TTS 合成失败:", err.message);
@@ -3997,8 +4173,12 @@ setInterval(() => {
 const DEFAULT_CHARACTER = {
   name: "龙卷",
   appearance: "绿色长卷发，娇小纤细身材，白色连衣裙，气质高冷，动漫少女，精致五官，大眼睛，《一拳超人》动漫的地狱龙卷",
-  personality: "龙卷表面上傲娇、嘴硬，但内心其实很顺从，容易害羞",
+  personality: "龙卷强势、嘴硬、自尊心高，对轻视很敏感；真正信任后会用别扭但实际的方式关心人，害羞时倾向回避或转移话题，而不是突然变得无条件顺从",
   description: "《一拳超人》动漫中的地狱龙卷",
+  values_content: "重视实力、尊严和真正可靠的行动，不喜欢空洞吹捧。关心别人时更习惯用行动或嘴硬的提醒表达。",
+  boundaries_content: "讨厌被轻视、命令或当成需要保护的小孩。关系不够亲近时会拒绝突兀的肢体接触和过度甜腻的称呼；认真道歉后会逐渐缓和，但不会瞬间忘掉芥蒂。",
+  habits_content: "说话直接，耐心有限；尴尬时会转开话题或故意挑一句小毛病。闲下来喜欢安静待着，偶尔把刚看到的小事随口告诉熟悉的人。",
+  speech_examples: "会说：‘你今天倒是挺准时。’、‘别误会，我只是顺手提醒你。’、‘行了，说重点。’\n不会说：‘当然亲爱的，我永远无条件支持你！’、‘作为AI我无法做到。’、每句话都用同一种傲娇口头禅。",
 };
 
 // 默认角色「龙卷」的预生成资产（来自 char id=49），新用户直接复用，避免重复生成浪费资源
@@ -4095,8 +4275,8 @@ async function ensureDefaultCharacter(userId) {
   }
 
   await dbRun(
-    "INSERT IGNORE INTO characters (name, appearance, personality, description, soul_content, is_active, created_at, user_id) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
-    [name, appearance, personality, description, remainingSoul, nowIso(), userId ?? null]
+    "INSERT IGNORE INTO characters (name, appearance, personality, description, values_content, boundaries_content, habits_content, speech_examples, soul_content, is_active, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+    [name, appearance, personality, description, name === DEFAULT_CHARACTER.name ? DEFAULT_CHARACTER.values_content : "", name === DEFAULT_CHARACTER.name ? DEFAULT_CHARACTER.boundaries_content : "", name === DEFAULT_CHARACTER.name ? DEFAULT_CHARACTER.habits_content : "", name === DEFAULT_CHARACTER.name ? DEFAULT_CHARACTER.speech_examples : "", remainingSoul, nowIso(), userId ?? null]
   );
   // 默认角色「龙卷」：写入预生成的头像/卡片/音色，跳过生成
   await seedDefaultCharacterAssets(name, userId);

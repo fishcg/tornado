@@ -2860,6 +2860,10 @@ async function loadSoulIntoPanel() {
     set("char-appearance", soulData.appearance);
     set("char-description", soulData.description);
     set("char-personality", soulData.personality);
+    set("char-values", soulData.values_content);
+    set("char-boundaries", soulData.boundaries_content);
+    set("char-habits", soulData.habits_content);
+    set("char-speech-examples", soulData.speech_examples);
     set("soul-editor", soulData.soul);
   } catch {}
   await loadCharacterList();
@@ -3054,6 +3058,10 @@ document.getElementById("rp-soul-save")?.addEventListener("click", async () => {
     appearance: get("char-appearance"),
     personality: get("char-personality"),
     description: get("char-description"),
+    values_content: get("char-values"),
+    boundaries_content: get("char-boundaries"),
+    habits_content: get("char-habits"),
+    speech_examples: get("char-speech-examples"),
     soul: get("soul-editor")
   });
   showToast("角色设定已保存");
@@ -3105,6 +3113,10 @@ async function openCompanionModal() {
     set("cm-char-appearance", soulData.appearance);
     set("cm-char-description", soulData.description);
     set("cm-char-personality", soulData.personality);
+    set("cm-char-values", soulData.values_content);
+    set("cm-char-boundaries", soulData.boundaries_content);
+    set("cm-char-habits", soulData.habits_content);
+    set("cm-char-speech-examples", soulData.speech_examples);
     set("cm-soul-editor", soulData.soul);
   } catch {}
   try {
@@ -3122,6 +3134,10 @@ async function openCompanionModal() {
         set("cm-char-appearance", char.appearance);
         set("cm-char-description", char.description);
         set("cm-char-personality", char.personality);
+        set("cm-char-values", char.values_content);
+        set("cm-char-boundaries", char.boundaries_content);
+        set("cm-char-habits", char.habits_content);
+        set("cm-char-speech-examples", char.speech_examples);
         set("cm-soul-editor", char.soul_content);
         await loadRefImageSection("cm-");
       };
@@ -3183,6 +3199,10 @@ document.getElementById("cm-soul-save")?.addEventListener("click", async () => {
     appearance: get("cm-char-appearance"),
     personality: get("cm-char-personality"),
     description: get("cm-char-description"),
+    values_content: get("cm-char-values"),
+    boundaries_content: get("cm-char-boundaries"),
+    habits_content: get("cm-char-habits"),
+    speech_examples: get("cm-char-speech-examples"),
     soul: get("cm-soul-editor")
   });
   showToast("角色设定已保存");

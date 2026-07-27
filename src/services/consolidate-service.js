@@ -6,8 +6,8 @@ import {
 import { generateStructured } from "../llm/openai-client.js";
 import { consolidationSchema } from "./prompt-schemas.js";
 
-export async function consolidateMemories(sourcePrefix = null) {
-  const { memories: unconsolidated } = await listUnconsolidatedMemories(10, sourcePrefix);
+export async function consolidateMemories(sourcePrefix = null, { exactSource = false } = {}) {
+  const { memories: unconsolidated } = await listUnconsolidatedMemories(10, sourcePrefix, exactSource);
   if (unconsolidated.length < 1) {
     return {
       status: "skipped",
@@ -15,7 +15,7 @@ export async function consolidateMemories(sourcePrefix = null) {
     };
   }
 
-  const { memories: recentMemories } = await listMemories(25, sourcePrefix);
+  const { memories: recentMemories } = await listMemories(25, sourcePrefix, exactSource);
   const memories = [...unconsolidated];
 
   for (const memory of recentMemories) {

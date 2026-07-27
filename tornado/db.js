@@ -96,11 +96,15 @@ const CREATE_TABLES = [
     created_at VARCHAR(64) NOT NULL,
     updated_at VARCHAR(64) NOT NULL,
     mood VARCHAR(32) NOT NULL DEFAULT 'neutral',
+    mood_intensity INT NOT NULL DEFAULT 0,
+    mood_cause TEXT,
+    mood_updated_at VARCHAR(64),
     topic_summary TEXT,
     last_user_at VARCHAR(64),
     dnd_start VARCHAR(8),
     dnd_end VARCHAR(8),
     proactive_idle_minutes INT,
+    last_diary_message_id INT,
     archived INT NOT NULL DEFAULT 0,
     auto_mode INT NOT NULL DEFAULT 0,
     user_id INT,
@@ -154,11 +158,20 @@ const CREATE_TABLES = [
     appearance TEXT,
     personality TEXT,
     description TEXT,
+    values_content TEXT,
+    boundaries_content TEXT,
+    habits_content TEXT,
+    speech_examples MEDIUMTEXT,
     soul_content MEDIUMTEXT,
     slideshow_enabled INT NOT NULL DEFAULT 0,
     slideshow_interval INT NOT NULL DEFAULT 30,
     is_active INT NOT NULL DEFAULT 0,
     affection INT NOT NULL DEFAULT 10,
+    trust_score INT,
+    warmth_score INT,
+    intimacy_score INT,
+    tension_score INT,
+    inner_state_json TEXT,
     created_at VARCHAR(64) NOT NULL,
     user_id INT,
     UNIQUE KEY uq_name_user (name, user_id),
@@ -336,6 +349,9 @@ export async function initDb() {
   await ensureColumn(pool, "sessions", "auto_mode", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "sessions", "user_id", "INT");
   await ensureColumn(pool, "sessions", "topic_summary", "TEXT");
+  await ensureColumn(pool, "sessions", "mood_intensity", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "sessions", "mood_cause", "TEXT");
+  await ensureColumn(pool, "sessions", "mood_updated_at", "VARCHAR(64)");
   await ensureColumn(pool, "sessions", "last_user_at", "VARCHAR(64)");
   await ensureColumn(pool, "sessions", "dnd_start", "VARCHAR(8)");
   await ensureColumn(pool, "sessions", "dnd_end", "VARCHAR(8)");
@@ -344,6 +360,7 @@ export async function initDb() {
   await ensureColumn(pool, "sessions", "last_call_at", "VARCHAR(64)");
   await ensureColumn(pool, "sessions", "last_emotion_call_at", "VARCHAR(64)");
   await ensureColumn(pool, "sessions", "diary_generated", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "sessions", "last_diary_message_id", "INT");
   await ensureColumn(pool, "messages", "image_url", "TEXT");
   await ensureColumn(pool, "messages", "image_prompt", "TEXT");
   await ensureColumn(pool, "messages", "character_name", "VARCHAR(255)");
@@ -355,7 +372,16 @@ export async function initDb() {
   await ensureColumn(pool, "characters", "appearance", "TEXT");
   await ensureColumn(pool, "characters", "personality", "TEXT");
   await ensureColumn(pool, "characters", "description", "TEXT");
+  await ensureColumn(pool, "characters", "values_content", "TEXT");
+  await ensureColumn(pool, "characters", "boundaries_content", "TEXT");
+  await ensureColumn(pool, "characters", "habits_content", "TEXT");
+  await ensureColumn(pool, "characters", "speech_examples", "MEDIUMTEXT");
   await ensureColumn(pool, "characters", "affection", "INT NOT NULL DEFAULT 10");
+  await ensureColumn(pool, "characters", "trust_score", "INT");
+  await ensureColumn(pool, "characters", "warmth_score", "INT");
+  await ensureColumn(pool, "characters", "intimacy_score", "INT");
+  await ensureColumn(pool, "characters", "tension_score", "INT");
+  await ensureColumn(pool, "characters", "inner_state_json", "TEXT");
   await ensureColumn(pool, "characters", "user_id", "INT");
   await ensureColumn(pool, "characters", "reference_image_url", "TEXT");
   await ensureColumn(pool, "affection_log", "mood", "VARCHAR(32)");

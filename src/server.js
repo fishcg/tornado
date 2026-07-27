@@ -9,7 +9,8 @@ import {
   deleteEntity,
   getMemoryStats,
   listEntityGraph,
-  listMemories
+  listMemories,
+  listUnconsolidatedSources
 } from "./repositories/memory-repository.js";
 import { consolidateMemories } from "./services/consolidate-service.js";
 import { ingestText } from "./services/ingest-service.js";
@@ -54,18 +55,20 @@ async function registerRoutes() {
 
   app.get("/graph", async (request) => {
     const sourcePrefix = request.query.source ? String(request.query.source).trim() : null;
-    return listEntityGraph(500, sourcePrefix);
+    const exactSource = String(request.query.exact || "") === "1";
+    return listEntityGraph(500, sourcePrefix, exactSource);
   });
 
   app.get("/query", async (request, reply) => {
     const question = String(request.query.q || "").trim();
     const sourcePrefix = request.query.source ? String(request.query.source).trim() : null;
+    const exactSource = String(request.query.exact || "") === "1";
     if (!question) {
       reply.code(400);
       return { error: "missing ?q= parameter" };
     }
 
-    const answer = await answerQuestion(question, sourcePrefix);
+    const answer = await answerQuestion(question, sourcePrefix, exactSource);
     return { question, answer };
   });
 
@@ -115,8 +118,12 @@ async function startBackgroundJobs() {
     try {
       const stats = await getMemoryStats();
       if (stats.unconsolidated >= 2) {
-        const result = await consolidateMemories();
-        app.log.info(`consolidation: ${result.response}`);
+        // 每个 source 独立巩固，避免不同用户或不同角色的记忆被同一次模型调用关联。
+        const sources = await listUnconsolidatedSources(100);
+        for (const source of sources) {
+          const result = await consolidateMemories(source, { exactSource: true });
+          if (result.status !== "skipped") app.log.info(`consolidation [${source}]: ${result.response}`);
+        }
       } else {
         app.log.info(`consolidation skipped: ${stats.unconsolidated} unconsolidated memories`);
       }
