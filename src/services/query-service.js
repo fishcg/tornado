@@ -17,8 +17,12 @@ export async function answerQuestion(question, sourcePrefix, exactSource = false
   const normalize = (value) => String(value || "").toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
   const q = normalize(question);
   const grams = new Set();
+  const stopGrams = new Set(["我们", "你们", "他们", "这个", "那个", "什么", "怎么", "为什么", "还是", "就是", "然后", "现在", "今天", "觉得", "可以"]);
   for (let size = 2; size <= 4; size++) {
-    for (let i = 0; i + size <= q.length; i++) grams.add(q.slice(i, i + size));
+    for (let i = 0; i + size <= q.length; i++) {
+      const gram = q.slice(i, i + size);
+      if (!stopGrams.has(gram)) grams.add(gram);
+    }
   }
   const scored = memories.map((memory, index) => {
     const haystack = normalize([
@@ -27,17 +31,21 @@ export async function answerQuestion(question, sourcePrefix, exactSource = false
       ...(memory.topics || []),
       ...(memory.entities || [])
     ].join(" "));
-    let lexical = q.length >= 2 && haystack.includes(q) ? 12 : 0;
+    const exact = q.length >= 2 && haystack.includes(q);
+    let lexical = exact ? 12 : 0;
     for (const gram of grams) if (haystack.includes(gram)) lexical += gram.length >= 3 ? 2 : 1;
     const importance = Number(memory.importance || 0) * 3;
     const recency = Math.max(0, 2 - index / 50);
-    return { memory, score: lexical + importance + recency, lexical };
+    return { memory, score: lexical + importance + recency, lexical, exact };
   });
-  const relevant = scored.filter((item) => item.lexical > 0).sort((a, b) => b.score - a.score);
-  memories = (relevant.length ? relevant : scored)
+  // 没有真正相关的记忆时返回空，不能退回“最近记忆”；否则旧话题会被无关地重新注入。
+  const relevant = scored
+    .filter((item) => item.exact || item.lexical >= 4)
     .sort((a, b) => b.score - a.score)
     .slice(0, 8)
     .map((item) => item.memory);
+  if (!relevant.length) return "";
+  memories = relevant;
 
   const memoryIdSet = new Set(memories.map((memory) => memory.id));
   let consolidations = (await listConsolidations(500)).consolidations

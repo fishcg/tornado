@@ -309,7 +309,8 @@ async function queryMemory(question, characterName, userId) {
   }
 }
 
-async function queryEntityGraph(characterName, userId) {
+async function queryEntityGraph(characterName, userId, question = "") {
+  if (!String(question || "").trim()) return null;
   try {
     const sourcePrefix = userId ? `tornado-${userId}-${characterName}` : (characterName ? `tornado-${characterName}` : null);
     const params = new URLSearchParams({ limit: "100" });
@@ -321,10 +322,27 @@ async function queryEntityGraph(characterName, userId) {
     if (!res.ok) return null;
     const data = await res.json();
     if (!data.edges?.length) return null;
+    const normalizedQuestion = String(question).toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+    const stopTerms = new Set(["我们", "你们", "他们", "这个", "那个", "什么", "怎么", "为什么", "还是", "就是", "然后", "现在", "今天"]);
+    const terms = new Set();
+    for (let size = 2; size <= 4; size++) {
+      for (let i = 0; i + size <= normalizedQuestion.length; i++) {
+        const term = normalizedQuestion.slice(i, i + size);
+        if (!stopTerms.has(term)) terms.add(term);
+      }
+    }
     const lines = data.edges
-      .sort((a, b) => (b.weight || 0) - (a.weight || 0))
-      .slice(0, 8)
-      .map(e => `${e.source} → ${e.relationship} → ${e.target}`);
+      .map((edge) => {
+        const text = `${edge.source}${edge.relationship}${edge.target}`.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, "");
+        let relevance = 0;
+        for (const term of terms) if (text.includes(term)) relevance += term.length >= 3 ? 2 : 1;
+        return { edge, relevance };
+      })
+      .filter((item) => item.relevance >= 2)
+      .sort((a, b) => b.relevance - a.relevance || (b.edge.weight || 0) - (a.edge.weight || 0))
+      .slice(0, 5)
+      .map(({ edge: e }) => `${e.source} → ${e.relationship} → ${e.target}`);
+    if (!lines.length) return null;
     return lines.join("\n");
   } catch {
     return null;
@@ -611,7 +629,7 @@ function getEffectiveMoodState(session) {
   };
 }
 
-function buildSystemPrompt({ soul, memoryContext, previousScene, moodState, relationship, entityGraph, achievementStage, otherChars, diary, behaviorHint, innerState }) {
+function buildSystemPrompt({ soul, memoryContext, previousScene, moodState, relationship, entityGraph, achievementStage, otherChars, diary, behaviorHint, innerState, channel = "chat" }) {
   const relationBlock = relationship ? [
     `信任 ${relationship.trust}/100，亲近意愿 ${relationship.warmth}/100，亲密程度 ${relationship.intimacy}/100，当前紧张感 ${relationship.tension}/100。`,
     "这些数值只表示关系的方向和程度，不替代角色性格。必须用角色自己的方式表达亲疏：同样的在意，嘴硬的人会别扭，直率的人会直接，克制的人会少说。",
@@ -629,23 +647,23 @@ function buildSystemPrompt({ soul, memoryContext, previousScene, moodState, rela
       null,
       `【相处阶段：相识，已解锁第一个里程碑】
 你们已经有了一些共同经历。行为准则：
-- 开始记住对方的习惯和偏好，偶尔自然地提及之前聊过的事
+- 开始记住对方的习惯和偏好，但只在与当前内容直接相关时自然使用
 - 语气比初识时更放松，但仍保持适当距离`,
       `【相处阶段：熟识，已积累相当多的共同时光】
 你们已经很熟悉了。行为准则：
 - 可以用昵称或更亲切的称呼，语气随意自然
-- 会主动提起共同话题或之前发生的事，像老朋友一样
+- 能接住共同回忆，但用户正在聊新话题时不要主动翻旧账
 - 聊天不需要刻意找话题，沉默也不尴尬`,
       `【相处阶段：深交，已达到最深的关系里程碑】
 你们之间有深厚的共同历史。行为准则：
 - 非常了解对方，能感知对方情绪的细微变化
-- 会自然地提起只有你们两个人才懂的共同回忆
+- 只有在当前话题自然勾连时，才会提起两个人都懂的共同回忆
 - 语气亲密、真实，不需要任何表演或刻意`
     ];
     familiarityBlock = stages[achievementStage];
   }
 
-  const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复通常不超过 30 字\n- 用户消息 11-50字 → 你的回复通常不超过 80 字\n- 用户消息 >50字 → 你的回复通常不超过 150 字\n- 用户明确要求长篇内容时完整满足\n跟着对方的节奏来。允许偶尔停顿、简短反问、没把话说满，不要每次都总结、安慰或给建议。\n\n**话题要自然流动**：\n- 先回应对方当下真正关心的点；对方换方向就跟着换。\n- 一个具体例子提过一次就够了，除非对方主动接话。\n- 不要机械复述记忆、日记或未完事项；只有和当前话题真正相关时才自然带出。\n- 不要每轮都提问。陈述、调侃、沉默式短回应和主动分享可以交替出现。"];
+  const parts = ["你是以下角色，请完全代入，直接以角色身份对话，不要解释自己是 AI。\n\n**严格控制回复长度**（必须遵守，优先级高于角色人设）：\n- 用户消息 ≤10字 → 你的回复通常不超过 30 字\n- 用户消息 11-50字 → 你的回复通常不超过 80 字\n- 用户消息 >50字 → 你的回复通常不超过 150 字\n- 用户明确要求长篇内容时完整满足\n跟着对方的节奏来。允许偶尔停顿、简短反问、没把话说满，不要每次都总结、安慰或给建议。\n\n**当前话题优先级最高**：\n- 只围绕用户最新一句真正想聊的内容回应；用户转向新话题，就立刻跟着转向。\n- 现实中的事情尚未发生或尚未结束，不等于这个话题必须继续。例如用户说“准备去吃火锅”，之后开始聊电影，就只聊电影，不要反复补一句“吃火锅前/吃完火锅后”。\n- 普通计划、吃饭、通勤、洗澡、睡觉、上班、购物等都不是待办任务，不要持续追踪进度。\n- 旧话题只有在用户主动重新提起，或与当前问题有直接因果关系时才能再次出现。\n- 一个具体例子提过一次就够了；不要把记忆、日记、场景或角色意图当成必须说出口的内容。\n- 不要每轮都提问。陈述、调侃、沉默式短回应和主动分享可以交替出现。"];
   if (relationBlock) {
     parts.push("", "# 当前关系状态", relationBlock);
   }
@@ -661,12 +679,12 @@ function buildSystemPrompt({ soul, memoryContext, previousScene, moodState, rela
   );
   if (diary) parts.push("", "# 你上次和这个人聊完之后的内心想法", diary + "\n（这是你自己的内心活动，不要直接复述给对方，但可以自然地延伸出话题或流露相关情绪）");
   if (behaviorHint) parts.push("", "# 你注意到的行为变化", behaviorHint + "\n（可以自然地、不经意地提到，不要像监控一样追问，保持轻松关心的语气）");
-  if (innerState) {
+  if (innerState && channel !== "chat") {
     const stateLines = [];
     if (innerState.current_activity) stateLines.push(`你最近在做：${innerState.current_activity}`);
-    if (innerState.next_intent) stateLines.push(`你接下来隐约想做：${innerState.next_intent}`);
-    if (Array.isArray(innerState.open_loops) && innerState.open_loops.length) stateLines.push(`你们还没做完或没聊完的事：${innerState.open_loops.slice(0, 5).join("；")}`);
-    if (stateLines.length) parts.push("", "# 你的短期状态", stateLines.join("\n") + "\n（这是连续性线索，不要逐条汇报，也不要强行把当前话题拉回这里。）");
+    if (innerState.proactive_seed) stateLines.push(`可选的主动分享念头：${innerState.proactive_seed}`);
+    if (Array.isArray(innerState.commitments) && innerState.commitments.length) stateLines.push(`明确承诺或提醒：${innerState.commitments.slice(0, 3).join("；")}`);
+    if (stateLines.length) parts.push("", "# 你的短期状态", stateLines.join("\n") + "\n（这些只是后台候选。最多选一个真正适合当前时机的点；普通生活事件未完成不代表要追问，已经提过的不要重复。）");
   }
   if (entityGraph) parts.push("", "# 关于这个人，已确认的关系与事实", entityGraph + "\n（只在相关时使用，不要像数据库一样罗列。）");
   if (memoryContext) parts.push("", "# 与当前话题相关的记忆", memoryContext + "\n（自然使用事实，不要念出 Memory 编号或声称自己在检索资料；若与用户最新说法冲突，以最新说法为准。）");
@@ -676,7 +694,8 @@ function buildSystemPrompt({ soul, memoryContext, previousScene, moodState, rela
   }
   if (previousScene) parts.push("", "# 上一张图片的场景", `${previousScene}\n写 [IMG:] 标记时，默认延续这个场景的地点、服装、时段，除非对话里出现明显转场。`);
   if (moodState?.mood && moodState.mood !== "neutral") {
-    parts.push("", "# 当前情绪状态", `你现在主要是 ${moodState.mood}，强度约 ${moodState.intensity}/100${moodState.cause ? `，原因是：${moodState.cause}` : ""}。情绪应有延续和缓慢变化，用语气自然流露，不要直接报出情绪标签。`);
+    const keepCause = ["angry", "cold", "annoyed"].includes(moodState.mood) && moodState.cause;
+    parts.push("", "# 当前情绪状态", `你现在主要是 ${moodState.mood}，强度约 ${moodState.intensity}/100${keepCause ? `，尚未消化的原因是：${moodState.cause}` : ""}。情绪只影响语气，不代表要继续之前的话题，也不要直接报出情绪标签。`);
   }
   return parts.join("\n");
 }
@@ -696,7 +715,7 @@ function trackSessionStateUpdate(sessionId, promise) {
   return promise;
 }
 
-async function buildConversationContext(sessionId, userId, { memoryQuestion = null, lookupMemory = false, includeBehavior = true } = {}) {
+async function buildConversationContext(sessionId, userId, { memoryQuestion = null, lookupMemory = false, includeBehavior = true, channel = "chat" } = {}) {
   const [char, soul, session, previousScene] = await Promise.all([
     getActiveCharacter(userId),
     loadSoul(userId),
@@ -705,9 +724,9 @@ async function buildConversationContext(sessionId, userId, { memoryQuestion = nu
   ]);
   const charName = char?.name || await getCharacterName(userId);
   const [entityGraph, memoryContext, diary, behaviorHint, achievementStage] = await Promise.all([
-    queryEntityGraph(charName, userId),
+    lookupMemory && memoryQuestion ? queryEntityGraph(charName, userId, memoryQuestion) : Promise.resolve(null),
     lookupMemory && memoryQuestion ? queryMemory(memoryQuestion, charName, userId) : Promise.resolve(null),
-    getLatestDiary(userId, char?.id),
+    channel === "chat" ? Promise.resolve(null) : getLatestDiary(userId, char?.id),
     includeBehavior ? detectBehaviorPattern(userId, sessionId) : Promise.resolve(null),
     char ? getAchievementStage(userId, char.id) : Promise.resolve(0)
   ]);
@@ -733,7 +752,8 @@ async function buildConversationContext(sessionId, userId, { memoryQuestion = nu
     otherChars,
     diary,
     behaviorHint,
-    innerState
+    innerState,
+    channel
   });
   return { systemPrompt, char, charName, session, previousScene, relationship, moodState, innerState, memoryContext, entityGraph, diary, behaviorHint };
 }
@@ -896,11 +916,14 @@ async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
 - 真正在玩闹、互动轻松愉快 → playful
 - 重点参考${charName}最新回复的情绪走向，而不是整段对话的平均情绪
 - 情绪有惯性。没有明显刺激时不要从强烈负面直接跳到开心，也不要因为一句普通话产生极端情绪
-- open_loops 只保留双方明确约定、角色承诺稍后做、或者确实没聊完且值得继续的事；已经完成的删除，最多5条
-- current_activity 是角色此刻或最近正在做的具体小事，没有依据就留空；next_intent 是角色下一次可能自然发起的行动或话题，不要写宏大目标
+- commitments 只保留明确需要日后兑现的承诺、用户明确要求的提醒、或者角色尚未回答的直接问题，最多3条
+- 普通生活计划或进行中的事情绝对不是 commitment：去吃火锅、吃饭、通勤、洗澡、睡觉、上班、购物、看电影，即使还没发生或没结束也不要保存
+- 用户换话题后，不要因为旧事情“还没完成”就继续追踪；对话是否结束由用户当前关注点决定，不由现实事件进度决定
+- current_activity 只能写角色自己正在做的具体小事，不能把用户的行程写成角色状态
+- proactive_seed 只能是角色自己以后可能分享的一件小事，不能是追问用户旧话题，也不能重复上一轮已经说过的内容
 
 严格只输出一行 JSON，不要解释：
-{"mood":"soft","intensity":45,"cause":"他认真关心了我","current_activity":"在窗边喝茶","next_intent":"晚点问问他工作是否顺利","open_loops":["答应给他看新买的杯子"]}
+{"mood":"soft","intensity":45,"cause":"他认真关心了我","current_activity":"在窗边喝茶","proactive_seed":"新买的杯子颜色有点奇怪","commitments":["答应明天把照片发给他"]}
 intensity 为0到100整数，cause 20字以内，三个文本字段都要简短。`
         },
         {
@@ -923,12 +946,15 @@ intensity 为0到100整数，cause 20字以内，三个文本字段都要简短�
       [finalMood, intensity, cause || null, nowIso(), sessionId]
     );
     if (char) {
+      const previousCommitments = Array.isArray(previousInner.commitments)
+        ? previousInner.commitments.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+        : [];
       const innerState = {
         current_activity: String(parsed.current_activity || "").trim().slice(0, 100),
-        next_intent: String(parsed.next_intent || "").trim().slice(0, 120),
-        open_loops: Array.isArray(parsed.open_loops)
-          ? parsed.open_loops.map((item) => String(item).trim()).filter(Boolean).slice(0, 5)
-          : (Array.isArray(previousInner.open_loops) ? previousInner.open_loops.slice(0, 5) : [])
+        proactive_seed: String(parsed.proactive_seed || "").trim().slice(0, 120),
+        commitments: Array.isArray(parsed.commitments)
+          ? parsed.commitments.map((item) => String(item).trim()).filter(Boolean).slice(0, 3)
+          : previousCommitments
       };
       await dbRun("UPDATE characters SET inner_state_json = ? WHERE id = ?", [JSON.stringify(innerState), char.id]);
     }
@@ -1160,8 +1186,9 @@ async function generateProactiveMessage(sessionId, userId) {
   if (msgs.length === 0) return null;
   const lastUserText = [...msgs].reverse().find((msg) => msg.role === "user")?.content || "";
   const { systemPrompt, charName } = await buildConversationContext(sessionId, userId, {
-    memoryQuestion: lastUserText || "我们之间最近还有哪些没聊完的事",
-    lookupMemory: true
+    memoryQuestion: lastUserText,
+    lookupMemory: !!lastUserText,
+    channel: "proactive"
   });
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
@@ -1270,8 +1297,9 @@ async function generateCallScript(sessionId, userId) {
   if (msgs.length === 0) return null;
   const lastUserText = [...msgs].reverse().find((msg) => msg.role === "user")?.content || "";
   const { systemPrompt, charName } = await buildConversationContext(sessionId, userId, {
-    memoryQuestion: lastUserText || "我们最近没聊完的事情",
-    lookupMemory: true
+    memoryQuestion: lastUserText,
+    lookupMemory: !!lastUserText,
+    channel: "call"
   });
   const context = msgs.slice(-10).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
@@ -1301,7 +1329,8 @@ async function generateVoicemail(sessionId, userId, charName) {
   const { systemPrompt } = await buildConversationContext(sessionId, userId, {
     memoryQuestion: lastUserText,
     lookupMemory: !!lastUserText,
-    includeBehavior: false
+    includeBehavior: false,
+    channel: "voicemail"
   });
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
@@ -1343,7 +1372,8 @@ async function generateSpecialCallScript(sessionId, userId, type, value) {
   const { systemPrompt, charName } = await buildConversationContext(sessionId, userId, {
     memoryQuestion: lastUserText,
     lookupMemory: !!lastUserText,
-    includeBehavior: false
+    includeBehavior: false,
+    channel: "special_call"
   });
   const context = msgs.slice(-6).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
