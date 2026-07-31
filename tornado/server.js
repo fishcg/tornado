@@ -3624,7 +3624,7 @@ async function handleRequest(req, res) {
     console.log(
       `[tts-feedback] 语音体验=${ratingText} 【aliyun_request_id】:${msg.tts_aliyun_request_id || "无"}` +
       ` message_id=${msg.id} user_id=${userId} voice_id=${msg.tts_voice_id || "无"}` +
-      ` voice_channel=${msg.tts_voice_channel || "无"}`
+      ` voice_channel=${msg.tts_voice_channel || "无"} audio_url=${msg.tts_audio_url}`
     );
     send(res, 201, { ok: true, feedback_id: Number(result.insertId) });
     return;
