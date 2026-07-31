@@ -3973,8 +3973,9 @@ setInterval(async () => {
     );
   }
 
-  // ── 日记生成：空闲 > 2 小时且未生成过日记的 session ──
+  // ── 日记生成：空闲 > 2 小时，且自上次日记以来新增 ≥ 50 条聊天的 session ──
   const DIARY_IDLE_MS = 2 * 60 * 60 * 1000;
+  const DIARY_MIN_NEW_MESSAGES = 50;
   const allSessions = await listAllActiveSessions();
   for (const session of allSessions) {
     if (!session.last_user_at) continue;
@@ -3986,18 +3987,25 @@ setInterval(async () => {
     const newMsgs = session.last_diary_message_id
       ? msgs.filter((msg) => Number(msg.id) > Number(session.last_diary_message_id))
       : msgs;
-    if (newMsgs.filter(m => m.role === "user").length < 4) continue;
+    // 每 50 条聊天才更新一次日记（不计 system 消息）
+    if (newMsgs.filter(m => m.role !== "system").length < DIARY_MIN_NEW_MESSAGES) continue;
     const char = await getActiveCharacter(sessionUserId);
     if (!char) continue;
     const charName = char.name || "default";
+    const latestMessageId = newMsgs[newMsgs.length - 1]?.id || null;
     console.log(`[diary] 生成日记 session=${session.id} user=${sessionUserId} char=${charName}`);
     const diary = await generateDiary(session.id, sessionUserId).catch(() => null);
-    if (!diary) continue;
+    if (!diary) {
+      // 生成失败也推进水位线，避免每 2 分钟对同一批 session 空转重试
+      if (latestMessageId) {
+        await dbRun("UPDATE sessions SET last_diary_message_id = ? WHERE id = ?", [latestMessageId, session.id]);
+      }
+      continue;
+    }
     await dbRun(
       "INSERT INTO character_diaries (user_id, character_id, session_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
       [sessionUserId, char.id, session.id, diary, nowIso()]
     );
-    const latestMessageId = newMsgs[newMsgs.length - 1]?.id || null;
     await dbRun("UPDATE sessions SET diary_generated = 1, last_diary_message_id = ? WHERE id = ?", [latestMessageId, session.id]);
     const memoryLines = newMsgs.slice(-24).map((msg) => `${msg.role === "user" ? "用户" : charName}：${msg.content}`);
     ingestToMemory(`[近期对话片段]\n${memoryLines.join("\n")}\n\n[${charName}的内心独白]\n${diary}`, charName, sessionUserId);
