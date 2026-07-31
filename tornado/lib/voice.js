@@ -62,6 +62,7 @@ export async function deleteVoiceCosyVoice(voiceId) {
 export async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", instruction = "", onChunk = null) {
   const taskId = crypto.randomUUID();
   const allChunks = [];
+  let aliyunRequestId = null;
 
   await new Promise((resolve, reject) => {
     const ws = new WebSocket("wss://dashscope.aliyuncs.com/api-ws/v1/inference", {
@@ -92,6 +93,7 @@ export async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", inst
         return;
       }
       let msg; try { msg = JSON.parse(data.toString()); } catch { return; }
+      aliyunRequestId ||= msg.header?.request_id || null;
       const event = msg.header?.event;
       if (event === "task-started") {
         ws.send(JSON.stringify({ header: { action: "continue-task", task_id: taskId, streaming: "duplex" }, payload: { input: { text } } }));
@@ -110,7 +112,7 @@ export async function synthesizeSpeechCosyVoice(text, voiceId, lang = "zh", inst
   const wav = pcm16ToWav(pcm, 24000, 1, 16);
   const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
   const url = await uploadToOss(wav, filename);
-  return { url, durationMs: 0 };
+  return { url, durationMs: 0, aliyunRequestId };
 }
 
 export async function summarizePlot(msgs) {
@@ -334,28 +336,29 @@ export async function synthesizeSpeechQwenAudio(text, voiceId, lang = "zh", inst
     const body = await res.text().catch(() => "");
     throw new Error(`QwenAudio TTS ${res.status}: ${body.slice(0, 300)}`);
   }
+  const headerRequestId = res.headers.get("x-request-id") || res.headers.get("x-dashscope-request-id") || null;
   const filename = `tts-${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${lang}.wav`;
   const contentType = res.headers.get("content-type") || "";
   // 情形一：接口直接返回二进制音频
   if (contentType.startsWith("audio/") || contentType.includes("octet-stream")) {
     const buf = Buffer.from(await res.arrayBuffer());
-    return { url: await uploadToOss(buf, filename, "audio/wav"), durationMs: 0 };
+    return { url: await uploadToOss(buf, filename, "audio/wav"), durationMs: 0, aliyunRequestId: headerRequestId };
   }
   // 情形二：返回 JSON —— 可能是音频 URL，也可能是 base64
   const data = await res.json();
+  const aliyunRequestId = data.request_id || data.requestId || headerRequestId;
   const tempUrl = data.output?.audio?.url || data.output?.url || data.output?.choices?.[0]?.message?.content?.[0]?.audio?.url;
   const b64 = data.output?.audio?.data || data.output?.audio?.audio;
   if (tempUrl) {
     const dlRes = await fetch(tempUrl);
     if (!dlRes.ok) throw new Error(`QwenAudio TTS 音频下载失败: ${dlRes.status}`);
     const buf = Buffer.from(await dlRes.arrayBuffer());
-    return { url: await uploadToOss(buf, filename, "audio/wav"), durationMs: 0 };
+    return { url: await uploadToOss(buf, filename, "audio/wav"), durationMs: 0, aliyunRequestId };
   }
   if (b64) {
     const buf = Buffer.from(b64, "base64");
-    return { url: await uploadToOss(buf, filename, "audio/wav"), durationMs: 0 };
+    return { url: await uploadToOss(buf, filename, "audio/wav"), durationMs: 0, aliyunRequestId };
   }
   throw new Error(`QwenAudio TTS: no audio in response. ${JSON.stringify(data).slice(0, 200)}`);
 }
-
 

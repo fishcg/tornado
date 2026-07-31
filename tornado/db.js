@@ -291,6 +291,22 @@ const CREATE_TABLES = [
     KEY idx_call_logs_user (user_id)
   ) CHARACTER SET utf8mb4`,
 
+  `CREATE TABLE IF NOT EXISTS tts_feedback_logs (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    message_id INT NOT NULL,
+    session_id INT NOT NULL,
+    rating VARCHAR(8) NOT NULL,
+    aliyun_request_id VARCHAR(128),
+    voice_id VARCHAR(128),
+    voice_channel VARCHAR(32),
+    audio_url TEXT,
+    content MEDIUMTEXT,
+    created_at VARCHAR(64) NOT NULL,
+    KEY idx_tts_feedback_user_created (user_id, created_at),
+    KEY idx_tts_feedback_message (message_id)
+  ) CHARACTER SET utf8mb4`,
+
   `CREATE TABLE IF NOT EXISTS character_diaries (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -402,6 +418,9 @@ export async function initDb() {
   await ensureColumn(pool, "characters", "voice_preview_url", "TEXT");
   await ensureColumn(pool, "characters", "voice_channel", "VARCHAR(32) NOT NULL DEFAULT 'qwen'");
   await ensureColumn(pool, "messages", "tts_audio_url", "TEXT");
+  await ensureColumn(pool, "messages", "tts_aliyun_request_id", "VARCHAR(128)");
+  await ensureColumn(pool, "messages", "tts_voice_id", "VARCHAR(128)");
+  await ensureColumn(pool, "messages", "tts_voice_channel", "VARCHAR(32)");
   await ensureColumn(pool, "call_logs", "voicemail", "TEXT");
   await ensureColumn(pool, "call_logs", "missed", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "call_logs", "voicemail_read", "INT NOT NULL DEFAULT 0");

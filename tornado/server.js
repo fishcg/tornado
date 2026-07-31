@@ -1419,6 +1419,8 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
   const ttsSettings = await getUserSettings(userId);
   const lang = ttsSettings.ttsLang || "zh";
   let audioUrl = null;
+  let aliyunRequestId = null;
+  let voiceChannel = null;
   if (char.voice_id && char.tts_enabled) {
     try {
       const ttsScript = script
@@ -1429,6 +1431,7 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
       const normScript = normalizeTtsText(ttsScript);
       let ttsInput = lang === "ja" ? await translateToJapanese(normScript) : normScript;
       const ch = char.voice_channel || "cosyvoice";
+      voiceChannel = ch;
       const synthFn = pickSynthFn(ch);
       const gentle = (type === "emotion" || type?.startsWith("holiday") || type === "streak");
       const moodState = getEffectiveMoodState(session);
@@ -1446,8 +1449,9 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
       if (style.instruction) callInstruction += `，${style.instruction}`;
       if (wantTags) ttsInput = style.tagged || ttsInput;
       console.log(`[tts][特殊来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
-      const { url } = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
-      audioUrl = url;
+      const result = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
+      audioUrl = result.url;
+      aliyunRequestId = result.aliyunRequestId || null;
     } catch (err) {
       console.error("[特殊来电] TTS 失败:", err.message);
     }
@@ -1458,7 +1462,12 @@ async function triggerSpecialCall(sessionId, userId, type, value, { skipSessionC
     [userId, sessionId, char.name, script, audioUrl || null, nowIso()]
   );
   const msgId = await appendMessage(sessionId, "assistant", `📞 [未接听] ${script}`, char.name, userId);
-  if (audioUrl) await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
+  if (audioUrl) {
+    await dbRun(
+      "UPDATE messages SET tts_audio_url = ?, tts_aliyun_request_id = ?, tts_voice_id = ?, tts_voice_channel = ? WHERE id = ?",
+      [audioUrl, aliyunRequestId, char.voice_id, voiceChannel, msgId]
+    );
+  }
   await dbRun("UPDATE call_logs SET msg_id = ? WHERE id = ?", [msgId, callLogResult.insertId]);
   pushToUser(userId, {
     incoming_call: true,
@@ -3453,23 +3462,33 @@ async function handleRequest(req, res) {
           console.log(`[tts] 开始合成 lang=${lang} ch=${ch} chars=${ttsInput.length} instruction="${instruction}"`);
           console.log(`[tts] 合成文本 >>>\n${ttsInput}\n<<<`);
           let audioUrl;
+          let aliyunRequestId = null;
           if (ch === "cosyvoice" && allowStreamTts) {
             // 流式：边合成边推 PCM chunk
             pushToUser(userId, { tts_stream_start: true, msg_id: Number(msgId) });
-            const { url } = await synthesizeSpeechCosyVoice(
+            const result = await synthesizeSpeechCosyVoice(
               ttsInput, ttsChar.voice_id, lang, instruction,
               (chunk) => pushToUser(userId, { tts_chunk: true, msg_id: Number(msgId), data: chunk.toString("base64") })
             );
-            audioUrl = url;
+            audioUrl = result.url;
+            aliyunRequestId = result.aliyunRequestId || null;
+            await dbRun(
+              "UPDATE messages SET tts_audio_url = ?, tts_aliyun_request_id = ?, tts_voice_id = ?, tts_voice_channel = ? WHERE id = ?",
+              [audioUrl, aliyunRequestId, ttsChar.voice_id, ch, msgId]
+            );
             pushToUser(userId, { tts_stream_end: true, msg_id: Number(msgId), audio_url: audioUrl });
           } else {
             // 非流式：cosyvoice 不传 onChunk 回调即等最终 wav；qwen-audio 走 HTTP
-            const { url } = await pickSynthFn(ch)(ttsInput, ttsChar.voice_id, lang, instruction);
-            audioUrl = url;
+            const result = await pickSynthFn(ch)(ttsInput, ttsChar.voice_id, lang, instruction);
+            audioUrl = result.url;
+            aliyunRequestId = result.aliyunRequestId || null;
+            await dbRun(
+              "UPDATE messages SET tts_audio_url = ?, tts_aliyun_request_id = ?, tts_voice_id = ?, tts_voice_channel = ? WHERE id = ?",
+              [audioUrl, aliyunRequestId, ttsChar.voice_id, ch, msgId]
+            );
             pushToUser(userId, { tts: true, msg_id: Number(msgId), audio_url: audioUrl });
           }
-          console.log(`[tts] 合成完成 url=${audioUrl}`);
-          await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, msgId]);
+          console.log(`[tts] 合成完成 aliyun_request_id=${aliyunRequestId || "无"} url=${audioUrl}`);
         } catch (err) {
           console.error("[tts] 合成失败:", err.message);
         }
@@ -3569,6 +3588,45 @@ async function handleRequest(req, res) {
       [...ids, userId]
     );
     send(res, 200, { ok: true, deleted: result.affectedRows ?? 0 });
+    return;
+  }
+
+  // POST /messages/:id/tts-feedback — 记录语音体验反馈（限本人会话的语音消息）
+  const ttsFeedbackMatch = pathname.match(/^\/messages\/(\d+)\/tts-feedback$/);
+  if (method === "POST" && ttsFeedbackMatch) {
+    const msgId = Number(ttsFeedbackMatch[1]);
+    const body = await readBody(req);
+    const rating = body.rating;
+    if (!['good', 'bad'].includes(rating)) {
+      send(res, 400, { error: "rating must be good or bad" });
+      return;
+    }
+    const msg = await dbGet(
+      `SELECT m.id, m.session_id, m.content, m.tts_audio_url, m.tts_aliyun_request_id,
+              m.tts_voice_id, m.tts_voice_channel
+       FROM messages m JOIN sessions s ON s.id = m.session_id
+       WHERE m.id = ? AND m.role = 'assistant' AND m.tts_audio_url IS NOT NULL AND s.user_id = ?`,
+      [msgId, userId]
+    );
+    if (!msg) {
+      send(res, 404, { error: "voice message not found" });
+      return;
+    }
+    const createdAt = nowIso();
+    const result = await dbRun(
+      `INSERT INTO tts_feedback_logs
+       (user_id, message_id, session_id, rating, aliyun_request_id, voice_id, voice_channel, audio_url, content, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, msg.id, msg.session_id, rating, msg.tts_aliyun_request_id, msg.tts_voice_id,
+        msg.tts_voice_channel, msg.tts_audio_url, msg.content, createdAt]
+    );
+    const ratingText = rating === "good" ? "好" : "坏";
+    console.log(
+      `[tts-feedback] 语音体验=${ratingText} 【aliyun_request_id】:${msg.tts_aliyun_request_id || "无"}` +
+      ` message_id=${msg.id} user_id=${userId} voice_id=${msg.tts_voice_id || "无"}` +
+      ` voice_channel=${msg.tts_voice_channel || "无"}`
+    );
+    send(res, 201, { ok: true, feedback_id: Number(result.insertId) });
     return;
   }
 
@@ -4017,6 +4075,8 @@ setInterval(async () => {
       if (!script) continue;
 
       let audioUrl = null;
+      let aliyunRequestId = null;
+      let voiceChannel = null;
       const ttsSettings = await getUserSettings(userId);
       const lang = ttsSettings.ttsLang || "zh";
 
@@ -4030,6 +4090,7 @@ setInterval(async () => {
           let ttsInput = normalizeTtsText(ttsScript);
           if (lang === "ja") ttsInput = await translateToJapanese(ttsInput);
           const ch = char.voice_channel || "cosyvoice";
+          voiceChannel = ch;
           const synthFn = pickSynthFn(ch);
           const tagsEnabled = (await getGlobalSetting("tts_tags_enabled", "1")) === "1";
           const instructionEnabled = (await getGlobalSetting("tts_instruction_enabled", "1")) === "1";
@@ -4045,8 +4106,9 @@ setInterval(async () => {
           if (wantTags) ttsInput = style.tagged || ttsInput;
           const callInstruction = style.instruction ? `带电话音效果，${style.instruction}` : "带电话音效果";
           console.log(`[tts][来电] 合成文本 ch=${ch} >>>\n${ttsInput}\n<<<`);
-          const { url } = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
-          audioUrl = url;
+          const result = await synthFn(ttsInput, char.voice_id, lang, callInstruction);
+          audioUrl = result.url;
+          aliyunRequestId = result.aliyunRequestId || null;
         } catch (err) {
           console.error("[来电] TTS 合成失败:", err.message);
         }
@@ -4060,7 +4122,12 @@ setInterval(async () => {
 
       // 写入对话记录（标识为来电）
       const callMsgId = await appendMessage(session.id, "assistant", `📞 [未接听] ${script}`, char.name, userId);
-      if (audioUrl) await dbRun("UPDATE messages SET tts_audio_url = ? WHERE id = ?", [audioUrl, callMsgId]);
+      if (audioUrl) {
+        await dbRun(
+          "UPDATE messages SET tts_audio_url = ?, tts_aliyun_request_id = ?, tts_voice_id = ?, tts_voice_channel = ? WHERE id = ?",
+          [audioUrl, aliyunRequestId, char.voice_id, voiceChannel, callMsgId]
+        );
+      }
       await dbRun("UPDATE call_logs SET msg_id = ? WHERE id = ?", [callMsgId, callLogId]);
 
       pushToUser(userId, {

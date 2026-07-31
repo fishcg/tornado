@@ -501,6 +501,16 @@ export default function ChatScreen() {
     const items: any[] = [];
     if (isAssistant) {
       items.push({ label: "重新生成", onPress: () => regenerate(item) });
+      if (item.tts_audio_url) {
+        items.push({
+          label: "反馈", onPress: () => {
+            actionSheet("您觉得该条语音体验是好还是坏？", [
+              { label: "好", onPress: () => submitTtsFeedback(item, "good") },
+              { label: "坏", onPress: () => submitTtsFeedback(item, "bad") },
+            ]);
+          },
+        });
+      }
       const faved = !!item.favorited;
       items.push({
         label: faved ? "取消收藏" : "收藏", onPress: async () => {
@@ -523,6 +533,17 @@ export default function ChatScreen() {
       },
     });
     actionSheet("操作", items);
+  };
+
+  const submitTtsFeedback = async (item: Msg, rating: "good" | "bad") => {
+    if (typeof item.id !== "number") return;
+    try {
+      await api("POST", `/messages/${item.id}/tts-feedback`, { rating });
+      hapticLight();
+      toast("感谢您的反馈");
+    } catch (e: any) {
+      toast(e.message || "反馈失败", "err");
+    }
   };
 
   const regenerate = async (item: Msg) => {
