@@ -730,8 +730,14 @@ async function loadStories() {
   rows.forEach(s => {
     const tr = document.createElement("tr");
     [s.character_name, s.story_type === "friendship" ? "友情" : "恋爱", s.status, `第${s.current_chapter}章`, fmtDate(s.updated_at)].forEach(v => { const td=document.createElement("td"); td.textContent=String(v||""); tr.appendChild(td); });
-    const td=document.createElement("td"); const btn=document.createElement("button"); btn.className="btn-sm btn-primary"; btn.textContent="查看剧情"; btn.onclick=()=>loadStoryDetail(s.id); td.appendChild(btn); tr.appendChild(td); body.appendChild(tr);
+    const td=document.createElement("td"); const btn=document.createElement("button"); btn.className="btn-sm btn-primary"; btn.textContent="查看剧情"; btn.onclick=()=>loadStoryDetail(s.id); td.appendChild(btn);
+    if (s.status === "error") { const retry=document.createElement("button"); retry.className="btn-sm"; retry.style.marginLeft="6px"; retry.textContent="重试生成"; retry.onclick=()=>retryStory(s.id); td.appendChild(retry); }
+    tr.appendChild(td); body.appendChild(tr);
   });
+}
+async function retryStory(id) {
+  const data = await api(`/admin/stories/${id}/retry`, { method: "POST" });
+  if (data) { showMsg("已开始重新生成剧情"); loadStories(); }
 }
 async function loadStoryDetail(id) {
   const d = await api(`/admin/stories/${id}`); const el = document.getElementById("storyDetail");

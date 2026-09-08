@@ -262,9 +262,14 @@ async function recordGoalProgress(sessionId, userId, userText) {
 }
 
 function parseJsonFromText(text) {
-  const m = String(text || "").match(/\{[\s\S]*\}/);
-  if (!m) throw new Error("剧情模型未返回 JSON");
-  return JSON.parse(m[0]);
+  const raw = String(text || "").replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+  if (!raw) throw new Error("剧情模型未返回 JSON");
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("剧情模型未返回 JSON");
+  try { return JSON.parse(raw.slice(start, end + 1)); } catch (e) {
+    throw new Error(`剧情 JSON 格式错误: ${e.message}`);
+  }
 }
 
 function reviewStorySkeleton(data) {
@@ -286,7 +291,7 @@ async function generateStoryProject(userId, characterId, storyType = "romance") 
   const project = await dbGet("SELECT * FROM story_projects WHERE user_id = ? AND character_id = ?", [userId, characterId]);
   try {
     const prompt = `你是资深长篇恋爱/友情小说编剧。根据角色资料设计严格六章、前后承接的剧情骨架。只输出 JSON，不要解释。角色：${char.name}\n性格：${char.personality || ""}\n背景：${char.description || char.soul_content || ""}\n类型：${storyType === "friendship" ? "友情" : "恋爱"}\n格式：{"title":"","premise":"","chapters":[{"chapter_no":1,"title":"","synopsis":"","conflict":"","turning_point":"","foreshadowing":"","ending_state":""}]}。每章必须有戏剧冲突、情绪变化和结尾承接，避免任务清单。`;
-    const { stream } = await llmChatStream([{ role: "user", content: prompt }], "deepseek");
+    const { stream } = await llmChatStream([{ role: "user", content: prompt }], "deepseek", undefined, { maxTokens: 4500, thinking: false });
     let out = ""; for await (const chunk of stream) out += chunk.choices?.[0]?.delta?.content || "";
     let data = parseJsonFromText(out);
     const review = reviewStorySkeleton(data);
@@ -462,7 +467,7 @@ async function ingestToMemory(text, characterName, userId) {
 
 // ── LLM ───────────────────────────────────────────────────────────────────────
 
-async function llmChatStream(messages, provider = "deepseek", signal = undefined) {
+async function llmChatStream(messages, provider = "deepseek", signal = undefined, { maxTokens = 600, thinking = null } = {}) {
   const t0 = Date.now();
   const client = provider === "newapi" ? newapi : deepseek;
   const model = provider === "newapi" ? NEWAPI_MODEL : DEEPSEEK_MODEL;
@@ -470,11 +475,11 @@ async function llmChatStream(messages, provider = "deepseek", signal = undefined
     model,
     messages,
     stream: true,
-    max_tokens: 600
+    max_tokens: maxTokens
   };
   if (provider === "newapi") createOpts.enable_nsfw = true;
   if (provider === "deepseek") {
-    const thinkingEnabled = (await getGlobalSetting("deepseek_thinking", "0")) === "1";
+    const thinkingEnabled = thinking == null ? (await getGlobalSetting("deepseek_thinking", "0")) === "1" : !!thinking;
     createOpts.enable_thinking = thinkingEnabled;
     if (thinkingEnabled) createOpts.thinking_budget = 1000;
   }
@@ -2036,6 +2041,7 @@ async function handleRequest(req, res) {
       send(res, 200, rows); return;
     }
     const adminStoryMatch = pathname.match(/^\/admin\/stories\/(\d+)$/);
+    const adminStoryRetryMatch = pathname.match(/^\/admin\/stories\/(\d+)\/retry$/);
     if (method === "GET" && adminStoryMatch) {
       const id = Number(adminStoryMatch[1]);
       const project = await dbGet(`SELECT sp.*, c.name AS character_name, c.personality, c.description
@@ -2048,6 +2054,14 @@ async function handleRequest(req, res) {
         dbAll("SELECT * FROM story_reviews WHERE project_id=? ORDER BY created_at DESC", [id])
       ]);
       send(res, 200, { project, chapters, branches, events, reviews }); return;
+    }
+    if (method === "POST" && adminStoryRetryMatch) {
+      const id = Number(adminStoryRetryMatch[1]);
+      const project = await dbGet("SELECT user_id, character_id, story_type FROM story_projects WHERE id = ?", [id]);
+      if (!project) { send(res, 404, { error: "story not found" }); return; }
+      await dbRun("UPDATE story_projects SET status='pending', generation_error=NULL, updated_at=? WHERE id=?", [nowIso(), id]);
+      generateStoryProject(project.user_id, project.character_id, project.story_type).catch(() => {});
+      send(res, 202, { ok: true, status: "generating" }); return;
     }
 
     if (method === "GET" && pathname === "/admin/charts") {

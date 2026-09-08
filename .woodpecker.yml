@@ -19,7 +19,7 @@ steps:
       repo: 172.24.173.77:30500/tornado
       tags:
         - latest
-        - ${CI_COMMIT_SHA:0:7}
+        - ${CI_COMMIT_SHA}
       insecure: true
       build_args:
         - http_proxy=http://172.24.173.76:7899
@@ -33,6 +33,7 @@ steps:
     environment:
       KUBECONFIG: /woodpecker/kubeconfig
     commands:
-      - kubectl set image deployment/tornado tornado=172.24.173.77:30500/tornado:${CI_COMMIT_SHA:0:7} --namespace=default
+      - kubectl set image deployment/tornado tornado=172.24.173.77:30500/tornado:${CI_COMMIT_SHA} --namespace=default
+      - kubectl rollout status deployment/tornado --namespace=default --timeout=180s
     when:
       event: [push, tag]
