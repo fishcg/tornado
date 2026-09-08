@@ -233,6 +233,27 @@ async function getSessionCharacter(session, userId) {
   return getActiveCharacter(userId);
 }
 
+async function getSessionGoals(sessionId, userId, limit = 3) {
+  const session = await getSession(sessionId, userId);
+  const char = await getSessionCharacter(session, userId);
+  if (!char) return [];
+  return dbAll("SELECT * FROM character_goals WHERE user_id = ? AND character_id = ? AND status NOT IN ('completed','abandoned') ORDER BY updated_at DESC LIMIT ?", [userId, char.id, Number(limit)]);
+}
+
+async function recordGoalProgress(sessionId, userId, userText) {
+  if (!userText) return;
+  const goals = await getSessionGoals(sessionId, userId, 1);
+  const goal = goals[0];
+  if (!goal || goal.status === "blocked") return;
+  const delta = /完成|做完|练习|学会|坚持|达成|搞定/.test(userText) ? 5 : 0;
+  if (!delta) return;
+  const progress = Math.min(100, Number(goal.progress || 0) + delta);
+  const status = progress >= 100 ? "completed" : "in_progress";
+  const at = nowIso();
+  await dbRun("UPDATE character_goals SET progress = ?, status = ?, updated_at = ?, completed_at = ? WHERE id = ? AND user_id = ?", [progress, status, at, progress >= 100 ? at : null, goal.id, userId]);
+  await dbRun("INSERT INTO goal_events (goal_id, session_id, event_type, summary, progress_delta, created_at) VALUES (?, ?, ?, ?, ?, ?)", [goal.id, sessionId, progress >= 100 ? "completed" : "progress", userText.slice(0, 500), delta, at]);
+}
+
 // 把结构化字段 + soul_content 拼成完整 soul 字符串传给 LLM
 function buildSoulText(char) {
   const parts = [];
@@ -774,7 +795,9 @@ async function buildConversationContext(sessionId, userId, { memoryQuestion = nu
     innerState,
     channel
   });
-  return { systemPrompt, char, charName, session, previousScene, relationship, moodState, innerState, memoryContext, entityGraph, diary, behaviorHint };
+  const goals = await getSessionGoals(sessionId, userId, 2);
+  const goalPrompt = goals.length ? `\n\n# 角色当前长期目标\n${goals.map(g => `- ${g.title}（进度 ${g.progress}%${g.next_action ? `，下一步：${g.next_action}` : ""}）`).join("\n")}\n自然地在合适时机提及目标进展，不要每轮都提及，也不要把用户的计划当作角色目标。` : "";
+  return { systemPrompt: systemPrompt + goalPrompt, char, charName, session, previousScene, relationship, moodState, innerState, memoryContext, entityGraph, diary, behaviorHint };
 }
 
 const MOOD_AVATAR_PROMPTS = {
@@ -1839,6 +1862,34 @@ async function handleRequest(req, res) {
   const authSession = await requireAuth(req, res);
   if (!authSession) return;
   const userId = authSession.userId;
+
+  if (method === "GET" && pathname === "/goals") {
+    const rows = await dbAll("SELECT g.* FROM character_goals g JOIN characters c ON c.id = g.character_id WHERE g.user_id = ? ORDER BY g.updated_at DESC", [userId]);
+    send(res, 200, { goals: rows });
+    return;
+  }
+  if (method === "POST" && pathname === "/goals") {
+    const body = await readBody(req);
+    const characterId = Number(body.character_id);
+    const character = await getCharacterById(characterId, userId);
+    const title = String(body.title || "").trim();
+    if (!character || !title) { send(res, 400, { error: "角色和目标标题不能为空" }); return; }
+    const at = nowIso();
+    const result = await dbRun("INSERT INTO character_goals (user_id, character_id, title, description, goal_type, status, progress, next_action, obstacle, target_date, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'not_started', 0, ?, ?, ?, ?, ?)", [userId, characterId, title.slice(0, 255), String(body.description || "").slice(0, 2000), String(body.goal_type || "life").slice(0, 32), String(body.next_action || "").slice(0, 1000), String(body.obstacle || "").slice(0, 1000), body.target_date ? String(body.target_date).slice(0, 32) : null, at, at]);
+    send(res, 200, { goal: await dbGet("SELECT * FROM character_goals WHERE id = ?", [result.insertId]) });
+    return;
+  }
+  const goalUpdate = pathname.match(/^\/goals\/(\d+)$/);
+  if (method === "PATCH" && goalUpdate) {
+    const body = await readBody(req); const id = Number(goalUpdate[1]);
+    const goal = await dbGet("SELECT * FROM character_goals WHERE id = ? AND user_id = ?", [id, userId]);
+    if (!goal) { send(res, 404, { error: "目标不存在" }); return; }
+    const progress = Math.max(0, Math.min(100, Number(body.progress ?? goal.progress)));
+    const status = ["not_started","in_progress","blocked","awaiting_user","completed","abandoned"].includes(body.status) ? body.status : goal.status;
+    const at = nowIso();
+    await dbRun("UPDATE character_goals SET progress = ?, status = ?, next_action = ?, obstacle = ?, updated_at = ?, completed_at = ? WHERE id = ? AND user_id = ?", [progress, status, String(body.next_action ?? goal.next_action ?? "").slice(0,1000), String(body.obstacle ?? goal.obstacle ?? "").slice(0,1000), at, status === "completed" ? (goal.completed_at || at) : null, id, userId]);
+    send(res, 200, { goal: await dbGet("SELECT * FROM character_goals WHERE id = ?", [id]) }); return;
+  }
 
   // ── 公告路由（普通用户）────────────────────────────────────────────────────
   // 打开软件时弹窗：只取 popup=1 且未读
@@ -3513,6 +3564,7 @@ async function handleRequest(req, res) {
       stateTasks.push(updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message)));
     }
     trackSessionStateUpdate(sessionId, Promise.allSettled(stateTasks));
+    recordGoalProgress(sessionId, userId, userText).catch((e) => console.error("[goals] 更新失败:", e.message));
     updateStreakDays(userId, char?.id).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, { ...(await getUserSettings(userId)), characterId: char?.id }).catch((e) => console.error("[achievements] 调用失败:", e.message));
     // 异步 TTS 合成，合成完通过 WS 推送播放

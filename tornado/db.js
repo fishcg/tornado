@@ -371,6 +371,22 @@ const CREATE_TABLES = [
     UNIQUE KEY uq_user_date (user_id, checkin_date),
     KEY idx_dc_user_created (user_id, created_at)
   ) CHARACTER SET utf8mb4`
+  ,`CREATE TABLE IF NOT EXISTS character_goals (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL, character_id INT NOT NULL,
+    title VARCHAR(255) NOT NULL, description TEXT,
+    goal_type VARCHAR(32) NOT NULL DEFAULT 'life',
+    status VARCHAR(24) NOT NULL DEFAULT 'not_started', progress INT NOT NULL DEFAULT 0,
+    next_action TEXT, obstacle TEXT, target_date VARCHAR(32),
+    created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64) NOT NULL, completed_at VARCHAR(64),
+    KEY idx_goals_user_char (user_id, character_id, status)
+  ) CHARACTER SET utf8mb4`,
+  `CREATE TABLE IF NOT EXISTS goal_events (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, goal_id INT NOT NULL,
+    session_id INT, event_type VARCHAR(32) NOT NULL, summary TEXT,
+    progress_delta INT NOT NULL DEFAULT 0, created_at VARCHAR(64) NOT NULL,
+    KEY idx_goal_events_goal (goal_id, created_at)
+  ) CHARACTER SET utf8mb4`
 ];
 
 export async function initDb() {
