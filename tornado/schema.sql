@@ -241,3 +241,40 @@ CREATE TABLE IF NOT EXISTS goal_events (
   progress_delta INT NOT NULL DEFAULT 0, created_at VARCHAR(64) NOT NULL,
   KEY idx_goal_events_goal (goal_id, created_at)
 ) CHARACTER SET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS story_projects (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, character_id INT NOT NULL,
+  story_type VARCHAR(16) NOT NULL DEFAULT 'romance', title VARCHAR(255), premise TEXT,
+  status VARCHAR(24) NOT NULL DEFAULT 'pending', current_chapter INT NOT NULL DEFAULT 1,
+  last_branch_turn INT NOT NULL DEFAULT 0, generation_error TEXT,
+  created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64) NOT NULL,
+  UNIQUE KEY uq_story_user_char (user_id, character_id), KEY idx_story_status (status, updated_at)
+) CHARACTER SET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS story_chapters (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, project_id INT NOT NULL, chapter_no INT NOT NULL,
+  title VARCHAR(255) NOT NULL, synopsis TEXT, conflict TEXT, turning_point TEXT,
+  foreshadowing TEXT, ending_state TEXT, content MEDIUMTEXT, status VARCHAR(24) NOT NULL DEFAULT 'outline',
+  review_score INT, created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64) NOT NULL,
+  UNIQUE KEY uq_story_chapter (project_id, chapter_no), KEY idx_story_chapter_project (project_id)
+) CHARACTER SET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS story_branches (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, project_id INT NOT NULL, chapter_no INT NOT NULL,
+  trigger_turn INT NOT NULL, prompt_context TEXT, title VARCHAR(255) NOT NULL, description TEXT,
+  choice_text TEXT, consequence TEXT, status VARCHAR(16) NOT NULL DEFAULT 'active',
+  created_at VARCHAR(64) NOT NULL, KEY idx_story_branch_project (project_id, created_at)
+) CHARACTER SET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS story_events (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, project_id INT NOT NULL, chapter_no INT NOT NULL,
+  branch_id INT, event_type VARCHAR(32) NOT NULL, summary TEXT, state_json TEXT,
+  created_at VARCHAR(64) NOT NULL, KEY idx_story_event_project (project_id, created_at)
+) CHARACTER SET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS story_reviews (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, project_id INT NOT NULL, chapter_no INT,
+  target_type VARCHAR(16) NOT NULL, score INT NOT NULL, passed INT NOT NULL DEFAULT 0,
+  issues TEXT, repair_round INT NOT NULL DEFAULT 0, created_at VARCHAR(64) NOT NULL,
+  KEY idx_story_review_project (project_id, created_at)
+) CHARACTER SET utf8mb4;

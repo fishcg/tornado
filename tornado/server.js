@@ -261,6 +261,65 @@ async function recordGoalProgress(sessionId, userId, userText) {
   await dbRun("INSERT INTO goal_events (goal_id, session_id, event_type, summary, progress_delta, created_at) VALUES (?, ?, ?, ?, ?, ?)", [goal.id, sessionId, progress >= 100 ? "completed" : "progress", userText.slice(0, 500), delta, at]);
 }
 
+function parseJsonFromText(text) {
+  const m = String(text || "").match(/\{[\s\S]*\}/);
+  if (!m) throw new Error("剧情模型未返回 JSON");
+  return JSON.parse(m[0]);
+}
+
+function reviewStorySkeleton(data) {
+  const issues = [];
+  if (!data.title || !data.premise) issues.push("缺少剧情标题或前提");
+  if (!Array.isArray(data.chapters) || data.chapters.length !== 6) issues.push("章节数量不是六章");
+  for (const c of (data.chapters || [])) {
+    for (const key of ["title", "synopsis", "conflict", "turning_point", "ending_state"]) if (!String(c?.[key] || "").trim()) issues.push(`第${c?.chapter_no || "?"}章缺少${key}`);
+  }
+  const score = Math.max(0, 100 - issues.length * 12);
+  return { score, passed: issues.length === 0 && score >= 70, issues };
+}
+
+async function generateStoryProject(userId, characterId, storyType = "romance") {
+  const char = await getCharacterById(characterId, userId);
+  if (!char || (await getGlobalSetting("story_mode_enabled", "1")) !== "1") return;
+  const at = nowIso();
+  await dbRun("INSERT INTO story_projects (user_id, character_id, story_type, status, created_at, updated_at) VALUES (?, ?, ?, 'generating', ?, ?) ON DUPLICATE KEY UPDATE status='generating', updated_at=?", [userId, characterId, storyType === "friendship" ? "friendship" : "romance", at, at, at]);
+  const project = await dbGet("SELECT * FROM story_projects WHERE user_id = ? AND character_id = ?", [userId, characterId]);
+  try {
+    const prompt = `你是资深长篇恋爱/友情小说编剧。根据角色资料设计严格六章、前后承接的剧情骨架。只输出 JSON，不要解释。角色：${char.name}\n性格：${char.personality || ""}\n背景：${char.description || char.soul_content || ""}\n类型：${storyType === "friendship" ? "友情" : "恋爱"}\n格式：{"title":"","premise":"","chapters":[{"chapter_no":1,"title":"","synopsis":"","conflict":"","turning_point":"","foreshadowing":"","ending_state":""}]}。每章必须有戏剧冲突、情绪变化和结尾承接，避免任务清单。`;
+    const { stream } = await llmChatStream([{ role: "user", content: prompt }], "deepseek");
+    let out = ""; for await (const chunk of stream) out += chunk.choices?.[0]?.delta?.content || "";
+    let data = parseJsonFromText(out);
+    const review = reviewStorySkeleton(data);
+    if (!review.passed) throw new Error(`剧情骨架自动检查未通过：${review.issues.join("；")}`);
+    await dbRun("UPDATE story_projects SET title=?, premise=?, status='ready', updated_at=?, generation_error=NULL WHERE id=?", [String(data.title || "未命名剧情").slice(0,255), String(data.premise || "").slice(0,4000), nowIso(), project.id]);
+    for (const c of data.chapters) {
+      const no = Math.max(1, Math.min(6, Number(c.chapter_no))); if (!no) continue;
+      await dbRun("INSERT INTO story_chapters (project_id, chapter_no, title, synopsis, conflict, turning_point, foreshadowing, ending_state, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'outline', ?, ?) ON DUPLICATE KEY UPDATE title=VALUES(title), synopsis=VALUES(synopsis), conflict=VALUES(conflict), turning_point=VALUES(turning_point), foreshadowing=VALUES(foreshadowing), ending_state=VALUES(ending_state), updated_at=VALUES(updated_at)", [project.id, no, String(c.title || `第${no}章`).slice(0,255), c.synopsis || "", c.conflict || "", c.turning_point || "", c.foreshadowing || "", c.ending_state || "", at, at]);
+    }
+    await dbRun("INSERT INTO story_reviews (project_id, target_type, score, passed, issues, repair_round, created_at) VALUES (?, 'skeleton', ?, ?, ?, 0, ?)", [project.id, review.score, review.passed ? 1 : 0, review.issues.join("；") || "自动结构检查通过", nowIso()]);
+  } catch (e) {
+    await dbRun("UPDATE story_projects SET status='error', generation_error=?, updated_at=? WHERE id=?", [String(e.message).slice(0,1000), nowIso(), project.id]);
+  }
+}
+
+async function maybeGenerateStoryBranch(sessionId, userId, userMsgCount) {
+  if ((await getGlobalSetting("story_mode_enabled", "1")) !== "1") return;
+  const interval = Math.max(4, Number(await getGlobalSetting("story_branch_interval", "10")) || 10);
+  if (userMsgCount === 0 || userMsgCount % interval !== 0) return;
+  const session = await getSession(sessionId, userId); const char = await getSessionCharacter(session, userId); if (!char) return;
+  const project = await dbGet("SELECT * FROM story_projects WHERE user_id=? AND character_id=? AND status='ready'", [userId, char.id]); if (!project || userMsgCount <= project.last_branch_turn) return;
+  const chapter = await dbGet("SELECT * FROM story_chapters WHERE project_id=? AND chapter_no=?", [project.id, project.current_chapter]); if (!chapter) return;
+  let branch = { title: `第${project.current_chapter}章分支事件`, description: `围绕“${chapter.conflict || chapter.title}”自然发生的新变化`, choice_text: "顺其自然参与 / 暂时回避", consequence: "根据用户选择改变关系状态" };
+  try {
+    const msgs = await dbAll("SELECT role, content FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 8", [sessionId]);
+    const { stream } = await llmChatStream([{ role: "user", content: `根据当前章节冲突生成一个自然的剧情分支，给用户选择空间。只输出JSON：{"title":"","description":"","choice_text":"","consequence":""}。章节：${chapter.title} ${chapter.conflict}\n最近对话：${msgs.reverse().map(m=>m.content).join("\n")}` }], "deepseek");
+    let out=""; for await (const chunk of stream) out += chunk.choices?.[0]?.delta?.content || "";
+    const parsed = parseJsonFromText(out); branch = { ...branch, ...parsed };
+  } catch {}
+  await dbRun("INSERT INTO story_branches (project_id, chapter_no, trigger_turn, title, description, choice_text, consequence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [project.id, project.current_chapter, userMsgCount, String(branch.title).slice(0,255), String(branch.description).slice(0,2000), String(branch.choice_text).slice(0,1000), String(branch.consequence).slice(0,2000), nowIso()]);
+  await dbRun("UPDATE story_projects SET last_branch_turn=?, updated_at=? WHERE id=?", [userMsgCount, nowIso(), project.id]);
+}
+
 // 把结构化字段 + soul_content 拼成完整 soul 字符串传给 LLM
 function buildSoulText(char) {
   const parts = [];
@@ -1970,6 +2029,27 @@ async function handleRequest(req, res) {
       return;
     }
 
+    if (method === "GET" && pathname === "/admin/stories") {
+      const rows = await dbAll(`SELECT sp.id, sp.user_id, sp.character_id, c.name AS character_name,
+        sp.story_type, sp.title, sp.status, sp.current_chapter, sp.last_branch_turn, sp.generation_error, sp.updated_at
+        FROM story_projects sp JOIN characters c ON c.id = sp.character_id ORDER BY sp.updated_at DESC`, []);
+      send(res, 200, rows); return;
+    }
+    const adminStoryMatch = pathname.match(/^\/admin\/stories\/(\d+)$/);
+    if (method === "GET" && adminStoryMatch) {
+      const id = Number(adminStoryMatch[1]);
+      const project = await dbGet(`SELECT sp.*, c.name AS character_name, c.personality, c.description
+        FROM story_projects sp JOIN characters c ON c.id = sp.character_id WHERE sp.id = ?`, [id]);
+      if (!project) { send(res, 404, { error: "story not found" }); return; }
+      const [chapters, branches, events, reviews] = await Promise.all([
+        dbAll("SELECT * FROM story_chapters WHERE project_id=? ORDER BY chapter_no", [id]),
+        dbAll("SELECT * FROM story_branches WHERE project_id=? ORDER BY created_at DESC", [id]),
+        dbAll("SELECT * FROM story_events WHERE project_id=? ORDER BY created_at DESC", [id]),
+        dbAll("SELECT * FROM story_reviews WHERE project_id=? ORDER BY created_at DESC", [id])
+      ]);
+      send(res, 200, { project, chapters, branches, events, reviews }); return;
+    }
+
     if (method === "GET" && pathname === "/admin/charts") {
       const days = 14;
       const rows = [];
@@ -2188,6 +2268,8 @@ async function handleRequest(req, res) {
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
         call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
         multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0"),
+        story_mode_enabled: await getGlobalSetting("story_mode_enabled", "1"),
+        story_branch_interval: await getGlobalSetting("story_branch_interval", "10"),
         app_min_version: await getGlobalSetting("app_min_version", ""),
         ...(await getAllPointConfig())
       });
@@ -2246,6 +2328,8 @@ async function handleRequest(req, res) {
       if ("multi_char_awareness" in body) {
         await setGlobalSetting("multi_char_awareness", body.multi_char_awareness ? "1" : "0");
       }
+      if ("story_mode_enabled" in body) await setGlobalSetting("story_mode_enabled", body.story_mode_enabled ? "1" : "0");
+      if ("story_branch_interval" in body) await setGlobalSetting("story_branch_interval", String(Math.max(4, Math.min(50, Math.floor(Number(body.story_branch_interval) || 10)))))
       if ("app_min_version" in body) {
         // 形如 "0.2.0"，留空表示不强制
         const v = String(body.app_min_version || "").trim();
@@ -2280,6 +2364,8 @@ async function handleRequest(req, res) {
         call_cooldown_minutes: await getGlobalSetting("call_cooldown_minutes", "60"),
         call_emotion_cooldown_minutes: await getGlobalSetting("call_emotion_cooldown_minutes", "120"),
         multi_char_awareness: await getGlobalSetting("multi_char_awareness", "0"),
+        story_mode_enabled: await getGlobalSetting("story_mode_enabled", "1"),
+        story_branch_interval: await getGlobalSetting("story_branch_interval", "10"),
         app_min_version: await getGlobalSetting("app_min_version", ""),
         ...(await getAllPointConfig())
       });
@@ -2900,6 +2986,7 @@ async function handleRequest(req, res) {
     // 标记本角色的卡片/头像生成在 cost_create_character 内已含，激活时不再扣图片费
     // （激活走 pregenerateMoodAvatars / generateCharacterCard，这两个内部函数本就不扣费）
     send(res, 200, { id: result.insertId, name: body.name.trim() });
+    generateStoryProject(userId, result.insertId, body.story_type || "romance").catch(() => {});
     return;
   }
 
@@ -3572,6 +3659,7 @@ async function handleRequest(req, res) {
     }
     trackSessionStateUpdate(sessionId, Promise.allSettled(stateTasks));
     recordGoalProgress(sessionId, userId, userText).catch((e) => console.error("[goals] 更新失败:", e.message));
+    maybeGenerateStoryBranch(sessionId, userId, userMsgCount).catch((e) => console.error("[story] 分支生成失败:", e.message));
     updateStreakDays(userId, char?.id).catch(() => {});
     checkAndUnlockAchievements(userId, sessionId, { ...(await getUserSettings(userId)), characterId: char?.id }).catch((e) => console.error("[achievements] 调用失败:", e.message));
     // 异步 TTS 合成，合成完通过 WS 推送播放

@@ -295,6 +295,7 @@
       <button class="admin-nav-item active" data-section="dashboard">仪表盘</button>
       <button class="admin-nav-item" data-section="users">用户管理</button>
       <button class="admin-nav-item" data-section="chat-inspect">聊天管理</button>
+      <button class="admin-nav-item" data-section="stories">剧情管理</button>
       <button class="admin-nav-item" data-section="invite-codes">邀请码</button>
       <button class="admin-nav-item" data-section="announcements">公告管理</button>
       <button class="admin-nav-item" data-section="achievements">成就管理</button>
@@ -357,6 +358,12 @@
           </div>
         </div>
       </div>
+    </section>
+
+    <section id="section-stories" class="admin-section">
+      <h2>剧情管理</h2>
+      <table class="admin-table"><thead><tr><th>角色</th><th>类型</th><th>状态</th><th>当前章节</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="storiesBody"></tbody></table>
+      <div id="storyDetail" style="margin-top:20px"></div>
     </section>
 
     <section id="section-invite-codes" class="admin-section">
@@ -589,6 +596,15 @@
           </label>
           <label for="multiCharAwarenessToggle">开启后，角色会感知到用户还在和其他角色聊天，可能流露轻微好奇或在意</label>
         </div>
+        <h3 style="margin-top:16px">长剧情模式</h3>
+        <div class="toggle-wrap">
+          <label class="toggle"><input type="checkbox" id="storyModeToggle"><span class="toggle-slider"></span></label>
+          <label for="storyModeToggle">开启恋爱/友情六章剧情生成与自动分支</label>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+          <span style="color:var(--text-dim);font-size:13px">分支检查间隔（轮）</span>
+          <input type="number" id="storyBranchInterval" min="4" max="50" style="width:70px;padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
+        </div>
         <h3 style="margin-top:16px">TTS 复刻渠道</h3>
         <div style="display:flex;align-items:center;gap:10px">
           <select id="ttsChannel" style="padding:6px 10px;background:var(--bg-input,#1e1e2e);border:1px solid var(--border,#333);border-radius:6px;color:inherit;font-size:14px">
@@ -696,12 +712,32 @@ function loadSection(name) {
   if (name === "dashboard") loadStats();
   else if (name === "users") loadUsers();
   else if (name === "chat-inspect") initChatInspect();
+  else if (name === "stories") loadStories();
   else if (name === "invite-codes") loadCodes();
   else if (name === "announcements") loadAnnouncements();
   else if (name === "achievements") loadAchievements();
   else if (name === "app-versions") loadAppVersions();
   else if (name === "points") loadPoints();
   else if (name === "system") loadSystem();
+}
+
+async function loadStories() {
+  const body = document.getElementById("storiesBody");
+  body.innerHTML = '<tr><td colspan="6">加载中…</td></tr>';
+  const rows = await api("/admin/stories");
+  if (!rows || !rows.length) { body.innerHTML = '<tr><td colspan="6">暂无剧情</td></tr>'; return; }
+  body.replaceChildren();
+  rows.forEach(s => {
+    const tr = document.createElement("tr");
+    [s.character_name, s.story_type === "friendship" ? "友情" : "恋爱", s.status, `第${s.current_chapter}章`, fmtDate(s.updated_at)].forEach(v => { const td=document.createElement("td"); td.textContent=String(v||""); tr.appendChild(td); });
+    const td=document.createElement("td"); const btn=document.createElement("button"); btn.className="btn-sm btn-primary"; btn.textContent="查看剧情"; btn.onclick=()=>loadStoryDetail(s.id); td.appendChild(btn); tr.appendChild(td); body.appendChild(tr);
+  });
+}
+async function loadStoryDetail(id) {
+  const d = await api(`/admin/stories/${id}`); const el = document.getElementById("storyDetail");
+  if (!d) { el.textContent="加载失败"; return; }
+  el.replaceChildren(); const h=document.createElement("h3"); h.textContent=`${d.project.character_name}：${d.project.title || "未命名剧情"}`; el.appendChild(h);
+  d.chapters.forEach(c=>{ const box=document.createElement("div"); box.style.cssText="padding:12px;margin:8px 0;background:var(--surface2);border-radius:8px"; box.textContent=`第${c.chapter_no}章 ${c.title}\n${c.synopsis||""}\n冲突：${c.conflict||""}\n转折：${c.turning_point||""}\n结尾：${c.ending_state||""}`; el.appendChild(box); });
 }
 
 // ── 仪表盘 ────────────────────────────────────────────────────────────────────
@@ -921,6 +957,8 @@ async function loadSystem() {
     document.getElementById("videoDurationRow").style.display = settings.milestone_mode === "video" ? "flex" : "none";
     document.getElementById("deepseekThinkingToggle").checked = settings.deepseek_thinking === "1";
     document.getElementById("multiCharAwarenessToggle").checked = settings.multi_char_awareness === "1";
+    document.getElementById("storyModeToggle").checked = settings.story_mode_enabled !== "0";
+    document.getElementById("storyBranchInterval").value = settings.story_branch_interval ?? "10";
     document.getElementById("ttsChannel").value = settings.tts_channel ?? "cosyvoice";
     document.getElementById("ttsInstructionToggle").checked = settings.tts_instruction_enabled !== "0";
     document.getElementById("ttsTagsToggle").checked = settings.tts_tags_enabled !== "0";
@@ -950,7 +988,7 @@ document.getElementById("saveGlobalSettingsBtn").addEventListener("click", async
   const ttsChannel = document.getElementById("ttsChannel").value;
   const ttsInstructionEnabled = document.getElementById("ttsInstructionToggle").checked;
   const ttsTagsEnabled = document.getElementById("ttsTagsToggle").checked;
-  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, tts_channel: ttsChannel, tts_instruction_enabled: ttsInstructionEnabled, tts_tags_enabled: ttsTagsEnabled }) });
+  const data = await api("/admin/global-settings", { method: "PATCH", body: JSON.stringify({ chat_image_enabled: enabled, daily_scene_image_limit: limit, affection_interval: affectionInterval, manual_affection_enabled: manualAffectionEnabled, milestone_mode: milestoneMode, milestone_video_duration: milestoneVideoDuration, deepseek_thinking: deepseekThinking, multi_char_awareness: multiCharAwareness, story_mode_enabled: document.getElementById("storyModeToggle").checked, story_branch_interval: Number(document.getElementById("storyBranchInterval").value) || 10, tts_channel: ttsChannel, tts_instruction_enabled: ttsInstructionEnabled, tts_tags_enabled: ttsTagsEnabled }) });
   if (data) showMsg("已保存");
 });
 
