@@ -11,6 +11,7 @@ export type ChatStreamHandle = { close: () => void };
 export async function streamChat(
   sessionId: number,
   message: string,
+  requestId: string,
   onEvent: (e: ChatStreamEvent) => void
 ): Promise<ChatStreamHandle> {
   const token = await loadToken();
@@ -23,7 +24,7 @@ export async function streamChat(
   const es = new EventSource(`${baseUrl}/sessions/${sessionId}/chat`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, request_id: requestId }),
     pollingInterval: 0,
   });
 

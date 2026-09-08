@@ -1346,24 +1346,56 @@ async function runCiSearch() {
   if (!data.characters.length) {
     charList.innerHTML = '<div class="ci-empty">无角色</div>';
   } else {
-    charList.innerHTML = data.characters.map((c) => `
-      <div class="ci-char-item">
-        <span class="ci-char-name">${c.name}${c.is_active ? ' <span style="color:var(--accent);font-size:11px">●</span>' : ''}</span>
-        <span class="ci-char-meta">❤ ${c.affection}</span>
-      </div>
-    `).join("");
+    charList.replaceChildren();
+    for (const c of data.characters) {
+      const item = document.createElement("div");
+      item.className = "ci-char-item";
+      const name = document.createElement("span");
+      name.className = "ci-char-name";
+      name.textContent = String(c.name || "");
+      if (c.is_active) {
+        const active = document.createElement("span");
+        active.style.cssText = "color:var(--accent);font-size:11px";
+        active.textContent = " ●";
+        name.appendChild(active);
+      }
+      const meta = document.createElement("span");
+      meta.className = "ci-char-meta";
+      meta.textContent = `❤ ${c.affection}`;
+      item.append(name, meta);
+      charList.appendChild(item);
+    }
   }
 
   if (!data.sessions.length) {
     sessionList.innerHTML = '<div class="ci-empty">无会话</div>';
   } else {
-    sessionList.innerHTML = data.sessions.map((s) => `
-      <div class="ci-session-item" data-sid="${s.id}">
-        <div class="ci-session-title">${s.title || "无标题"}${s.archived ? ' <span style="color:var(--text-dim);font-size:10px">[归档]</span>' : ''}</div>
-        <div class="ci-session-meta">${fmtDate(s.updated_at)} · ${s.msg_count} 条消息</div>
-        ${s.last_msg ? `<div class="ci-session-preview">${s.last_msg.slice(0, 60)}</div>` : ''}
-      </div>
-    `).join("");
+    sessionList.replaceChildren();
+    for (const s of data.sessions) {
+      const item = document.createElement("div");
+      item.className = "ci-session-item";
+      item.dataset.sid = String(s.id);
+      const title = document.createElement("div");
+      title.className = "ci-session-title";
+      title.textContent = String(s.title || "无标题");
+      if (s.archived) {
+        const archived = document.createElement("span");
+        archived.style.cssText = "color:var(--text-dim);font-size:10px";
+        archived.textContent = " [归档]";
+        title.appendChild(archived);
+      }
+      const meta = document.createElement("div");
+      meta.className = "ci-session-meta";
+      meta.textContent = `${fmtDate(s.updated_at)} · ${s.msg_count} 条消息`;
+      item.append(title, meta);
+      if (s.last_msg) {
+        const preview = document.createElement("div");
+        preview.className = "ci-session-preview";
+        preview.textContent = String(s.last_msg).slice(0, 60);
+        item.appendChild(preview);
+      }
+      sessionList.appendChild(item);
+    }
     sessionList.querySelectorAll(".ci-session-item").forEach((item) => {
       item.addEventListener("click", () => {
         sessionList.querySelectorAll(".ci-session-item").forEach((i) => i.classList.remove("active"));
@@ -1380,12 +1412,33 @@ async function loadCiMessages(sid) {
   const msgs = await api(`/admin/chat-inspect/messages?session_id=${sid}`);
   if (!msgs) { wrap.innerHTML = '<div class="ci-empty">加载失败</div>'; return; }
   if (!msgs.length) { wrap.innerHTML = '<div class="ci-empty">暂无消息</div>'; return; }
-  wrap.innerHTML = `<div class="ci-messages">${msgs.map((m) => `
-    <div>
-      <div class="ci-msg-meta">${m.role === "user" ? "用户" : "角色"} · ${fmtDate(m.created_at)}</div>
-      <div class="ci-msg ${m.role}">${m.content.slice(0, 1000)}${m.content.length > 1000 ? "…" : ""}${m.image_url ? `<br><img src="${m.image_url}" style="max-width:200px;border-radius:6px;margin-top:6px">` : ""}</div>
-    </div>
-  `).join("")}</div>`;
+  wrap.replaceChildren();
+  const list = document.createElement("div");
+  list.className = "ci-messages";
+  for (const m of msgs) {
+    const item = document.createElement("div");
+    const meta = document.createElement("div");
+    meta.className = "ci-msg-meta";
+    meta.textContent = `${m.role === "user" ? "用户" : "角色"} · ${fmtDate(m.created_at)}`;
+    const body = document.createElement("div");
+    body.className = `ci-msg ${m.role === "user" ? "user" : "assistant"}`;
+    const content = String(m.content || "");
+    body.textContent = content.slice(0, 1000) + (content.length > 1000 ? "…" : "");
+    if (m.image_url) {
+      try {
+        const imageUrl = new URL(String(m.image_url), location.origin);
+        if (["http:", "https:"].includes(imageUrl.protocol)) {
+          const img = document.createElement("img");
+          img.src = imageUrl.href;
+          img.style.cssText = "display:block;max-width:200px;border-radius:6px;margin-top:6px";
+          body.appendChild(img);
+        }
+      } catch {}
+    }
+    item.append(meta, body);
+    list.appendChild(item);
+  }
+  wrap.appendChild(list);
 }
 
 // ── 初始化 ────────────────────────────────────────────────────────────────────

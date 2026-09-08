@@ -108,7 +108,9 @@ const CREATE_TABLES = [
     archived INT NOT NULL DEFAULT 0,
     auto_mode INT NOT NULL DEFAULT 0,
     user_id INT,
+    character_id INT,
     KEY idx_sessions_user_archived_updated (user_id, archived, updated_at),
+    KEY idx_sessions_character (character_id),
     KEY idx_sessions_last_user_at (last_user_at)
   ) CHARACTER SET utf8mb4`,
 
@@ -325,6 +327,22 @@ const CREATE_TABLES = [
     KEY idx_auth_user (user_id)
   ) CHARACTER SET utf8mb4`,
 
+  `CREATE TABLE IF NOT EXISTS chat_requests (
+    id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    session_id INT NOT NULL,
+    request_id VARCHAR(64) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'processing',
+    user_message_id INT,
+    assistant_message_id INT,
+    skip_reply INT NOT NULL DEFAULT 0,
+    error_message TEXT,
+    created_at VARCHAR(64) NOT NULL,
+    updated_at VARCHAR(64) NOT NULL,
+    UNIQUE KEY uq_chat_request (user_id, request_id),
+    KEY idx_chat_request_session (session_id)
+  ) CHARACTER SET utf8mb4`,
+
   // ── 小鱼干（积分）系统 ──
   `CREATE TABLE IF NOT EXISTS user_points (
     user_id INT NOT NULL PRIMARY KEY,
@@ -364,6 +382,8 @@ export async function initDb() {
   await ensureColumn(pool, "sessions", "archived", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "sessions", "auto_mode", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "sessions", "user_id", "INT");
+  await ensureColumn(pool, "sessions", "character_id", "INT");
+  try { await pool.execute("ALTER TABLE sessions ADD KEY idx_sessions_character (character_id)"); } catch (e) { if (e.code !== "ER_DUP_KEYNAME") throw e; }
   await ensureColumn(pool, "sessions", "topic_summary", "TEXT");
   await ensureColumn(pool, "sessions", "mood_intensity", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "sessions", "mood_cause", "TEXT");
@@ -381,6 +401,20 @@ export async function initDb() {
   await ensureColumn(pool, "messages", "image_prompt", "TEXT");
   await ensureColumn(pool, "messages", "character_name", "VARCHAR(255)");
   await ensureColumn(pool, "messages", "user_id", "INT");
+  await ensureColumn(pool, "chat_requests", "skip_reply", "INT NOT NULL DEFAULT 0");
+  await pool.execute(`
+    UPDATE sessions s
+    LEFT JOIN characters active_char ON active_char.user_id = s.user_id AND active_char.is_active = 1
+    SET s.character_id = COALESCE(
+      (SELECT c.id
+       FROM messages m
+       JOIN characters c ON c.user_id = s.user_id AND c.name = m.character_name
+       WHERE m.session_id = s.id AND m.role = 'assistant' AND m.character_name IS NOT NULL
+       ORDER BY m.id DESC LIMIT 1),
+      active_char.id
+    )
+    WHERE s.character_id IS NULL
+  `);
   await ensureColumn(pool, "mood_avatars", "appearance_hash", "VARCHAR(64) NOT NULL DEFAULT ''");
   await ensureColumn(pool, "mood_avatars", "user_id", "INT");
   await fixMoodAvatarsKey(pool);

@@ -29,6 +29,9 @@ let autoModeTimer = null;
 const _sessionsMap = new Map(); // id -> session object
 let semiAutoEnabled = false;
 let suggestionsGen = 0;
+let _selectionVersion = 0;
+let _chatAbortController = null;
+const _imagePolls = new Map();
 const PAGE_SIZE = 40;
 
 const BG_OPACITY_KEY = "chat-bg-opacity";
@@ -472,7 +475,16 @@ async function api(method, path, body) {
     body: body ? JSON.stringify(body) : undefined
   });
   if (res.status === 401) { location.href = "/auth"; return {}; }
-  return res.json();
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) {
+    const err = new Error(typeof data?.error === "string" ? data.error : (text || res.statusText));
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -665,6 +677,9 @@ function renderSessionList(sessions, activeCharName = "") {
 }
 
 async function selectSession(id) {
+  const selectionVersion = ++_selectionVersion;
+  if (_chatAbortController) { _chatAbortController.abort(); _chatAbortController = null; }
+  clearImagePolls();
   currentSessionId = id;
   try { localStorage.setItem("lastSessionId", String(id)); } catch {}
   // 切换会话立刻停止旧会话的 TTS（流式 + 已开始播放的 audio），避免串台
@@ -708,14 +723,18 @@ async function selectSession(id) {
   if (targetCharName && targetCharName !== characterName) {
     try {
       const chars = await api("GET", "/characters");
+      if (selectionVersion !== _selectionVersion || currentSessionId !== id) return;
       const match = chars?.find((c) => c.name === targetCharName);
       if (match && !match.is_active) {
         await api("PATCH", `/characters/${match.id}`, { is_active: true });
+        if (selectionVersion !== _selectionVersion || currentSessionId !== id) return;
         await loadCharacter();
       }
     } catch {}
   }
+  if (selectionVersion !== _selectionVersion || currentSessionId !== id) return;
   await loadMessages(id);
+  if (selectionVersion !== _selectionVersion || currentSessionId !== id) return;
   connectEvents(id);
   refreshMood(id);
 }
@@ -906,26 +925,45 @@ function appendImageLoading(bubble) {
 }
 
 function pollForImage(msgId, bubble, { silent = false } = {}) {
+  const pollSessionId = currentSessionId;
   const loading = silent ? null : appendImageLoading(bubble);
   if (!silent) scrollToBottom();
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  const stop = () => {
+    clearInterval(timer);
+    controller.abort();
+    _imagePolls.delete(msgId);
+    if (loading) loading.remove();
+  };
   const timer = setInterval(async () => {
+    if (currentSessionId !== pollSessionId || Date.now() - startedAt >= 120000) {
+      stop();
+      return;
+    }
     try {
-      const res = await fetch(`/messages/${msgId}/image`);
+      const res = await fetch(`/messages/${msgId}/image`, { signal: controller.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       if (data.status === "ready") {
-        clearInterval(timer);
-        if (loading) loading.remove();
+        stop();
+        if (currentSessionId !== pollSessionId || !bubble.isConnected) return;
         appendImageToBubble(bubble, data.url);
         setChatBackground(data.url);
         scrollToBottom();
       } else if (data.status === "none") {
-        clearInterval(timer);
-        if (loading) loading.remove();
+        stop();
       }
     } catch {
       // 网络错误时继续轮询
     }
   }, 3000);
+  _imagePolls.set(msgId, stop);
+}
+
+function clearImagePolls() {
+  for (const stop of _imagePolls.values()) stop();
+  _imagePolls.clear();
 }
 
 function scrollToBottom() {
@@ -933,11 +971,12 @@ function scrollToBottom() {
 }
 
 // ── Send ──────────────────────────────────────────────────────────────────────
-async function doStream(sessionId, text, replyBubble) {
+async function doStream(sessionId, text, replyBubble, requestId, signal) {
   const res = await fetch(`/sessions/${sessionId}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: text })
+    body: JSON.stringify({ message: text, request_id: requestId }),
+    signal
   });
   if (!res.ok) {
     if (res.status === 401) { location.href = "/auth"; return; }
@@ -1017,6 +1056,12 @@ async function sendMessage() {
   const text = input.value.trim();
   if (!text) return;
   if (!currentSessionId) await newSession();
+  const sendSessionId = currentSessionId;
+  const randomParts = new Uint32Array(2);
+  globalThis.crypto.getRandomValues(randomParts);
+  const requestId = `web_${Date.now()}_${randomParts.join("_")}`;
+  const abortController = new AbortController();
+  _chatAbortController = abortController;
 
   sending = true;
   suggestionsGen++;
@@ -1032,7 +1077,7 @@ async function sendMessage() {
   scrollToBottom();
 
   try {
-    await doStream(currentSessionId, text, replyBubble);
+    await doStream(sendSessionId, text, replyBubble, requestId, abortController.signal);
     if (_pendingCallBubble) return; // 情绪来电等待中，不执行后续逻辑
     refreshPointsBalance();
     await loadSessions();
@@ -1063,7 +1108,7 @@ async function sendMessage() {
       try {
         replyBubble.innerHTML = `<div class="typing-dots"><span></span><span></span><span></span></div>`;
         replyBubble.textContent = "";
-        await doStream(currentSessionId, text, replyBubble);
+        await doStream(sendSessionId, text, replyBubble, requestId, abortController.signal);
         await loadSessions();
         return;
       } catch {}
@@ -1072,6 +1117,7 @@ async function sendMessage() {
     replyBubble.textContent = `发送失败：${err.message}`;
     replyBubble.classList.remove("thinking");
   } finally {
+    if (_chatAbortController === abortController) _chatAbortController = null;
     sending = false;
     btnSend.disabled = false;
     scrollToBottom();

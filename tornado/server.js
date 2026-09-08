@@ -220,6 +220,19 @@ async function getActiveCharacter(userId) {
   return null;
 }
 
+async function getCharacterById(characterId, userId) {
+  if (!characterId || !userId) return null;
+  return dbGet("SELECT * FROM characters WHERE id = ? AND user_id = ?", [characterId, userId]);
+}
+
+async function getSessionCharacter(session, userId) {
+  if (session?.character_id) {
+    const bound = await getCharacterById(session.character_id, userId);
+    if (bound) return bound;
+  }
+  return getActiveCharacter(userId);
+}
+
 // 把结构化字段 + soul_content 拼成完整 soul 字符串传给 LLM
 function buildSoulText(char) {
   const parts = [];
@@ -362,7 +375,7 @@ async function ingestToMemory(text, characterName, userId) {
 
 // ── LLM ───────────────────────────────────────────────────────────────────────
 
-async function llmChatStream(messages, provider = "deepseek") {
+async function llmChatStream(messages, provider = "deepseek", signal = undefined) {
   const t0 = Date.now();
   const client = provider === "newapi" ? newapi : deepseek;
   const model = provider === "newapi" ? NEWAPI_MODEL : DEEPSEEK_MODEL;
@@ -378,7 +391,7 @@ async function llmChatStream(messages, provider = "deepseek") {
     createOpts.enable_thinking = thinkingEnabled;
     if (thinkingEnabled) createOpts.thinking_budget = 1000;
   }
-  const stream = await client.chat.completions.create(createOpts);
+  const stream = await client.chat.completions.create(createOpts, signal ? { signal } : undefined);
   return { stream, t0 };
 }
 
@@ -410,6 +423,12 @@ async function getCharacterDescription(userId) {
 async function buildCharacterPromptPrefix(userId) {
   const appearance = (await getCharacterAppearance(userId)).slice(0, 200);
   const desc = (await getCharacterDescription(userId)).slice(0, 80);
+  return desc ? `${desc}，${appearance}` : appearance;
+}
+
+function buildCharacterPromptPrefixFromCharacter(char) {
+  const appearance = String(char?.appearance || "anime character").slice(0, 200);
+  const desc = String(char?.description || "").slice(0, 80);
   return desc ? `${desc}，${appearance}` : appearance;
 }
 
@@ -548,13 +567,15 @@ async function getAvatarQuotaInfo(userId) {
   return { dailyLimit, usedToday, remaining: Math.max(0, dailyLimit - usedToday) };
 }
 
-async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId, aspectRatio = null, refund = null } = {}) {
+async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, previousScene = null, imageFallbackEnabled = true, userId, character = null, aspectRatio = null, refund = null } = {}) {
   pendingImages.add(msgId);
   await updateMessageImagePrompt(msgId, prompt);
   const sanitized = sanitizeImagePrompt(prompt);
   const sceneAnchor = previousScene ? `（延续上一张的场景设定：${sanitizeImagePrompt(previousScene)}；若对话里没有明显转场请保持地点、服装、时段一致）` : "";
-  const fullPrompt = `${await buildCharacterPromptPrefix(userId)}，${sanitized}${sceneAnchor}`;
-  const referenceDataUrl = await getCharacterReferenceDataUrl(userId);
+  const fullPrompt = `${character ? buildCharacterPromptPrefixFromCharacter(character) : await buildCharacterPromptPrefix(userId)}，${sanitized}${sceneAnchor}`;
+  const referenceDataUrl = character?.reference_image_url
+    ? await fetchImageAsDataUrl(character.reference_image_url)
+    : await getCharacterReferenceDataUrl(userId);
   console.log(`${silent ? "自动" : "显式"}生图 [msg ${msgId}]${referenceDataUrl ? "（图生图）" : ""}: ${fullPrompt}`);
   generateImage(fullPrompt, sceneAnchor, { imageFallbackEnabled, aspectRatio, referenceDataUrl })
     .then(async (url) => {
@@ -566,7 +587,7 @@ async function fireImageGeneration(msgId, prompt, sessionId, { silent = false, p
         // 用实际画面描述更新场景记录，比生成时的 prompt 更准确
         await updateMessageImagePrompt(msgId, desc);
         if (!silent) {
-          await appendMessage(sessionId, "assistant", `（我刚拍的照片里是这样的：${desc}）`, await getCharacterName(userId), userId);
+          await appendMessage(sessionId, "assistant", `（我刚拍的照片里是这样的：${desc}）`, character?.name || await getCharacterName(userId), userId);
           console.log(`图片识别 [msg ${msgId}]: ${desc}`);
         }
       }
@@ -716,12 +737,10 @@ function trackSessionStateUpdate(sessionId, promise) {
 }
 
 async function buildConversationContext(sessionId, userId, { memoryQuestion = null, lookupMemory = false, includeBehavior = true, channel = "chat" } = {}) {
-  const [char, soul, session, previousScene] = await Promise.all([
-    getActiveCharacter(userId),
-    loadSoul(userId),
-    getSession(sessionId, userId),
-    getLastImagePrompt(sessionId)
-  ]);
+  const session = await getSession(sessionId, userId);
+  const char = await getSessionCharacter(session, userId);
+  const [previousScene] = await Promise.all([getLastImagePrompt(sessionId)]);
+  const soul = char ? buildSoulText(char) : await loadSoul(userId);
   const charName = char?.name || await getCharacterName(userId);
   const [entityGraph, memoryContext, diary, behaviorHint, achievementStage] = await Promise.all([
     lookupMemory && memoryQuestion ? queryEntityGraph(charName, userId, memoryQuestion) : Promise.resolve(null),
@@ -891,9 +910,9 @@ async function pregenerateMoodAvatars(characterName, moodsToGenerate = null, use
 }
 
 async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
-  const char = await getActiveCharacter(userId);
-  const charName = char?.name || await getCharacterName(userId);
   const session = await getSession(sessionId, userId);
+  const char = await getSessionCharacter(session, userId);
+  const charName = char?.name || await getCharacterName(userId);
   const previousMood = getEffectiveMoodState(session);
   const previousInner = parseJsonObject(char?.inner_state_json, {});
   const context = recentMsgs.slice(-8).map((m) =>
@@ -979,7 +998,8 @@ intensity 为0到100整数，cause 20字以内，三个文本字段都要简短�
 }
 
 async function updateAffection(sessionId, recentMsgs, userId) {
-  const char = await getActiveCharacter(userId);
+  const session = await getSession(sessionId, userId);
+  const char = await getSessionCharacter(session, userId);
   if (!char) return;
   const charName = char.name;
   const relationship = getRelationshipState(char);
@@ -1072,7 +1092,7 @@ ${personality}当前状态：心动${relationship.affection}，信任${relations
         console.log(`[affection] ${charName} ${clamped.affection > 0 ? "+" : ""}${clamped.affection} → ${next.affection} | ${reason}`);
         pushToSession(sessionId, { affection_update: true, affection: next.affection, delta: clamped.affection });
       }
-      const settings = await getUserSettings(userId);
+      const settings = { ...(await getUserSettings(userId)), characterId: char.id };
       checkAndUnlockAchievements(userId, sessionId, settings).catch((e) => console.error("[achievements] 调用失败:", e.message));
       if (clamped.affection !== 0) checkRelationshipMilestone(userId, sessionId, current, next.affection, settings).catch((e) => console.error("[milestone] 调用失败:", e.message));
 
@@ -1083,7 +1103,9 @@ ${personality}当前状态：心动${relationship.affection}，信任${relations
 }
 
 async function updateTopicSummary(sessionId, recentMsgs, userId) {
-  const charName = await getCharacterName(userId);
+  const session = await getSession(sessionId, userId);
+  const char = await getSessionCharacter(session, userId);
+  const charName = char?.name || await getCharacterName(userId);
   const context = recentMsgs.slice(-12).map((m) =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
@@ -1215,8 +1237,10 @@ async function generateProactiveMessage(sessionId, userId) {
 async function generateDiary(sessionId, userId) {
   const msgs = await getMessages(sessionId);
   if (msgs.filter(m => m.role === "user").length < 4) return null;
-  const charName = await getCharacterName(userId);
-  const soul = await loadSoul(userId);
+  const session = await getSession(sessionId, userId);
+  const char = await getSessionCharacter(session, userId);
+  const charName = char?.name || await getCharacterName(userId);
+  const soul = char ? buildSoulText(char) : await loadSoul(userId);
   const context = msgs.slice(-20).map(m =>
     `${m.role === "user" ? "用户" : charName}：${m.content}`
   ).join("\n");
@@ -1568,11 +1592,10 @@ async function listAllActiveSessions() {
 
 async function listSessions(userId) {
   const sql =
-    "SELECT s.*, " +
+    "SELECT s.*, c.name as character_name, " +
     "(SELECT content FROM messages WHERE session_id = s.id AND role != 'system' ORDER BY id DESC LIMIT 1) as last_message, " +
-    "(SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name IS NOT NULL ORDER BY id DESC LIMIT 1) as character_name, " +
     "(SELECT image_url FROM mood_avatars WHERE `character` = (SELECT character_name FROM messages WHERE session_id = s.id AND role = 'assistant' AND character_name IS NOT NULL ORDER BY id DESC LIMIT 1) AND (user_id = s.user_id OR user_id IS NULL) ORDER BY (mood='neutral') DESC, id DESC LIMIT 1) as character_avatar " +
-    "FROM sessions s WHERE s.archived = 0 AND s.user_id = ? ORDER BY updated_at DESC";
+    "FROM sessions s LEFT JOIN characters c ON c.id = s.character_id AND c.user_id = s.user_id WHERE s.archived = 0 AND s.user_id = ? ORDER BY s.updated_at DESC";
   return dbAll(sql, [userId]);
 }
 
@@ -1585,7 +1608,8 @@ async function getSession(id, userId) {
 
 async function createSession(userId, title = "新对话") {
   const now = nowIso();
-  const result = await dbRun("INSERT INTO sessions (title, created_at, updated_at, user_id) VALUES (?, ?, ?, ?)", [title, now, now, userId]);
+  const char = await getActiveCharacter(userId);
+  const result = await dbRun("INSERT INTO sessions (title, created_at, updated_at, user_id, character_id) VALUES (?, ?, ?, ?, ?)", [title, now, now, userId, char?.id || null]);
   return await getSession(result.insertId);
 }
 
@@ -2348,7 +2372,9 @@ async function handleRequest(req, res) {
 
   // GET /character — 返回当前角色名、激活卡片和轮播设置
   if (method === "GET" && pathname === "/character") {
-    const char = await getActiveCharacter(userId);
+    const sessionId = Number(url.searchParams.get("session_id") || 0);
+    const targetSession = sessionId ? await getSession(sessionId, userId) : null;
+    const char = targetSession ? await getSessionCharacter(targetSession, userId) : await getActiveCharacter(userId);
     const name = char?.name || await getCharacterName(userId);
     const row = await dbGet("SELECT image_url FROM character_cards WHERE `character` = ? AND (user_id = ? OR user_id IS NULL) AND is_active = 1", [name, userId]);
     const cardUrl = row?.image_url || null;
@@ -3156,12 +3182,15 @@ async function handleRequest(req, res) {
   const ingestMatch = pathname.match(/^\/sessions\/(\d+)\/ingest$/);
   if (method === "POST" && ingestMatch) {
     const id = Number(ingestMatch[1]);
+    const ownedSession = await getSession(id, userId);
+    if (!ownedSession) { send(res, 404, { error: "session not found" }); return; }
     const msgs = await getMessages(id);
     if (msgs.length === 0) {
       send(res, 200, { ok: true, skipped: true });
       return;
     }
-    const charName = await getCharacterName(userId);
+    const char = await getSessionCharacter(ownedSession, userId);
+    const charName = char?.name || await getCharacterName(userId);
     const lines = msgs.map((m) => `${m.role === "user" ? "用户" : charName}：${m.content}`);
     await ingestToMemory(`与${charName}的虚拟陪伴对话记录\n\n${lines.join("\n")}`, charName, userId);
     send(res, 200, { ok: true });
@@ -3221,13 +3250,38 @@ async function handleRequest(req, res) {
 
     const body = await readBody(req);
     const userText = String(body.message || "").trim();
+    const requestId = String(body.request_id || "").trim();
     if (!userText) {
       send(res, 400, { error: "missing message" });
       return;
     }
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(requestId)) {
+      send(res, 400, { error: "invalid request_id" });
+      return;
+    }
+    const requestKey = `${sessionId}:${requestId}`;
+
+    const previousRequest = await dbGet(
+      "SELECT status, user_message_id, assistant_message_id, skip_reply, error_message FROM chat_requests WHERE user_id = ? AND request_id = ?",
+      [userId, requestKey]
+    );
+    if (previousRequest) {
+      if (previousRequest.status === "completed") {
+        const previousReply = previousRequest.assistant_message_id
+          ? await dbGet("SELECT content FROM messages WHERE id = ?", [previousRequest.assistant_message_id])
+          : null;
+        res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
+        if (previousReply?.content) res.write(`data: ${JSON.stringify({ text: previousReply.content })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true, msg_id: previousRequest.assistant_message_id ? Number(previousRequest.assistant_message_id) : null, user_msg_id: Number(previousRequest.user_message_id), skip_reply: !!previousRequest.skip_reply })}\n\n`);
+        res.end();
+        return;
+      }
+      send(res, previousRequest.status === "processing" ? 409 : 422, { error: previousRequest.error_message || `request_${previousRequest.status}` });
+      return;
+    }
 
     // ── 小鱼干扣费预校验：成功落库后才扣，但开扣前先确认余额够，不够直接拒绝（不发起 LLM、不存用户消息）──
-    const ttsChar = await getActiveCharacter(userId);
+    const ttsChar = await getSessionCharacter(session, userId);
     const ttsSettings = await getUserSettings(userId);
     const willVoice = !!(ttsSettings.ttsEnabled && ttsChar?.voice_id);
     const chatCost = willVoice ? await getPointConfig("cost_chat_voice") : await getPointConfig("cost_chat");
@@ -3240,8 +3294,23 @@ async function handleRequest(req, res) {
       }
     }
 
+    const requestNow = nowIso();
+    try {
+      await dbRun(
+        "INSERT INTO chat_requests (user_id, session_id, request_id, status, created_at, updated_at) VALUES (?, ?, ?, 'processing', ?, ?)",
+        [userId, sessionId, requestKey, requestNow, requestNow]
+      );
+    } catch (err) {
+      if (err.code === "ER_DUP_ENTRY") {
+        send(res, 409, { error: "request_in_progress" });
+        return;
+      }
+      throw err;
+    }
+
     // 存用户消息
     const userMsgId = await appendMessage(sessionId, "user", userText, null, userId);
+    await dbRun("UPDATE chat_requests SET user_message_id = ?, updated_at = ? WHERE user_id = ? AND request_id = ?", [userMsgId, nowIso(), userId, requestKey]);
     const t_total = Date.now();
 
     // 如果是第一条消息，把对话标题设为用户首句（截断）
@@ -3285,13 +3354,14 @@ async function handleRequest(req, res) {
     // 情绪低落检测：好感度 > 60 时，先判断是否触发来电，若触发则跳过 LLM 回复
     if ((affection ?? 0) > 60) {
       const emotionCooldownMs = Number(await getGlobalSetting("call_emotion_cooldown_minutes", "120")) * 60000;
-      const sessionForEmotion = await getSession(sessionId);
+      const sessionForEmotion = await getSession(sessionId, userId);
       const lastEmotionCallAt = sessionForEmotion?.last_emotion_call_at;
       const cooldownOk = !lastEmotionCallAt || Date.now() - new Date(lastEmotionCallAt).getTime() >= emotionCooldownMs;
       if (cooldownOk) {
         const isLow = await detectLowMood(userText);
         if (isLow) {
           await dbRun("UPDATE sessions SET last_emotion_call_at = ? WHERE id = ?", [nowIso(), sessionId]);
+          await dbRun("UPDATE chat_requests SET status = 'completed', skip_reply = 1, updated_at = ? WHERE user_id = ? AND request_id = ?", [nowIso(), userId, requestKey]);
           console.log(`[情绪来电] user=${userId} affection=${affection} 触发安慰来电`);
           // 跳过 LLM 回复，直接触发来电
           res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" });
@@ -3314,12 +3384,20 @@ async function handleRequest(req, res) {
       "Cache-Control": "no-cache",
       "Access-Control-Allow-Origin": "*"
     });
+    let clientDisconnected = false;
+    const chatAbort = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        chatAbort.abort();
+      }
+    });
 
     try {
     let fullReply = "";
     try {
       console.log(`[chat] 开始 LLM 请求 provider=${ttsSettings.llmProvider}`);
-      const { stream, t0 } = await llmChatStream(messages, ttsSettings.llmProvider);
+      const { stream, t0 } = await llmChatStream(messages, ttsSettings.llmProvider, chatAbort.signal);
       let firstContent = false;
       for await (const chunk of stream) {
         const delta = chunk.choices?.[0]?.delta;
@@ -3338,9 +3416,20 @@ async function handleRequest(req, res) {
         }
       }
     } catch (err) {
+      if (clientDisconnected || err.name === "AbortError") {
+        await dbRun("DELETE FROM messages WHERE id = ? AND session_id = ?", [userMsgId, sessionId]);
+        await dbRun("DELETE FROM chat_requests WHERE user_id = ? AND request_id = ?", [userId, requestKey]);
+        return;
+      }
       console.error(`[chat] LLM 请求失败: ${err.message}`);
+      await dbRun("UPDATE chat_requests SET status = 'failed', error_message = ?, updated_at = ? WHERE user_id = ? AND request_id = ?", [String(err.message).slice(0, 500), nowIso(), userId, requestKey]);
       res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
       res.end();
+      return;
+    }
+    if (clientDisconnected) {
+      await dbRun("DELETE FROM messages WHERE id = ? AND session_id = ?", [userMsgId, sessionId]);
+      await dbRun("DELETE FROM chat_requests WHERE user_id = ? AND request_id = ?", [userId, requestKey]);
       return;
     }
 
@@ -3381,10 +3470,11 @@ async function handleRequest(req, res) {
       }
     }
 
-    const msgId = await appendMessage(sessionId, "assistant", cleanText, await getCharacterName(userId), userId);
+    const msgId = await appendMessage(sessionId, "assistant", cleanText, charName, userId);
 
     // 回复已落库 → 扣聊天费（带语音按 cost_chat_voice，否则 cost_chat；总开关关时旁路）
     await spendPoints(userId, chatCost, chatReason, `session:${sessionId}`);
+    await dbRun("UPDATE chat_requests SET status = 'completed', assistant_message_id = ?, updated_at = ? WHERE user_id = ? AND request_id = ?", [msgId, nowIso(), userId, requestKey]);
 
     // 通知前端文字完成，附带图片状态
     const donePayload = { done: true, msg_id: Number(msgId), user_msg_id: Number(userMsgId) };
@@ -3405,7 +3495,7 @@ async function handleRequest(req, res) {
     res.write(`data: ${JSON.stringify(donePayload)}\n\n`);
 
     if (imgPrompt && imgAllowed) {
-      fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: ttsSettings.imageFallbackEnabled, userId, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${msgId}` } });
+      fireImageGeneration(Number(msgId), imgPrompt, sessionId, { silent: imgSilent, previousScene, imageFallbackEnabled: ttsSettings.imageFallbackEnabled, userId, character: char, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${msgId}` } });
     }
 
     // 异步更新情绪和话题摘要（不阻塞响应）
@@ -3423,8 +3513,8 @@ async function handleRequest(req, res) {
       stateTasks.push(updateAffection(sessionId, updatedMsgs, userId).catch((e) => console.error("[affection] 调用失败:", e.message)));
     }
     trackSessionStateUpdate(sessionId, Promise.allSettled(stateTasks));
-    updateStreakDays(userId).catch(() => {});
-    checkAndUnlockAchievements(userId, sessionId, await getUserSettings(userId)).catch((e) => console.error("[achievements] 调用失败:", e.message));
+    updateStreakDays(userId, char?.id).catch(() => {});
+    checkAndUnlockAchievements(userId, sessionId, { ...(await getUserSettings(userId)), characterId: char?.id }).catch((e) => console.error("[achievements] 调用失败:", e.message));
     // 异步 TTS 合成，合成完通过 WS 推送播放
     console.log(`[tts] 检查条件 ttsEnabled=${ttsSettings.ttsEnabled} voice_id=${ttsChar?.voice_id || "无"}`);
     if (ttsSettings.ttsEnabled && ttsChar?.voice_id) {
@@ -3498,6 +3588,7 @@ async function handleRequest(req, res) {
     res.end();
     } catch (sseErr) {
       console.error("[chat] SSE 处理异常:", sseErr.message);
+      await dbRun("UPDATE chat_requests SET status = 'failed', error_message = ?, updated_at = ? WHERE user_id = ? AND request_id = ? AND status = 'processing'", [String(sseErr.message).slice(0, 500), nowIso(), userId, requestKey]).catch(() => {});
       try { res.write(`data: ${JSON.stringify({ error: sseErr.message })}\n\n`); } catch {}
       try { res.end(); } catch {}
     }
@@ -3950,7 +4041,8 @@ setInterval(async () => {
     const text = await generateProactiveMessage(session.id, sessionUserId).catch(() => null);
     if (!text) continue;
     const { cleanText, prompt: imgPrompt } = extractImageTag(text);
-    const msgId = await appendMessage(session.id, "assistant", cleanText, await getCharacterName(sessionUserId), sessionUserId);
+    const boundChar = await getSessionCharacter(session, sessionUserId);
+    const msgId = await appendMessage(session.id, "assistant", cleanText, boundChar?.name || await getCharacterName(sessionUserId), sessionUserId);
     // 主动消息落库成功 → 扣聊天费
     await spendPoints(sessionUserId, proactiveCost, "chat", `proactive:${session.id}`);
     const payload = { proactive: true, msg_id: Number(msgId), text: cleanText };
@@ -3960,7 +4052,7 @@ setInterval(async () => {
       const r = await spendPoints(sessionUserId, imageCost, "image", `msg:${msgId}`);
       if (r.ok) {
         payload.image_pending = true;
-        fireImageGeneration(Number(msgId), imgPrompt, session.id, { silent: true, previousScene, userId: sessionUserId, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${msgId}` } });
+        fireImageGeneration(Number(msgId), imgPrompt, session.id, { silent: true, previousScene, userId: sessionUserId, character: boundChar, refund: { amount: imageCost, reason: "refund_image", ref: `msg:${msgId}` } });
       } else {
         console.log(`[主动插图] 用户 ${sessionUserId} 小鱼干不足，跳过插图`);
       }
@@ -3989,7 +4081,7 @@ setInterval(async () => {
       : msgs;
     // 每 50 条聊天才更新一次日记（不计 system 消息）
     if (newMsgs.filter(m => m.role !== "system").length < DIARY_MIN_NEW_MESSAGES) continue;
-    const char = await getActiveCharacter(sessionUserId);
+    const char = await getSessionCharacter(session, sessionUserId);
     if (!char) continue;
     const charName = char.name || "default";
     const latestMessageId = newMsgs[newMsgs.length - 1]?.id || null;
@@ -4044,13 +4136,7 @@ setInterval(async () => {
       if (inDnd) continue;
     }
 
-    // 该 session 对应的角色（取最后一条 assistant 消息的 character_name）
-    const lastAssistantMsg = await dbGet(
-      "SELECT character_name FROM messages WHERE session_id = ? AND role = 'assistant' AND character_name IS NOT NULL ORDER BY id DESC LIMIT 1",
-      [sessionId]
-    );
-    if (!lastAssistantMsg?.character_name) continue;
-    const char = await dbGet("SELECT * FROM characters WHERE name = ? AND user_id = ?", [lastAssistantMsg.character_name, userId]);
+    const char = await getSessionCharacter(session, userId);
     if (!char) continue;
 
     // 最近一条用户消息时间
@@ -4444,8 +4530,8 @@ async function seedDefaultAchievements() {
   console.log("[achievements] 已初始化默认成就");
 }
 
-async function updateStreakDays(userId) {
-  const char = await getActiveCharacter(userId);
+async function updateStreakDays(userId, characterId = null) {
+  const char = characterId ? await getCharacterById(characterId, userId) : await getActiveCharacter(userId);
   if (!char) return;
   const today = new Date().toISOString().slice(0, 10);
   if (char.last_chat_date === today) return;
@@ -4690,12 +4776,12 @@ ${personalityHint}${descHint}${plotHint}
   return { url1, url2 };
 }
 
-async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAffection, { imageFallbackEnabled = true } = {}) {
+async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAffection, { imageFallbackEnabled = true, characterId = null } = {}) {
   const oldStage = getRelationStage(oldAffection);
   const newStage = getRelationStage(newAffection);
   if (newStage.stage <= oldStage.stage) return;
 
-  const char = await getActiveCharacter(userId);
+  const char = characterId ? await getCharacterById(characterId, userId) : await getActiveCharacter(userId);
   if (!char) return;
 
   // INSERT IGNORE 防重复
@@ -4783,11 +4869,11 @@ async function checkRelationshipMilestone(userId, sessionId, oldAffection, newAf
   })();
 }
 
-async function checkAndUnlockAchievements(userId, sessionId, { imageFallbackEnabled = true } = {}) {
+async function checkAndUnlockAchievements(userId, sessionId, { imageFallbackEnabled = true, characterId = null } = {}) {
   const achievements = await dbAll("SELECT * FROM achievements WHERE enabled = 1", []);
   if (!achievements.length) return;
 
-  const char = await getActiveCharacter(userId);
+  const char = characterId ? await getCharacterById(characterId, userId) : await getActiveCharacter(userId);
   if (!char) return;
 
   const unlocked = await dbAll("SELECT achievement_id FROM user_achievements WHERE user_id = ? AND character_id = ?", [userId, char.id]);

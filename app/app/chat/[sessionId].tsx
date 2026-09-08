@@ -70,6 +70,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [typing, setTyping] = useState(false);
   const typingTimerRef = useRef<any>(null);
+  const activeStreamRef = useRef<{ close: () => void } | null>(null);
   const [loading, setLoading] = useState(true);
   const [character, setCharacter] = useState<CharacterInfo | null>(null);
   const [mood, setMood] = useState<string>("neutral");
@@ -198,7 +199,7 @@ export default function ChatScreen() {
     try {
       const [page, char, sess, settings] = await Promise.all([
         api<any>("GET", `/sessions/${sid}/messages?limit=${PAGE}`).catch(() => null),
-        api<CharacterInfo>("GET", "/character").catch(() => null),
+        api<CharacterInfo>("GET", `/character?session_id=${sid}`).catch(() => null),
         api<SessionMood>("GET", `/sessions/${sid}/mood`).catch(() => null),
         api<{ collapseAction: boolean }>("GET", "/settings").catch(() => null),
       ]);
@@ -242,7 +243,12 @@ export default function ChatScreen() {
     lastAvatarRef.current = null;
     if (character?.name) loadAvatars(character.name);
   }, [character?.name, loadAvatars]);
-  useEffect(() => () => { stopTts(); if (autoLoopRef.current) clearTimeout(autoLoopRef.current); }, []);
+  useEffect(() => () => {
+    activeStreamRef.current?.close();
+    activeStreamRef.current = null;
+    stopTts();
+    if (autoLoopRef.current) clearTimeout(autoLoopRef.current);
+  }, []);
 
   useWS(sid || null, {
     onMessage: (p) => {
@@ -321,7 +327,9 @@ export default function ChatScreen() {
 
     try {
       let acc = "";
-      const handle = await streamChat(sid, text, (e) => {
+      const requestId = `app_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+      let handle: { close: () => void } | null = null;
+      handle = await streamChat(sid, text, requestId, (e) => {
         if (e.type === "text") {
           if (typingTimerRef.current) { clearTimeout(typingTimerRef.current); typingTimerRef.current = null; }
           if (typing) setTyping(false);
@@ -335,14 +343,16 @@ export default function ChatScreen() {
             it.id === tempBot.id ? { ...it, id: e.msgId ?? it.id, pending: false } :
             it
           ));
-          handle.close();
+          handle?.close();
+          if (activeStreamRef.current === handle) activeStreamRef.current = null;
           setSending(false);
           setTyping(false);
           if (typingTimerRef.current) { clearTimeout(typingTimerRef.current); typingTimerRef.current = null; }
           // 半自动：回复完成后拉取回复建议
           if (semiAutoRef.current) fetchSuggestions();
         } else if (e.type === "error") {
-          handle.close();
+          handle?.close();
+          if (activeStreamRef.current === handle) activeStreamRef.current = null;
           setSending(false);
           setTyping(false);
           if (typingTimerRef.current) { clearTimeout(typingTimerRef.current); typingTimerRef.current = null; }
@@ -356,6 +366,7 @@ export default function ChatScreen() {
           }
         }
       });
+      activeStreamRef.current = handle;
     } catch (err: any) {
       setMessages((m) => m.map((it) => it.id === tempBot.id ? { ...it, content: `（出错：${err.message}）`, pending: false } : it));
       setSending(false);

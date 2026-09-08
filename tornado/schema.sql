@@ -19,7 +19,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   archived INT NOT NULL DEFAULT 0,
   auto_mode INT NOT NULL DEFAULT 0,
   user_id INT,
+  character_id INT,
   KEY idx_sessions_user_archived_updated (user_id, archived, updated_at),
+  KEY idx_sessions_character (character_id),
   KEY idx_sessions_last_user_at (last_user_at)
 ) CHARACTER SET utf8mb4;
 
@@ -38,6 +40,22 @@ CREATE TABLE IF NOT EXISTS messages (
   KEY idx_messages_character_name (character_name),
   KEY idx_messages_image_url (image_url(64)),
   KEY idx_messages_user_id (user_id)
+) CHARACTER SET utf8mb4;
+
+CREATE TABLE IF NOT EXISTS chat_requests (
+  id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  session_id INT NOT NULL,
+  request_id VARCHAR(64) NOT NULL,
+  status VARCHAR(16) NOT NULL DEFAULT 'processing',
+  user_message_id INT,
+  assistant_message_id INT,
+  skip_reply INT NOT NULL DEFAULT 0,
+  error_message TEXT,
+  created_at VARCHAR(64) NOT NULL,
+  updated_at VARCHAR(64) NOT NULL,
+  UNIQUE KEY uq_chat_request (user_id, request_id),
+  KEY idx_chat_request_session (session_id)
 ) CHARACTER SET utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mood_avatars (
