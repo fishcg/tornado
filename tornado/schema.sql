@@ -246,6 +246,7 @@ CREATE TABLE IF NOT EXISTS story_projects (
   id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, character_id INT NOT NULL,
   story_type VARCHAR(16) NOT NULL DEFAULT 'romance', title VARCHAR(255), premise TEXT,
   status VARCHAR(24) NOT NULL DEFAULT 'pending', current_chapter INT NOT NULL DEFAULT 1,
+  current_scene INT NOT NULL DEFAULT 1, story_turn INT NOT NULL DEFAULT 0,
   last_branch_turn INT NOT NULL DEFAULT 0, generation_error TEXT,
   created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64) NOT NULL,
   UNIQUE KEY uq_story_user_char (user_id, character_id), KEY idx_story_status (status, updated_at)

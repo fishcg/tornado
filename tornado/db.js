@@ -391,6 +391,7 @@ const CREATE_TABLES = [
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, character_id INT NOT NULL,
     story_type VARCHAR(16) NOT NULL DEFAULT 'romance', title VARCHAR(255), premise TEXT,
     status VARCHAR(24) NOT NULL DEFAULT 'pending', current_chapter INT NOT NULL DEFAULT 1,
+    current_scene INT NOT NULL DEFAULT 1, story_turn INT NOT NULL DEFAULT 0,
     last_branch_turn INT NOT NULL DEFAULT 0, generation_error TEXT,
     created_at VARCHAR(64) NOT NULL, updated_at VARCHAR(64) NOT NULL,
     UNIQUE KEY uq_story_user_char (user_id, character_id), KEY idx_story_status (status, updated_at)
@@ -494,6 +495,8 @@ export async function initDb() {
   await ensureColumn(pool, "user_settings", "llm_provider", "VARCHAR(32) NOT NULL DEFAULT 'deepseek'");
   await ensureColumn(pool, "user_settings", "tts_lang", "VARCHAR(4) NOT NULL DEFAULT 'zh'");
   await ensureColumn(pool, "user_achievements", "notified", "INT NOT NULL DEFAULT 0");
+  await ensureColumn(pool, "story_projects", "current_scene", "INT NOT NULL DEFAULT 1");
+  await ensureColumn(pool, "story_projects", "story_turn", "INT NOT NULL DEFAULT 0");
   await ensureColumn(pool, "relationship_milestones", "video_url", "TEXT");
   await ensureColumn(pool, "characters", "voice_id", "VARCHAR(128)");
   await ensureColumn(pool, "characters", "tts_enabled", "INT NOT NULL DEFAULT 0");

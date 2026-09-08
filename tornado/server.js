@@ -262,6 +262,50 @@ async function recordGoalProgress(sessionId, userId, userText) {
   await dbRun("INSERT INTO goal_events (goal_id, session_id, event_type, summary, progress_delta, created_at) VALUES (?, ?, ?, ?, ?, ?)", [goal.id, sessionId, progress >= 100 ? "completed" : "progress", userText.slice(0, 500), delta, at]);
 }
 
+async function getStoryRuntime(sessionId, userId, session = null, char = null) {
+  if ((await getGlobalSetting("story_mode_enabled", "1")) !== "1") return null;
+  const currentSession = session || await getSession(sessionId, userId);
+  const currentChar = char || await getSessionCharacter(currentSession, userId);
+  if (!currentChar) return null;
+  const project = await dbGet("SELECT * FROM story_projects WHERE user_id = ? AND character_id = ? AND status = 'ready'", [userId, currentChar.id]);
+  if (!project) return null;
+  const chapter = await dbGet("SELECT * FROM story_chapters WHERE project_id = ? AND chapter_no = ?", [project.id, project.current_chapter]);
+  if (!chapter) return null;
+  const branch = await dbGet("SELECT * FROM story_branches WHERE project_id = ? AND chapter_no = ? AND status = 'active' ORDER BY id DESC LIMIT 1", [project.id, project.current_chapter]);
+  const event = await dbGet("SELECT * FROM story_events WHERE project_id = ? ORDER BY id DESC LIMIT 1", [project.id]);
+  return { project, chapter, branch, event };
+}
+
+function buildStoryPrompt(runtime) {
+  if (!runtime) return "";
+  const { project, chapter, branch } = runtime;
+  const lines = [
+    "# 当前长剧情状态",
+    `剧情类型：${project.story_type === "friendship" ? "友情" : "恋爱"}`,
+    `当前章节：第${project.current_chapter}章《${chapter.title}》`,
+    `当前场景：第${project.current_scene || 1}个场景`,
+    `本章概要：${String(chapter.synopsis || "").slice(0, 900)}`,
+    `本章冲突：${String(chapter.conflict || "").slice(0, 700)}`,
+    `本章转折方向：${String(chapter.turning_point || "").slice(0, 700)}`,
+    `本章结尾状态：${String(chapter.ending_state || "").slice(0, 500)}`,
+    "剧情约束：当前章节只作为连续性背景，不要向用户复述大纲或章节名；普通闲聊优先，不要每轮主动推动剧情；用户没有主动选择时，不要替用户做决定；不得跳过当前章节或提前揭示后续章节。",
+    "时间连续性：章节没有定义的具体日期、天数、年级和地点不得自行编造；用户最新消息明确说出的时间事实优先，不能改成另一个数字。"
+  ];
+  if (branch) {
+    lines.push(`当前待处理事件：${String(branch.title || "").slice(0, 200)}`);
+    lines.push(`事件变化：${String(branch.description || "").slice(0, 900)}`);
+    lines.push(`可自然出现的选择：${String(branch.choice_text || "").slice(0, 500)}`);
+    lines.push("这个事件只在用户话题相关或角色行为自然需要时使用，不要强行提问或要求用户按选项回答。");
+  }
+  return `\n\n${lines.join("\n")}`;
+}
+
+async function updateStoryTurn(sessionId, userId, userMsgCount) {
+  const runtime = await getStoryRuntime(sessionId, userId);
+  if (!runtime) return;
+  await dbRun("UPDATE story_projects SET story_turn = ?, updated_at = ? WHERE id = ?", [userMsgCount, nowIso(), runtime.project.id]);
+}
+
 function parseJsonFromText(text) {
   const raw = String(text || "").replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   if (!raw) throw new Error("剧情模型未返回 JSON");
@@ -320,19 +364,32 @@ async function generateStoryProject(userId, characterId, storyType = "romance") 
 async function maybeGenerateStoryBranch(sessionId, userId, userMsgCount) {
   if ((await getGlobalSetting("story_mode_enabled", "1")) !== "1") return;
   const interval = Math.max(4, Number(await getGlobalSetting("story_branch_interval", "10")) || 10);
-  if (userMsgCount === 0 || userMsgCount % interval !== 0) return;
   const session = await getSession(sessionId, userId); const char = await getSessionCharacter(session, userId); if (!char) return;
-  const project = await dbGet("SELECT * FROM story_projects WHERE user_id=? AND character_id=? AND status='ready'", [userId, char.id]); if (!project || userMsgCount <= project.last_branch_turn) return;
+  const project = await dbGet("SELECT * FROM story_projects WHERE user_id=? AND character_id=? AND status='ready'", [userId, char.id]);
+  if (!project) return;
+  await dbRun("UPDATE story_projects SET story_turn = ?, updated_at = ? WHERE id = ?", [userMsgCount, nowIso(), project.id]);
+  if (userMsgCount === 0 || userMsgCount % interval !== 0 || userMsgCount <= project.last_branch_turn) return;
   const chapter = await dbGet("SELECT * FROM story_chapters WHERE project_id=? AND chapter_no=?", [project.id, project.current_chapter]); if (!chapter) return;
-  let branch = { title: `第${project.current_chapter}章分支事件`, description: `围绕“${chapter.conflict || chapter.title}”自然发生的新变化`, choice_text: "顺其自然参与 / 暂时回避", consequence: "根据用户选择改变关系状态" };
+  const msgs = await dbAll("SELECT role, content FROM messages WHERE session_id=? AND user_id=? ORDER BY id DESC LIMIT 8", [sessionId, userId]);
   try {
-    const msgs = await dbAll("SELECT role, content FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 8", [sessionId]);
-    const { stream } = await llmChatStream([{ role: "user", content: `根据当前章节冲突生成一个自然的剧情分支，给用户选择空间。只输出JSON：{"title":"","description":"","choice_text":"","consequence":""}。章节：${chapter.title} ${chapter.conflict}\n最近对话：${msgs.reverse().map(m=>m.content).join("\n")}` }], "deepseek");
+    const branchPrompt = `根据当前长剧情章节和最近对话，生成一个会自然发生的分支事件。只输出 JSON：{"title":"","description":"","choice_text":"","consequence":""}。不要改变角色背景，不要跳过章节，不要编造具体日期。章节：${chapter.title}\n概要：${chapter.synopsis || ""}\n冲突：${chapter.conflict || ""}\n最近对话：${msgs.reverse().map(m=>`${m.role}: ${m.content}`).join("\n")}`;
+    const { stream } = await llmChatStream([{ role: "user", content: branchPrompt }], "deepseek", undefined, { maxTokens: 1200, thinking: false, json: true });
     let out=""; for await (const chunk of stream) out += chunk.choices?.[0]?.delta?.content || "";
-    const parsed = parseJsonFromText(out); branch = { ...branch, ...parsed };
-  } catch {}
-  await dbRun("INSERT INTO story_branches (project_id, chapter_no, trigger_turn, title, description, choice_text, consequence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [project.id, project.current_chapter, userMsgCount, String(branch.title).slice(0,255), String(branch.description).slice(0,2000), String(branch.choice_text).slice(0,1000), String(branch.consequence).slice(0,2000), nowIso()]);
-  await dbRun("UPDATE story_projects SET last_branch_turn=?, updated_at=? WHERE id=?", [userMsgCount, nowIso(), project.id]);
+    const branch = parseJsonFromText(out);
+    if (!String(branch.title || "").trim() || !String(branch.description || "").trim()) return;
+    await dbRun("UPDATE story_branches SET status='resolved' WHERE project_id=? AND chapter_no=? AND status='active'", [project.id, project.current_chapter]);
+    const at = nowIso();
+    const result = await dbRun("INSERT INTO story_branches (project_id, chapter_no, trigger_turn, prompt_context, title, description, choice_text, consequence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [project.id, project.current_chapter, userMsgCount, String(chapter.conflict || "").slice(0, 1000), String(branch.title).slice(0,255), String(branch.description).slice(0,2000), String(branch.choice_text || "").slice(0,1000), String(branch.consequence || "").slice(0,2000), at]);
+    await dbRun("INSERT INTO story_events (project_id, chapter_no, branch_id, event_type, summary, state_json, created_at) VALUES (?, ?, ?, 'branch_created', ?, ?, ?)", [project.id, project.current_chapter, result.insertId, String(branch.description).slice(0,2000), JSON.stringify({ trigger_turn: userMsgCount }), at]);
+    const currentScene = Number(project.current_scene || 1);
+    if (currentScene >= 3 && Number(project.current_chapter) < 6) {
+      await dbRun("UPDATE story_projects SET current_chapter=?, current_scene=1, last_branch_turn=?, story_turn=?, updated_at=? WHERE id=?", [Number(project.current_chapter) + 1, userMsgCount, userMsgCount, nowIso(), project.id]);
+    } else {
+      await dbRun("UPDATE story_projects SET current_scene=?, last_branch_turn=?, story_turn=?, updated_at=? WHERE id=?", [currentScene + 1, userMsgCount, userMsgCount, nowIso(), project.id]);
+    }
+  } catch (e) {
+    console.error("[story] 分支生成失败:", e.message);
+  }
 }
 
 // 把结构化字段 + soul_content 拼成完整 soul 字符串传给 LLM
@@ -879,7 +936,9 @@ async function buildConversationContext(sessionId, userId, { memoryQuestion = nu
   });
   const goals = await getSessionGoals(sessionId, userId, 2);
   const goalPrompt = goals.length ? `\n\n# 角色当前长期目标\n${goals.map(g => `- ${g.title}（进度 ${g.progress}%${g.next_action ? `，下一步：${g.next_action}` : ""}）`).join("\n")}\n自然地在合适时机提及目标进展，不要每轮都提及，也不要把用户的计划当作角色目标。` : "";
-  return { systemPrompt: systemPrompt + goalPrompt, char, charName, session, previousScene, relationship, moodState, innerState, memoryContext, entityGraph, diary, behaviorHint };
+  const storyRuntime = await getStoryRuntime(sessionId, userId, session, char);
+  const storyPrompt = channel === "chat" ? buildStoryPrompt(storyRuntime) : "";
+  return { systemPrompt: systemPrompt + goalPrompt + storyPrompt, char, charName, session, previousScene, relationship, moodState, innerState, memoryContext, entityGraph, diary, behaviorHint, storyRuntime };
 }
 
 const MOOD_AVATAR_PROMPTS = {
