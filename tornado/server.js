@@ -290,10 +290,19 @@ async function generateStoryProject(userId, characterId, storyType = "romance") 
   await dbRun("INSERT INTO story_projects (user_id, character_id, story_type, status, created_at, updated_at) VALUES (?, ?, ?, 'generating', ?, ?) ON DUPLICATE KEY UPDATE status='generating', updated_at=?", [userId, characterId, storyType === "friendship" ? "friendship" : "romance", at, at, at]);
   const project = await dbGet("SELECT * FROM story_projects WHERE user_id = ? AND character_id = ?", [userId, characterId]);
   try {
-    const prompt = `你是资深长篇恋爱/友情小说编剧。根据角色资料设计严格六章、前后承接的剧情骨架。只输出 JSON，不要解释。角色：${char.name}\n性格：${char.personality || ""}\n背景：${char.description || char.soul_content || ""}\n类型：${storyType === "friendship" ? "友情" : "恋爱"}\n格式：{"title":"","premise":"","chapters":[{"chapter_no":1,"title":"","synopsis":"","conflict":"","turning_point":"","foreshadowing":"","ending_state":""}]}。每章必须有戏剧冲突、情绪变化和结尾承接，避免任务清单。`;
-    const { stream } = await llmChatStream([{ role: "user", content: prompt }], "deepseek", undefined, { maxTokens: 4500, thinking: false });
-    let out = ""; for await (const chunk of stream) out += chunk.choices?.[0]?.delta?.content || "";
-    let data = parseJsonFromText(out);
+    const prompt = `你是资深长篇恋爱/友情小说编剧。根据角色资料设计严格六章、前后承接的剧情骨架。只输出 JSON，不要解释。角色：${char.name}\n性格：${String(char.personality || "").slice(0, 2000)}\n背景：${String(char.description || char.soul_content || "").slice(0, 5000)}\n类型：${storyType === "friendship" ? "友情" : "恋爱"}\n格式：{"title":"","premise":"","chapters":[{"chapter_no":1,"title":"","synopsis":"","conflict":"","turning_point":"","foreshadowing":"","ending_state":""}]}。必须恰好六章；每章字段都填写；每章必须有戏剧冲突、情绪变化和结尾承接，避免任务清单。`;
+    const readStoryStream = async (messages) => {
+      const { stream } = await llmChatStream(messages, "deepseek", undefined, { maxTokens: 6000, thinking: false, json: true });
+      let text = "";
+      for await (const chunk of stream) text += chunk.choices?.[0]?.delta?.content || "";
+      return text;
+    };
+    const out = await readStoryStream([{ role: "user", content: prompt }]);
+    let data;
+    try { data = parseJsonFromText(out); } catch {
+      const repairPrompt = `把下面内容修复成严格合法的 JSON，只输出 JSON，不要解释。必须保留并补齐 title、premise、chapters 六章及每章 chapter_no/title/synopsis/conflict/turning_point/foreshadowing/ending_state 字段。原内容：\n${out.slice(0, 12000)}`;
+      data = parseJsonFromText(await readStoryStream([{ role: "user", content: repairPrompt }]));
+    }
     const review = reviewStorySkeleton(data);
     if (!review.passed) throw new Error(`剧情骨架自动检查未通过：${review.issues.join("；")}`);
     await dbRun("UPDATE story_projects SET title=?, premise=?, status='ready', updated_at=?, generation_error=NULL WHERE id=?", [String(data.title || "未命名剧情").slice(0,255), String(data.premise || "").slice(0,4000), nowIso(), project.id]);
@@ -467,7 +476,7 @@ async function ingestToMemory(text, characterName, userId) {
 
 // ── LLM ───────────────────────────────────────────────────────────────────────
 
-async function llmChatStream(messages, provider = "deepseek", signal = undefined, { maxTokens = 600, thinking = null } = {}) {
+async function llmChatStream(messages, provider = "deepseek", signal = undefined, { maxTokens = 600, thinking = null, json = false } = {}) {
   const t0 = Date.now();
   const client = provider === "newapi" ? newapi : deepseek;
   const model = provider === "newapi" ? NEWAPI_MODEL : DEEPSEEK_MODEL;
@@ -478,6 +487,7 @@ async function llmChatStream(messages, provider = "deepseek", signal = undefined
     max_tokens: maxTokens
   };
   if (provider === "newapi") createOpts.enable_nsfw = true;
+  if (json) createOpts.response_format = { type: "json_object" };
   if (provider === "deepseek") {
     const thinkingEnabled = thinking == null ? (await getGlobalSetting("deepseek_thinking", "0")) === "1" : !!thinking;
     createOpts.enable_thinking = thinkingEnabled;
