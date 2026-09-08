@@ -241,7 +241,8 @@ async function getSessionGoals(sessionId, userId, limit = 3) {
   const userTurns = recent.filter(m => m.role === "user").length;
   // 每三轮最多注入一次目标背景，给日常闲聊留出空间
   if (userTurns > 0 && userTurns % 3 !== 0) return [];
-  const rows = await dbAll("SELECT * FROM character_goals WHERE user_id = ? AND character_id = ? AND status NOT IN ('completed','abandoned') ORDER BY updated_at DESC LIMIT ?", [userId, char.id, Number(limit)]);
+  const safeLimit = Math.max(1, Math.min(10, Math.floor(Number(limit) || 3)));
+  const rows = await dbAll(`SELECT * FROM character_goals WHERE user_id = ? AND character_id = ? AND status NOT IN ('completed','abandoned') ORDER BY updated_at DESC LIMIT ${safeLimit}`, [userId, char.id]);
   // 最近两条角色回复已提到目标时暂停注入，避免连续追问同一主题
   const assistantRecent = recent.filter(m => m.role === "assistant").slice(0, 2);
   return rows.filter(goal => !assistantRecent.some(m => String(m.content || "").includes(goal.title)));
