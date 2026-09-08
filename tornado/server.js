@@ -237,7 +237,14 @@ async function getSessionGoals(sessionId, userId, limit = 3) {
   const session = await getSession(sessionId, userId);
   const char = await getSessionCharacter(session, userId);
   if (!char) return [];
-  return dbAll("SELECT * FROM character_goals WHERE user_id = ? AND character_id = ? AND status NOT IN ('completed','abandoned') ORDER BY updated_at DESC LIMIT ?", [userId, char.id, Number(limit)]);
+  const recent = await dbAll("SELECT role, content FROM messages WHERE session_id = ? AND user_id = ? ORDER BY id DESC LIMIT 8", [sessionId, userId]);
+  const userTurns = recent.filter(m => m.role === "user").length;
+  // 每三轮最多注入一次目标背景，给日常闲聊留出空间
+  if (userTurns > 0 && userTurns % 3 !== 0) return [];
+  const rows = await dbAll("SELECT * FROM character_goals WHERE user_id = ? AND character_id = ? AND status NOT IN ('completed','abandoned') ORDER BY updated_at DESC LIMIT ?", [userId, char.id, Number(limit)]);
+  // 最近两条角色回复已提到目标时暂停注入，避免连续追问同一主题
+  const assistantRecent = recent.filter(m => m.role === "assistant").slice(0, 2);
+  return rows.filter(goal => !assistantRecent.some(m => String(m.content || "").includes(goal.title)));
 }
 
 async function recordGoalProgress(sessionId, userId, userText) {
