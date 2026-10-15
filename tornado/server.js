@@ -1003,14 +1003,102 @@ async function generateCharacterCard(force = false, userId) {
   return url;
 }
 
-async function generateMoodAvatar(mood, userId) {
+// 头像缓存 key：外貌 + 参考图（设置/更换参考图后旧头像自动失效）
+// GET /avatars、启动补全、实际生成三处必须共用这一个函数，否则会出现「永远判定为过期/缺失」
+function computeAppearanceHash(appearance, referenceUrl) {
+  return crypto.createHash("md5").update((appearance || "") + "|" + (referenceUrl || "")).digest("hex").slice(0, 8);
+}
+
+// 失败退避（负缓存）：连续失败次数越多退避越久（10min → 30min → 2h → 6h），上游故障时不会无限重试
+const AVATAR_FAIL_BACKOFF_STEPS_MS = [10 * 60 * 1000, 30 * 60 * 1000, 2 * 60 * 60 * 1000, 6 * 60 * 60 * 1000];
+function avatarFailBackoffMs(failCount) {
+  const idx = Math.min(Math.max(Number(failCount) || 1, 1), AVATAR_FAIL_BACKOFF_STEPS_MS.length) - 1;
+  return AVATAR_FAIL_BACKOFF_STEPS_MS[idx];
+}
+
+async function getAvatarFailure(character, mood, userId, appearanceHash) {
+  try {
+    const row = await dbGet("SELECT appearance_hash, error, fail_count, attempted_at FROM mood_avatar_failures WHERE `character` = ? AND mood = ? AND (user_id <=> ? OR user_id IS NULL)", [character, mood, userId ?? null]);
+    if (!row || row.appearance_hash !== appearanceHash) return null;
+    const at = Date.parse(row.attempted_at);
+    if (!Number.isFinite(at)) return null;
+    const remainMs = at + avatarFailBackoffMs(row.fail_count) - Date.now();
+    return remainMs > 0 ? { error: row.error, failCount: Number(row.fail_count) || 1, remainMs } : null;
+  } catch (e) {
+    console.warn(`[头像] 读取失败退避状态出错: ${e.message}`);
+    return null;
+  }
+}
+
+async function recordAvatarFailure(character, mood, userId, appearanceHash, error) {
+  try {
+    const prev = await dbGet("SELECT appearance_hash, fail_count FROM mood_avatar_failures WHERE `character` = ? AND mood = ? AND (user_id <=> ? OR user_id IS NULL)", [character, mood, userId ?? null]);
+    const failCount = prev && prev.appearance_hash === appearanceHash ? (Number(prev.fail_count) || 0) + 1 : 1;
+    await dbRun("DELETE FROM mood_avatar_failures WHERE `character` = ? AND mood = ? AND (user_id <=> ? OR user_id IS NULL)", [character, mood, userId ?? null]);
+    await dbRun("INSERT INTO mood_avatar_failures (`character`, mood, appearance_hash, error, fail_count, attempted_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [character, mood, appearanceHash, String(error || "unknown").slice(0, 500), failCount, nowIso(), userId ?? null]);
+  } catch (e) {
+    console.warn(`[头像] 记录失败状态出错: ${e.message}`);
+  }
+}
+
+async function clearAvatarFailure(character, mood, userId) {
+  try {
+    await dbRun("DELETE FROM mood_avatar_failures WHERE `character` = ? AND mood = ? AND (user_id <=> ? OR user_id IS NULL)", [character, mood, userId ?? null]);
+  } catch {}
+}
+
+// 头像每日配额是否用尽（daily_avatar_image_limit <= 0 表示不限；系统级预生成 userId 为 null 时不受限）
+async function avatarQuotaExhausted(userId) {
+  if (!userId) return false;
+  try {
+    const dailyLimit = Number(await getGlobalSetting("daily_avatar_image_limit", "20"));
+    if (dailyLimit <= 0) return false;
+    const { remaining } = await getAvatarQuotaInfo(userId);
+    return remaining <= 0;
+  } catch {
+    return false;
+  }
+}
+
+// 同一 (用户,角色,情绪) 的生成复用同一个 Promise，避免预生成与消息路径并发重复生成
+// force=true 用于「手动重生成 / 外貌刚变更」：不复用进行中的任务，确保按新外貌真的重新生成
+const _avatarInflight = new Map();
+async function generateMoodAvatar(mood, userId, { force = false } = {}) {
   const character = await getCharacterName(userId);
+  const key = `${userId ?? "null"}|${character}|${mood}`;
+  if (!force) {
+    const running = _avatarInflight.get(key);
+    if (running) {
+      console.log(`情绪头像生成已在进行中，复用结果 [${character}:${mood}]`);
+      return running;
+    }
+  }
+  const task = _generateMoodAvatar(mood, userId, character, { force }).finally(() => {
+    if (_avatarInflight.get(key) === task) _avatarInflight.delete(key);
+  });
+  _avatarInflight.set(key, task);
+  return task;
+}
+
+async function _generateMoodAvatar(mood, userId, characterArg = null, { force = false } = {}) {
+  const character = characterArg || await getCharacterName(userId);
   const appearance = await getCharacterAppearance(userId);
   const referenceUrl = await getCharacterReferenceImageUrl(userId);
-  // 参考图 URL 纳入 hash：设置/更换参考图后旧头像缓存自动失效
-  const appearanceHash = crypto.createHash("md5").update(appearance + "|" + (referenceUrl || "")).digest("hex").slice(0, 8);
+  const appearanceHash = computeAppearanceHash(appearance, referenceUrl);
   const existing = await dbGet("SELECT image_url, appearance_hash FROM mood_avatars WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [character, mood, userId ?? null]);
   if (existing && existing.appearance_hash === appearanceHash) return existing.image_url;
+
+  // 退避期内不重试（仅当外貌与上次失败时一致才生效；外貌变了立刻重试；force=手动重生成时忽略退避）
+  const backoff = force ? null : await getAvatarFailure(character, mood, userId, appearanceHash);
+  if (backoff) {
+    console.log(`情绪头像退避中 [${character}:${mood}]，${Math.ceil(backoff.remainMs / 60000)} 分钟后重试（已连续失败 ${backoff.failCount} 次: ${backoff.error}）`);
+    return existing ? existing.image_url : null;
+  }
+  if (await avatarQuotaExhausted(userId)) {
+    console.log(`情绪头像跳过 [${character}:${mood}]：今日头像配额已用完`);
+    return existing ? existing.image_url : null;
+  }
 
   const settings = userId ? await getUserSettings(userId) : { imageFallbackEnabled: true };
   const moodDesc = MOOD_AVATAR_PROMPTS[mood] || "neutral expression";
@@ -1018,6 +1106,7 @@ async function generateMoodAvatar(mood, userId) {
   const prompt = `${prefix}，头像特写，${moodDesc}，纯色背景，动漫风格，高质量`;
   const referenceDataUrl = referenceUrl ? await fetchImageAsDataUrl(referenceUrl) : null;
   let url = null;
+  let lastError = "";
   for (let attempt = 0; attempt <= 2; attempt++) {
     try {
       // 有参考图走图生图；最后一次仍失败时退回普通文生图
@@ -1027,30 +1116,43 @@ async function generateMoodAvatar(mood, userId) {
       });
       break;
     } catch (err) {
+      lastError = err.message;
       console.log(`情绪头像生成失败 [${character}:${mood}] 第${attempt + 1}次: ${err.message}`);
       if (attempt === 2) {
         if (settings.imageFallbackEnabled) {
           try {
             url = await callImageApiFallback(prompt, { aspectRatio: "1:1" });
-          } catch {
-            console.error(`情绪头像生成放弃 [${character}:${mood}]`);
-            return null;
+          } catch (fbErr) {
+            url = null;
+            lastError = `${err.message} / fallback: ${fbErr.message}`;
           }
-        } else {
-          console.error(`情绪头像生成放弃 [${character}:${mood}]`);
-          return null;
         }
       }
     }
   }
+  if (!url) {
+    console.error(`情绪头像生成放弃 [${character}:${mood}]`);
+    // 失败也落库：退避期内（10 分钟起，最多 6 小时）不再重复打上游
+    await recordAvatarFailure(character, mood, userId, appearanceHash, lastError);
+    return null;
+  }
   await dbRun("REPLACE INTO mood_avatars (`character`, mood, image_url, appearance_hash, created_at, user_id) VALUES (?, ?, ?, ?, ?, ?)", [character, mood, url, appearanceHash, nowIso(), userId ?? null]);
+  await clearAvatarFailure(character, mood, userId);
+  if (userId) {
+    try {
+      await consumeDailyAvatarQuota(userId, 1);
+    } catch (e) {
+      console.warn(`[头像] 扣减每日配额出错: ${e.message}`);
+    }
+  }
   console.log(`情绪头像生成完成 [${character}:${mood}]: ${url}`);
   return url;
 }
 
 // 后台静默生成指定角色的所有情绪头像（跳过已有且外貌未变的）
 const _pregenerateRunning = new Set();
-async function pregenerateMoodAvatars(characterName, moodsToGenerate = null, userId) {
+const PREGEN_BUDGET_MS = 3 * 60 * 1000; // 单轮预生成总时长上限，避免上游故障时长时间占用
+async function pregenerateMoodAvatars(characterName, moodsToGenerate = null, userId, opts = {}) {
   const key = `${userId}-${characterName}`;
   if (_pregenerateRunning.has(key)) {
     console.log(`情绪头像预生成已在进行中，跳过 [${characterName}]`);
@@ -1058,19 +1160,28 @@ async function pregenerateMoodAvatars(characterName, moodsToGenerate = null, use
   }
   _pregenerateRunning.add(key);
   const moods = moodsToGenerate || Object.keys(MOOD_AVATAR_PROMPTS);
+  const deadline = Date.now() + PREGEN_BUDGET_MS;
+  let ok = 0, failed = 0, skipped = 0;
   console.log(`开始预生成情绪头像 [${characterName}]，共 ${moods.length} 个: ${moods.join(", ")}`);
   try {
     for (const mood of moods) {
+      if (Date.now() > deadline) {
+        skipped = moods.length - ok - failed;
+        console.log(`情绪头像预生成超时（上限 ${Math.round(PREGEN_BUDGET_MS / 60000)} 分钟），跳过剩余 ${skipped} 个 [${characterName}]`);
+        break;
+      }
       try {
-        await generateMoodAvatar(mood, userId);
+        const url = await generateMoodAvatar(mood, userId, opts);
+        if (url) ok++; else failed++;
       } catch (e) {
+        failed++;
         console.error(`预生成头像失败 [${characterName}:${mood}]:`, e.message);
       }
     }
   } finally {
     _pregenerateRunning.delete(key);
   }
-  console.log(`情绪头像预生成完成 [${characterName}]`);
+  console.log(`情绪头像预生成完成 [${characterName}]：成功 ${ok}，失败 ${failed}${skipped ? `，超时跳过 ${skipped}` : ""}`);
 }
 
 async function updateMood(sessionId, recentMsgs, userId, targetMsgId = null) {
@@ -2633,7 +2744,8 @@ async function handleRequest(req, res) {
   if (method === "GET" && pathname === "/avatars") {
     const name = await getCharacterName(userId);
     const appearance = await getCharacterAppearance(userId);
-    const appearanceHash = crypto.createHash("md5").update(appearance).digest("hex").slice(0, 8);
+    const referenceUrl = await getCharacterReferenceImageUrl(userId);
+    const appearanceHash = computeAppearanceHash(appearance, referenceUrl);
     const rows = await dbAll("SELECT mood, image_url, appearance_hash FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
     const avatars = {};
     let stale = false;
@@ -2652,6 +2764,11 @@ async function handleRequest(req, res) {
     const name = await getCharacterName(userId);
     if (!name) { send(res, 400, { error: "no character" }); return; }
     const moods = Object.keys(MOOD_AVATAR_PROMPTS);
+    const quota = await getAvatarQuotaInfo(userId);
+    if (quota.dailyLimit > 0 && quota.remaining < moods.length) {
+      send(res, 429, { error: "avatar_quota_exceeded", need: moods.length, remaining: quota.remaining, daily_limit: quota.dailyLimit });
+      return;
+    }
     const avatarCost = await getPointConfig("cost_avatar");
     const totalCost = avatarCost * moods.length;
     const spendRes = await spendPoints(userId, totalCost, "avatar", `regen_all:${name}`);
@@ -2660,7 +2777,8 @@ async function handleRequest(req, res) {
       return;
     }
     await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
-    pregenerateMoodAvatars(name, null, userId).catch(() => {});
+    await dbRun("DELETE FROM mood_avatar_failures WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
+    pregenerateMoodAvatars(name, null, userId, { force: true }).catch(() => {});
     send(res, 202, { ok: true, message: "已开始重新生成全部情绪头像" });
     return;
   }
@@ -2672,6 +2790,11 @@ async function handleRequest(req, res) {
     if (!MOOD_AVATAR_PROMPTS[mood]) { send(res, 400, { error: "unknown mood" }); return; }
     const name = await getCharacterName(userId);
     if (!name) { send(res, 400, { error: "no character" }); return; }
+    const quota = await getAvatarQuotaInfo(userId);
+    if (quota.dailyLimit > 0 && quota.remaining < 1) {
+      send(res, 429, { error: "avatar_quota_exceeded", need: 1, remaining: quota.remaining, daily_limit: quota.dailyLimit });
+      return;
+    }
     const avatarCost = await getPointConfig("cost_avatar");
     const spendRes = await spendPoints(userId, avatarCost, "avatar", `regen:${name}:${mood}`);
     if (!spendRes.ok) {
@@ -2679,7 +2802,8 @@ async function handleRequest(req, res) {
       return;
     }
     await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [name, mood, userId]);
-    generateMoodAvatar(mood, userId).then(async (url) => {
+    await dbRun("DELETE FROM mood_avatar_failures WHERE `character` = ? AND mood = ? AND (user_id = ? OR user_id IS NULL)", [name, mood, userId]);
+    generateMoodAvatar(mood, userId, { force: true }).then(async (url) => {
       if (url) {
         pushToUser(userId, { mood_avatar_update: true, mood, avatar_url: url });
       } else {
@@ -2698,6 +2822,7 @@ async function handleRequest(req, res) {
   if (method === "DELETE" && pathname === "/avatars") {
     const name = await getCharacterName(userId);
     await dbRun("DELETE FROM mood_avatars WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
+    await dbRun("DELETE FROM mood_avatar_failures WHERE `character` = ? AND (user_id = ? OR user_id IS NULL)", [name, userId]);
     send(res, 200, { ok: true });
     return;
   }
@@ -2917,7 +3042,7 @@ async function handleRequest(req, res) {
     // 外貌变了，后台重新生成所有情绪头像
     if (appearanceChanged) {
       const updatedName = typeof body.name === "string" ? body.name.trim() : char.name;
-      pregenerateMoodAvatars(updatedName, null, userId).catch(() => {});
+      pregenerateMoodAvatars(updatedName, null, userId, { force: true }).catch(() => {});
     }
     return;
   }
@@ -3100,7 +3225,7 @@ async function handleRequest(req, res) {
     send(res, 200, { ok: true });
     if (appearanceChanged) {
       const finalName = typeof body.name === "string" ? body.name.trim() : existing.name;
-      pregenerateMoodAvatars(finalName, null, userId).catch(() => {});
+      pregenerateMoodAvatars(finalName, null, userId, { force: true }).catch(() => {});
     }
     return;
   }
@@ -5202,7 +5327,8 @@ server.listen(PORT, async () => {
   if (activeName && activeName !== "default") {
     // 只在有缺失头像时才预生成，避免每次重启都触发
     const appearance = await getCharacterAppearance(null);
-    const appearanceHash = crypto.createHash("md5").update(appearance).digest("hex").slice(0, 8);
+    const referenceUrl = await getCharacterReferenceImageUrl(null);
+    const appearanceHash = computeAppearanceHash(appearance, referenceUrl);
     const existing = await dbAll("SELECT mood FROM mood_avatars WHERE `character` = ? AND appearance_hash = ?", [activeName, appearanceHash]);
     const existingMoods = new Set(existing.map((r) => r.mood));
     const allMoods = Object.keys(MOOD_AVATAR_PROMPTS);

@@ -144,6 +144,20 @@ const CREATE_TABLES = [
     KEY idx_mood_avatars_character_hash (\`character\`(191), appearance_hash)
   ) CHARACTER SET utf8mb4`,
 
+  // 情绪头像失败记录（负缓存）：生成失败时落库，退避期内不再重试，避免上游故障时无限重试
+  `CREATE TABLE IF NOT EXISTS mood_avatar_failures (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    \`character\` VARCHAR(255) NOT NULL DEFAULT '',
+    mood VARCHAR(32) NOT NULL,
+    appearance_hash VARCHAR(64) NOT NULL DEFAULT '',
+    error VARCHAR(500) NOT NULL DEFAULT '',
+    fail_count INT NOT NULL DEFAULT 0,
+    attempted_at VARCHAR(64) NOT NULL,
+    user_id INT,
+    UNIQUE KEY uniq_avatar_fail (\`character\`(191), mood, user_id),
+    KEY idx_avatar_fail_hash (\`character\`(191), appearance_hash)
+  ) CHARACTER SET utf8mb4`,
+
   `CREATE TABLE IF NOT EXISTS character_cards (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     \`character\` VARCHAR(255) NOT NULL,
