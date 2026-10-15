@@ -200,10 +200,17 @@ async function generateViaCompletions({ schemaName, schema, instructions, input,
 // ── Responses API path (OpenAI / DashScope / Qwen) ──
 
 async function generateViaResponses({ schemaName, schema, instructions, input, model, enable_thinking }) {
+  // DashScope 不强制校验 text.format.json_schema：它保证「是 JSON」，但不保证键名。
+  // 实测 schema {answer} 会被模型答成 {"root_cause": ...}，导致 result.answer 永远为空。
+  // 与 Chat Completions 路径一致，把 schema 明文写进 instructions 作为键名约束。
+  const schemaHint = schema
+    ? `\nRespond with a JSON object matching this schema: ${JSON.stringify(schema)}`
+    : "";
+
   const response = await client.responses.create({
     model,
     enable_thinking,
-    instructions,
+    instructions: `${instructions || ""}${schemaHint}`,
     input,
     text: {
       format: {
