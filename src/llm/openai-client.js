@@ -212,9 +212,6 @@ async function generateViaResponses({ schemaName, schema, instructions, input, m
         strict: true,
         schema
       }
-    },
-    response_format: {
-      type: "json_object"
     }
   });
 
